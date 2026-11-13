@@ -98,6 +98,7 @@ pub(crate) fn position(
     let above = Vec2::new(x, row.min.y - gap - size.y);
     let below = Vec2::new(x, row.max.y + gap);
     let candidates = match preferred {
+        Side::Above => [above, below, left, right],
         Side::Left => [left, right, above, below],
         Side::Right => [right, left, above, below],
         Side::Below => [below, above, left, right],

@@ -8,18 +8,20 @@ use bevy::{
     ui::Val2,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Side {
     Left,
     Right,
     Below,
+    /// Above the box, for a popup that hangs over what it is about.
+    Above,
 }
 impl Side {
     fn width(self) -> f32 {
         match self {
             Self::Left => 286.0,
             Self::Right => 266.0,
-            Self::Below => 300.0,
+            Self::Below | Self::Above => 300.0,
         }
     }
 }
@@ -92,6 +94,7 @@ fn animated_tip(kit: &mut Kit, control: Entity, text: &str, side: Side) -> Entit
         Side::Left => Vec2::new(-4.0, 0.0),
         Side::Right => Vec2::new(4.0, 0.0),
         Side::Below => Vec2::new(0.0, 4.0),
+        Side::Above => Vec2::new(0.0, -4.0),
     };
     kit.commands.entity(tip).insert((
         super::effects::PanelMotion::hidden(offset),

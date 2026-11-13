@@ -81,10 +81,104 @@ fn stashed(window: &str) -> (Server, Client) {
     (server, client)
 }
 
-/// Right-clicks the stash's slots at their corners nearest the screen's corner and holds still: the
-/// menu and the tooltip are inside the window on every frame and do not move between frames.
+/// The rectangle of a node drawn, in the window's physical pixels.
+fn rect_of(client: &Client, node: Entity) -> Rect {
+    let world = client.world();
+    let size = world.get::<ComputedNode>(node).expect("laid out").size();
+    let at = world
+        .get::<bevy::ui::UiGlobalTransform>(node)
+        .expect("placed")
+        .translation;
+    Rect::from_center_size(at, size)
+}
+
+fn overlap(a: Rect, b: Rect) -> bool {
+    let both = a.intersect(b);
+    both.width() > 0.0 && both.height() > 0.0
+}
+
+/// Holds the pointer on a node, at the middle and at the pixel nearest the window's bottom right corner,
+/// and checks the popup the item shows: present on every frame (a popup that is absent is no popup
+/// that held still), inside the window, off the node it is about, and in the same place on every frame.
+fn tooltip_holds_still(client: &mut Client, what: &str, node: Entity, room: Rect) {
+    let box_ = rect_of(client, node);
+    for at in [box_.center(), box_.max - Vec2::splat(1.0)] {
+        client.mouse(at);
+        let tips: Vec<Option<Rect>> = rest(client).into_iter().map(|(_, tip)| tip).collect();
+        let first = tips[0].unwrap_or_else(|| panic!("{what} {at}: no tooltip is shown"));
+        assert!(
+            first.size().min_element() > 0.0,
+            "{what} {at}: an empty tooltip"
+        );
+        for (n, tip) in tips.iter().enumerate() {
+            assert_eq!(
+                *tip,
+                Some(first),
+                "{what} {at}: the tooltip is gone or moved on frame {n}"
+            );
+        }
+        assert!(
+            inside(room, first),
+            "{what} {at}: tooltip {first:?} leaves {room:?}"
+        );
+        assert!(
+            !overlap(first, box_),
+            "{what} {at}: tooltip {first:?} covers the item {box_:?}"
+        );
+    }
+}
+
+/// The item tooltips of the stash, the bag and the shop, at every window size: visible, inside, off their
+/// item and still, at the fractional interface scales (1.2 at 1920 by 1080, 1.52 at 2877 by 1642) where the
+/// popup's measured height rounds up and down.
 #[test]
-fn the_context_menu_and_tooltip_by_the_stash_stay_inside_the_window_and_hold_still() {
+fn the_tooltip_of_a_hovered_item_is_shown_inside_the_window_off_its_item_and_holds_still() {
+    for window in WINDOWS {
+        let (_server, mut client) = stashed(window);
+        let room = window_rect(&mut client);
+        for slot in (0..1).chain(BAG_SLOTS..BAG_SLOTS + bota_core::rules::STASH_SLOTS as u8) {
+            let Some(boxed) = client.item_box(slot) else {
+                continue;
+            };
+            if client.core().item_in(slot).is_none() {
+                continue;
+            }
+            client.hover_ui(boxed, Duration::from_secs(20));
+            tooltip_holds_still(&mut client, &format!("{window} slot {slot}"), boxed, room);
+        }
+        // A shop item, in the grid the shop opens on.
+        let world = client.world_mut();
+        let cell = world
+            .query::<(
+                Entity,
+                &crate::shop::ShopCell,
+                &crate::shop::Place,
+                &ComputedNode,
+                &InheritedVisibility,
+            )>()
+            .iter(world)
+            .find(|(_, cell, place, node, seen)| {
+                cell.0 == ItemId::CLARITY.0
+                    && **place == crate::shop::Place::Grid
+                    && seen.get()
+                    && node.size().min_element() > 0.0
+            })
+            .map(|(entity, ..)| entity)
+            .expect("Clarity in the shop's grid");
+        client.hover_ui(cell, Duration::from_secs(20));
+        tooltip_holds_still(
+            &mut client,
+            &format!("{window} Clarity in the shop"),
+            cell,
+            room,
+        );
+    }
+}
+
+/// Right-clicks the stash's slots at their corners nearest the screen's corner and holds still: the
+/// menu is inside the window on every frame and does not move between frames.
+#[test]
+fn the_context_menu_by_the_stash_stays_inside_the_window_and_holds_still() {
     for window in WINDOWS {
         let (_server, mut client) = stashed(window);
         let room = window_rect(&mut client);
@@ -98,7 +192,6 @@ fn the_context_menu_and_tooltip_by_the_stash_stay_inside_the_window_and_hold_sti
                 .expect("laid out")
                 .size()
                 / 2.0;
-            // The pixels of the slot nearest the window's bottom right corner, and the middle.
             for at in [centre, centre + half - Vec2::splat(1.0)] {
                 client.mouse(at);
                 client.click(MouseButton::Right);
@@ -106,27 +199,17 @@ fn the_context_menu_and_tooltip_by_the_stash_stay_inside_the_window_and_hold_sti
                 let menu = frames[0]
                     .0
                     .unwrap_or_else(|| panic!("{window} slot {slot} {at}: no menu"));
-                for (n, (root, tip)) in frames.iter().enumerate() {
+                for (n, (root, _)) in frames.iter().enumerate() {
                     assert_eq!(
                         *root,
                         Some(menu),
                         "{window} slot {slot} {at}: the menu moved on frame {n}"
                     );
-                    assert!(
-                        inside(room, menu),
-                        "{window} slot {slot} {at}: menu {menu:?} leaves {room:?}"
-                    );
-                    assert_eq!(
-                        *tip, frames[0].1,
-                        "{window} slot {slot} {at}: the tooltip moved on frame {n}"
-                    );
-                    if let Some(tip) = tip {
-                        assert!(
-                            inside(room, *tip),
-                            "{window} slot {slot} {at}: tooltip {tip:?} leaves {room:?}"
-                        );
-                    }
                 }
+                assert!(
+                    inside(room, menu),
+                    "{window} slot {slot} {at}: menu {menu:?} leaves {room:?}"
+                );
                 client.mouse(Vec2::new(2.0, 2.0));
                 client.click(MouseButton::Left);
                 client.frames(2);

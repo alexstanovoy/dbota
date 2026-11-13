@@ -20,7 +20,7 @@ use crate::ui::{self, Fonts};
 
 /// The popup box.
 #[derive(Component)]
-struct Tip;
+pub(crate) struct Tip;
 
 /// An ability's icon on the hero page of the menu: under the cursor, the popup the game shows
 /// for the ability (its first level, as the strategy phase shows it).
@@ -47,17 +47,16 @@ struct TipBody;
 #[derive(Resource, Default)]
 struct Shown(Option<Content>);
 
-/// Where the thing the popup is about stands, in the window's pixels, when the popup is to stand
-/// beside it rather than by the cursor: the menu's ability tiles name theirs.
+/// Where the thing the popup is about stands, in the window's pixels, and the side of it the popup
+/// prefers: the box of an item, an ability or a shop item in the game (above it), the menu's
+/// ability tiles (beside them).
 #[derive(Resource, Default)]
-struct ShownAnchor(Option<Rect>);
+struct ShownAnchor(Option<(Rect, Side)>);
 
 /// Width of the popup in interface pixels: Dota's 330 of text blocks (`#AbilityDescriptionContainer`) and a 2 pixel border either side, so its blocks and bars span it whole.
 const WIDTH: f32 = 334.0;
 /// Where the popup stands in the interface's layers: over the menu's page and its overlay.
 pub const TIP_Z: i32 = 72;
-/// Space between the cursor and the popup.
-const GAP: f32 = 16.0;
 
 const NAME: Color = Color::srgb(0.88, 0.88, 0.88);
 const BONUS_LABEL: Color = Color::srgb(0.455, 0.502, 0.565);
@@ -187,23 +186,19 @@ fn pick(
     texts: Res<Texts>,
     manifest: Res<Manifest>,
     args: Res<crate::Args>,
-    abilities: Query<(&DirectlyHovered, &AbilityBox)>,
-    items: Query<(&DirectlyHovered, &ItemBox)>,
+    abilities: Query<(Entity, &DirectlyHovered, &AbilityBox)>,
+    items: Query<(Entity, &DirectlyHovered, &ItemBox)>,
     bag: Res<crate::bag::TacticalBag>,
-    tiles: Query<(&DirectlyHovered, &AbilityTile)>,
-    talent_tiles: Query<(&DirectlyHovered, &TalentTile)>,
-    cells: Query<(&DirectlyHovered, &ShopCell)>,
-    buffs: Query<(&DirectlyHovered, &crate::buffs::BuffChip)>,
-    talent_cells: Query<(&DirectlyHovered, &crate::talents::TalentCell)>,
-    attribute: Query<&DirectlyHovered, With<crate::talents::AttributeRow>>,
-    innate: Query<&DirectlyHovered, With<crate::hud::InnateButton>>,
-    mut shown: ResMut<Shown>,
-    mut anchor: ResMut<ShownAnchor>,
+    tiles: Query<(Entity, &DirectlyHovered, &AbilityTile)>,
+    talent_tiles: Query<(Entity, &DirectlyHovered, &TalentTile)>,
+    cells: Query<(Entity, &DirectlyHovered, &ShopCell)>,
+    buffs: Query<(Entity, &DirectlyHovered, &crate::buffs::BuffChip)>,
+    talent_cells: Query<(Entity, &DirectlyHovered, &crate::talents::TalentCell)>,
+    attribute: Query<(Entity, &DirectlyHovered), With<crate::talents::AttributeRow>>,
+    innate: Query<(Entity, &DirectlyHovered), With<crate::hud::InnateButton>>,
+    layout: Query<(&ComputedNode, &UiGlobalTransform)>,
+    (mut shown, mut anchor): (ResMut<Shown>, ResMut<ShownAnchor>),
 ) {
-    // A popup of the game stands by the cursor.
-    if anchor.0.is_some() {
-        anchor.0 = None;
-    }
     let core = &session.0;
     let rate = u32::from(core.tick_rate().max(1));
     // The numbers of the unit the tooltip is about: what shortens its cooldowns and costs (an Arcane Rune) shortens what it shows.
@@ -218,33 +213,56 @@ fn pick(
     };
     let buff = buffs
         .iter()
-        .find(|(i, _)| i.get())
-        .and_then(|(_, b)| b.shown);
+        .find(|(_, i, _)| i.get())
+        .and_then(|(entity, _, b)| b.shown.map(|shown| (entity, shown)));
+    // The box the popup is about, which it stands clear of.
+    let mut over = None;
     let content = if let Some(spec) = args.tip.as_deref() {
         forced_tip(&look, spec)
-    } else if attribute.iter().any(|i| i.get()) {
+    } else if let Some((entity, _)) = attribute.iter().find(|(_, i)| i.get()) {
+        over = Some(entity);
         Some(note_tip(attribute_tip(&texts, core)))
-    } else if innate.iter().any(|i| i.get()) {
+    } else if let Some((entity, _)) = innate.iter().find(|(_, i)| i.get()) {
+        over = Some(entity);
         innate_tip(&look, core)
-    } else if let Some(shown) = buff {
+    } else if let Some((entity, shown)) = buff {
+        over = Some(entity);
         Some(buff_tip(&look, shown.id, shown.ticks_left, rate))
-    } else if let Some(cell) = hovered(&talent_cells) {
+    } else if let Some((entity, cell)) = hovered(&talent_cells) {
+        over = Some(entity);
         talent_tip(core, cell.0).map(note_tip)
-    } else if let Some(slot) = hovered(&abilities) {
+    } else if let Some((entity, slot)) = hovered(&abilities) {
+        over = Some(entity);
         ability_tip(&look, core, slot.0, rate)
-    } else if let Some(ability) = hovered(&tiles) {
+    } else if let Some((entity, ability)) = hovered(&tiles) {
+        over = Some(entity);
         entering_tip(&look, ability.0)
-    } else if let Some(hero) = hovered(&talent_tiles) {
+    } else if let Some((entity, hero)) = hovered(&talent_tiles) {
+        over = Some(entity);
         talents_tip(hero.0)
-    } else if let Some(slot) = hovered(&items) {
+    } else if let Some((entity, slot)) = hovered(&items) {
+        over = Some(entity);
         item_tip(&look, core, &bag, slot.0, rate)
-    } else if let Some(cell) = hovered(&cells) {
+    } else if let Some((entity, cell)) = hovered(&cells) {
+        over = Some(entity);
         shop_tip(&look, core, cell.0)
     } else {
         None
     };
+    // A popup of the game stands above the box it is about; one with no box hangs by the cursor.
+    let rect = over
+        .and_then(|entity| layout.get(entity).ok())
+        .map(|(node, at)| {
+            (
+                Rect::from_center_size(at.translation, node.size()),
+                Side::Above,
+            )
+        });
     if shown.0 != content {
         shown.0 = content;
+    }
+    if anchor.0 != rect {
+        anchor.0 = rect;
     }
 }
 
@@ -305,6 +323,8 @@ fn pick_pregame(
         if shown.0 != content {
             shown.0 = content;
         }
+        // The menu's tiles take the popup beside them.
+        let rect = rect.map(|rect| (rect, Side::Right));
         if anchor.0 != rect {
             anchor.0 = rect;
         }
@@ -348,8 +368,13 @@ fn forced_tip(look: &Lookup, spec: &str) -> Option<Content> {
 }
 
 /// What of a query's boxes the cursor is over, if any.
-fn hovered<'a, T: Component>(boxes: &'a Query<(&DirectlyHovered, &T)>) -> Option<&'a T> {
-    boxes.iter().find(|(i, _)| i.get()).map(|(_, b)| b)
+fn hovered<'a, T: Component>(
+    boxes: &'a Query<(Entity, &DirectlyHovered, &T)>,
+) -> Option<(Entity, &'a T)> {
+    boxes
+        .iter()
+        .find(|(_, i, _)| i.get())
+        .map(|(entity, _, b)| (entity, b))
 }
 
 /// A popup of the client's own words: a title and lines under it.
@@ -532,8 +557,13 @@ fn rebuild(
 
 /// Puts a popup that is about something beside it, clear of it, and hides the frame in which a new
 /// size has not been laid out yet.
+///
+/// The corner is a whole number of pixels, so that the popup's measured size, which rounds one pixel
+/// up or down with a fractional corner and is read back to place the corner, cannot make it jump
+/// between two places on every frame.
 fn place_beside(
     anchor: Rect,
+    side: Side,
     window: &Window,
     tip: (
         &mut Node,
@@ -553,14 +583,20 @@ fn place_beside(
     let bounds = Rect::from_corners(margin, extent - margin);
     let gap = 12.0 / unit.max(1e-3);
     // The shared help widget's rule: clear of the whole anchor, the preferred side then the others, within the window.
-    let Some(corner) = position(anchor, size, anchor.center(), bounds, gap, Side::Right)
+    let Some(corner) = position(anchor, size, anchor.center(), bounds, gap, side)
         .filter(|_| size.min_element() > 0.0)
+        .map(Vec2::round)
     else {
         visibility.set_if_neq(Visibility::Hidden);
         return;
     };
-    node.left = px(corner.x * unit);
-    node.top = px(corner.y * unit);
+    let (left, top) = (px(corner.x * unit), px(corner.y * unit));
+    if node.left != left {
+        node.left = left;
+    }
+    if node.top != top {
+        node.top = top;
+    }
     // Layout applies the new corner next frame: the box that is drawn now may still cover the anchor.
     let drawn = Rect::from_center_size(at.translation, size);
     let apart = (anchor.min - drawn.max)
@@ -573,13 +609,12 @@ fn place_beside(
     });
 }
 
-/// Puts the popup beside what it is about, else by the cursor, above it where there is room.
+/// Puts the popup beside the box it is about, else by the cursor.
 fn place(
     shown: Res<Shown>,
     anchor: Res<ShownAnchor>,
     args: Res<crate::Args>,
     window: Single<&Window, With<PrimaryWindow>>,
-    ui_scale: Res<UiScale>,
     mut tip: Single<
         (
             &mut Node,
@@ -595,27 +630,29 @@ fn place(
         visibility.set_if_neq(Visibility::Hidden);
         return;
     }
-    if let Some(anchor) = anchor.0 {
-        place_beside(anchor, &window, (node, visibility, computed, at));
+    if let Some((anchor, side)) = anchor.0 {
+        place_beside(anchor, side, &window, (node, visibility, computed, at));
         return;
     }
-    let cursor = window.cursor_position().or_else(|| {
-        args.tip
-            .is_some()
-            .then(|| Vec2::new(60.0, window.height() * 0.5))
-    });
-    let Some(cursor) = cursor else {
+    // A popup forced by `--tip` has no box: it hangs by a point (the cursor, else a fixed one).
+    let point = window
+        .cursor_position()
+        .or_else(|| {
+            args.tip
+                .is_some()
+                .then(|| Vec2::new(60.0, window.height() * 0.5))
+        })
+        .map(|point| point * window.scale_factor());
+    let Some(point) = point else {
         visibility.set_if_neq(Visibility::Hidden);
         return;
     };
-    let scale = ui_scale.0.max(0.1);
-    let (width, height) = (window.width() / scale, window.height() / scale);
-    let tall = computed.size().y * computed.inverse_scale_factor;
-    let x = (cursor.x / scale + GAP).min(width - WIDTH - 10.0);
-    let y = (cursor.y / scale - GAP - tall).clamp(4.0, (height - tall - 4.0).max(4.0));
-    node.left = px(x.max(4.0));
-    node.top = px(y);
-    visibility.set_if_neq(Visibility::Inherited);
+    place_beside(
+        Rect::from_center_size(point, Vec2::ZERO),
+        Side::Above,
+        &window,
+        (node, visibility, computed, at),
+    );
 }
 
 /// Spawns the parts of a popup.

@@ -63,13 +63,18 @@ fn a_second_and_third_wraith_band_bought_far_from_the_shop_buy_their_slippers_an
             None,
             "copy {copies} is bought without a refusal"
         );
-        assert_eq!(
-            gold - client.core().spendable_gold(),
-            350,
-            "copy {copies} costs a Slippers and a recipe"
+        // The purse also fills as the match runs: what was paid is at most the 350 of the two parts.
+        client.until("the purchase paid", |c| {
+            gold - c.core().spendable_gold() >= 300
+        });
+        let spent = gold - client.core().spendable_gold();
+        assert!(
+            spent <= 350,
+            "copy {copies} costs a Slippers and a recipe, not {spent}"
         );
-        assert_eq!(held(&client, ItemId::SLIPPERS), copies);
-        assert_eq!(held(&client, ItemId::RECIPE_WRAITH_BAND), copies);
+        client.until("the parts told", |c| {
+            held(c, ItemId::SLIPPERS) == copies && held(c, ItemId::RECIPE_WRAITH_BAND) == copies
+        });
     }
     assert_eq!(
         held(&client, ItemId::CIRCLET),
@@ -82,9 +87,14 @@ fn a_second_and_third_wraith_band_bought_far_from_the_shop_buy_their_slippers_an
 #[test]
 fn three_wraith_bands_bought_at_the_shop_with_three_circlets_are_built_one_by_one() {
     let (_server, mut client) = shopper("wraith", &[ItemId::CIRCLET; 3]);
+    // At the home shop, whatever the hero's spawn: the stash builds with the bag there.
+    let map = client.core().session().expect("a match").map();
+    let home = bota_core::fountain_pos(map, client.me().team);
+    client.stand_at((home.x.to_int(), home.y.to_int()));
     for copies in 1..=3 {
         right_click_buy(&mut client, ItemId::WRAITH_BAND);
-        assert_eq!(held(&client, ItemId::WRAITH_BAND), copies);
+        // The server builds the copy in the tick after it is bought; the view follows.
+        client.until("the copy built", |c| held(c, ItemId::WRAITH_BAND) == copies);
         assert_eq!(held(&client, ItemId::CIRCLET), 3 - copies);
     }
     assert!(

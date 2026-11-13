@@ -174,3 +174,29 @@ fn the_gold_frame_in_the_preparation_follows_the_gold_the_queue_leaves() {
         );
     }
 }
+
+/// Two queues of the same length and the same cost are not the same queue: replacing a Mantle by a
+/// Slippers (140 gold each) changes which recipe the gold left can finish.
+#[test]
+fn the_gold_frame_follows_a_queue_replaced_by_an_item_of_the_same_cost() {
+    let server = Server::start(1, &["--tactical-secs", "120"]);
+    let mut client = Client::pick(
+        &server,
+        HeroId::SHADOW_FIEND,
+        &["--shop", "upgrades:/wraith"],
+    );
+    assert!(client.core().in_tactical_phase());
+    client.core_mut().queue_buy(ItemId::MANTLE.0);
+    client.frames(5);
+    assert!(
+        !is_gold(&mut client, ItemId::WRAITH_BAND),
+        "no Slippers in the queue: the band is out of reach"
+    );
+    client.core_mut().unqueue_buy(ItemId::MANTLE.0);
+    client.core_mut().queue_buy(ItemId::SLIPPERS.0);
+    client.frames(5);
+    assert!(
+        is_gold(&mut client, ItemId::WRAITH_BAND),
+        "a queue holding the Slippers leaves the gold for the rest of the band"
+    );
+}
