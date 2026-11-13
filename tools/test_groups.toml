@@ -435,12 +435,14 @@ paths = [
     "src/e2e/pregame_choose.rs",
     "src/e2e/pregame_layout.rs",
     "src/e2e/pregame_phases.rs",
+    "src/e2e/scale_handover.rs",
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
         "e2e::pregame_choose::",
         "e2e::pregame_layout::",
         "e2e::pregame_phases::",
+        "e2e::scale_handover::",
     ] },
 ]
 

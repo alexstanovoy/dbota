@@ -126,6 +126,15 @@ pub fn plugin(app: &mut App) {
                 hud_shown.after(drive).in_set(crate::ui::Mode),
             ),
         )
+        // What the game or the menu reveals is decided a second time after the loading screen's
+        // own system (a frame's last change of state), so the scale follows it in the very frame
+        // that shows it.
+        .add_systems(
+            PostUpdate,
+            hud_shown
+                .in_set(crate::ui::Mode)
+                .after(crate::loading::track),
+        )
         .add_systems(
             PostUpdate,
             (

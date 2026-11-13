@@ -170,28 +170,7 @@ fn ten_seats(window: &str) -> (Server, Client) {
                 .values()
                 .all(|(done, total)| done == total)
     });
-    wait_for_the_game_scale(&mut client);
     (server, client)
-}
-
-/// Waits for the interface to take the game's design scale: while the loading screen is up the
-/// interface is scaled as the menu is (`ui::MENU_DESIGN_HEIGHT`) and takes the HUD's
-/// (`ui::HUD_DESIGN_HEIGHT`, which the pre-game screens are drawn in) a few frames after the
-/// loading lifts. The window is of scale factor one and the settings' factor is one.
-fn wait_for_the_game_scale(client: &mut Client) {
-    client.within(
-        PATIENCE,
-        "the interface at the game's design scale",
-        |client| {
-            let window = window_of(client);
-            let world = client.world();
-            world.resource::<crate::ui::HudShown>().0
-                && (world.resource::<UiScale>().0 - window.y / crate::ui::HUD_DESIGN_HEIGHT).abs()
-                    < 1e-3
-        },
-    );
-    // The layout follows the scale by a frame.
-    client.frames(2);
 }
 
 /// The window's size in physical pixels.

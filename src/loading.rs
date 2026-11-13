@@ -178,7 +178,7 @@ fn begin(
 
 /// Works out how far the loading is and lifts the screen once every part is
 /// resident and, in a match under way, its world stands.
-fn track(
+pub(crate) fn track(
     session: NonSend<Session>,
     parts: Res<Parts>,
     ready: Res<crate::trees::SceneryReady>,

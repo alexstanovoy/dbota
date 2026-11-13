@@ -150,6 +150,12 @@ pub fn plugin(app: &mut App) {
         )
         .add_systems(PreStartup, load_fonts)
         .add_systems(Update, (scale_ui.after(Mode), register_fallback))
+        // The scale is worked out again before the layout, after the last change of what is
+        // revealed (`Mode`), so no frame is laid out at the scale of what it no longer shows.
+        .add_systems(
+            PostUpdate,
+            scale_ui.after(Mode).before(bevy::ui::UiSystems::Prepare),
+        )
         .add_systems(
             PostUpdate,
             (cover, shrink).after(bevy::ui::UiSystems::Layout),
