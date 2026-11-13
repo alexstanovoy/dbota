@@ -155,6 +155,123 @@ fn the_private_environment_of_the_shell_wrappers_silences_the_audio_output() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
 }
 
+/// What `DBOTA_NULL_AUDIO` is in a command started through `tools/headless.sh` the way `how` says,
+/// the caller's own variable removed unless `caller` sets it.
+#[cfg(unix)]
+fn audio_policy_through_headless(how: &[(&str, &str)], caller: Option<&str>) -> String {
+    let scratch = common::prepared::Scratch::new("headless-silent");
+    let tools = copy_tools(&scratch, &["headless.sh"]);
+    let mut wrapper = std::process::Command::new("bash");
+    wrapper
+        .arg(tools.join("headless.sh"))
+        .args(["sh", "-c", "echo \"${DBOTA_NULL_AUDIO-unset}\""])
+        .env("HOME", scratch.path("real-home"))
+        .env("CARGO_TARGET_DIR", scratch.path("target"))
+        .env_remove("DBOTA_SHOW")
+        .env_remove("DBOTA_HEADLESS")
+        .env_remove("DBOTA_NULL_AUDIO");
+    if let Some(caller) = caller {
+        wrapper.env("DBOTA_NULL_AUDIO", caller);
+    }
+    for (name, value) in how {
+        wrapper.env(name, value);
+    }
+    let output = wrapper.output().expect("the wrapper starts");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// The ways into `tools/headless.sh` that do not start a compositor of its own (a person shows the
+/// windows, an outer compositor is already there) still play to no sound device; only a person
+/// showing the windows may ask for their sound.
+#[cfg(unix)]
+#[test]
+fn headless_sh_silences_the_audio_output_on_its_early_exits_too() {
+    assert_eq!(
+        audio_policy_through_headless(&[("DBOTA_SHOW", "1")], None),
+        "1",
+        "windows shown"
+    );
+    assert_eq!(
+        audio_policy_through_headless(&[("DBOTA_HEADLESS", "outer")], None),
+        "1",
+        "inside an outer compositor"
+    );
+    assert_eq!(
+        audio_policy_through_headless(&[("DBOTA_HEADLESS", "outer")], Some("0")),
+        "1",
+        "an outer compositor's command cannot ask for a device"
+    );
+    assert_eq!(
+        audio_policy_through_headless(&[("DBOTA_SHOW", "1")], Some("0")),
+        "0",
+        "a person who looks at the windows may keep their sound"
+    );
+}
+
+/// The command inside the compositor that `tools/headless.sh` starts (its inner half, run here with
+/// the output descriptors it expects and no compositor) plays to no device.
+#[cfg(unix)]
+#[test]
+fn headless_sh_inner_half_silences_the_audio_output() {
+    let scratch = common::prepared::Scratch::new("headless-inner");
+    let tools = copy_tools(&scratch, &["headless.sh"]);
+    let output = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(
+            "bash \"$1\" --dbota-headless-inner \"$2\" sh -c 'echo \"${DBOTA_NULL_AUDIO-unset}\"' 3>&1 4>&2",
+        )
+        .arg("probe")
+        .arg(tools.join("headless.sh"))
+        .arg(scratch.path("status"))
+        .env("HOME", scratch.path("real-home"))
+        .env("CARGO_TARGET_DIR", scratch.path("target"))
+        .env_remove("DBOTA_NULL_AUDIO")
+        .output()
+        .expect("the wrapper starts");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
+}
+
+/// `tools/test_client.sh` runs the client it starts silent too.
+#[cfg(unix)]
+#[test]
+fn shell_test_client_plays_to_no_device() {
+    let scratch = common::prepared::Scratch::new("shell-client-silent");
+    let tools = copy_tools(&scratch, &["test_client.sh"]);
+    let target = scratch.path("target");
+    let cache = scratch.path("cache");
+    std::fs::create_dir_all(target.join("release")).expect("binary directory");
+    std::fs::create_dir_all(&cache).expect("cache directory");
+    std::fs::write(cache.join("index.txt"), "").expect("cache index");
+    executable(
+        &target.join("release/dbota"),
+        "#!/bin/sh\necho \"${DBOTA_NULL_AUDIO-unset}\"\n",
+    );
+    let output = std::process::Command::new("bash")
+        .arg(tools.join("test_client.sh"))
+        .env("HOME", scratch.path("real-home"))
+        .env("DBOTA_ASSETS", &cache)
+        .env("CARGO_TARGET_DIR", &target)
+        .env_remove("DBOTA_NULL_AUDIO")
+        .output()
+        .expect("wrapper starts");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
+}
+
 #[cfg(unix)]
 #[test]
 fn shell_test_client_runs_the_binary_of_the_cargo_target_dir() {

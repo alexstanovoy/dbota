@@ -3,7 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use dbota_import::import::{Flow, IMPORT_REV, Item, Plan, Sink, is_small, run, safe_path};
+use dbota_import::import::{
+    Flow, IMPORT_REV, Item, Plan, Sink, check_sound_name, is_small, run, safe_path,
+};
 use dbota_import::text::{labels_json, shop_json, tooltips_json, wanted};
 use heatel::{Error, SliceSource};
 
@@ -932,5 +934,57 @@ fn response_rules_of_long_unknown_kinds_are_refused_by_the_same_budget() {
     assert!(
         why.iter().any(|w| w.contains("bytes more than it may")),
         "{why:?}"
+    );
+}
+
+/// A sound goes only to a file whose extension says what it holds: the client picks its decoder
+/// by the extension, so a WAV in `.mp3`, an extension that merely ends in the right letters, and
+/// no extension at all are refused, each with the name it was given.
+#[test]
+fn a_sound_is_refused_an_output_name_that_does_not_say_what_it_holds() {
+    assert!(check_sound_name("sounds/x.wav", "wav").is_ok());
+    assert!(check_sound_name("sounds/x.wav.wav", "wav").is_ok());
+    assert!(check_sound_name("sounds/x.mp3", "mp3").is_ok());
+    for dest in [
+        "sounds/x.mp3",
+        "sounds/x.notwav",
+        "sounds/xwav",
+        "sounds/x",
+        "sounds/x.wav.mp3",
+        "sounds/.wav",
+    ] {
+        let why = check_sound_name(dest, "wav").expect_err(dest).to_string();
+        assert_eq!(
+            why,
+            format!("sound: the sound is a wav, not the cache's {dest}")
+        );
+    }
+}
+
+/// The sounds the manifest's world line leaves out of the soundscapes (`soundscape_omit=`) reach
+/// the plan the importer runs: the attribute is read, not only used once it is given.
+#[test]
+fn the_manifests_soundscape_omissions_reach_the_importers_plan() {
+    let plan = Plan::parse(
+        include_str!("../../../assets-manifest/manifest.txt"),
+        include_str!("../../../assets-manifest/ids.txt"),
+    )
+    .expect("the committed manifest");
+    let omitted: Vec<&Vec<String>> = plan
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Placements {
+                soundscape_omit, ..
+            } => Some(soundscape_omit),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        omitted,
+        [&vec![
+            "radiant_ancient_lp_01".to_owned(),
+            "dire_ancient_lp_01".to_owned()
+        ]]
     );
 }

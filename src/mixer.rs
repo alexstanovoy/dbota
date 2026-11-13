@@ -1424,6 +1424,38 @@ mod tests {
         );
     }
 
+    /// The install's repeat rule of a creep's blow (`block_s` 0.05, `block_units` 100): a repeat
+    /// of the event that starts within 50 ms of a sounding instance and within 100 units of it is
+    /// not played; one farther away, or later, is.
+    #[test]
+    fn a_repeat_within_the_events_block_time_and_distance_is_not_played() {
+        let mut app = an_app();
+        let world = app.world_mut();
+        let mut blow = event("blow", false, 120);
+        blow.block = Duration::from_millis(50);
+        blow.block_units = 100.0;
+        world.insert_resource(mixer(vec![blow]));
+        let mut start = |at_ms: u64, x: f32| {
+            let started = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+                mixer.start(
+                    &mut world.commands(),
+                    Duration::from_millis(at_ms),
+                    &Request {
+                        at: Some((x, 0.0)),
+                        ..request("blow", Owner::None)
+                    },
+                    Handle::default(),
+                )
+            });
+            world.flush();
+            started
+        };
+        assert_eq!(start(0, 0.0), Started::Once, "the first blow");
+        assert_eq!(start(20, 60.0), Started::Refused, "20 ms on, 60 units off");
+        assert_eq!(start(20, 150.0), Started::Once, "20 ms on, 150 units off");
+        assert_eq!(start(80, 60.0), Started::Once, "80 ms on, 60 units off");
+    }
+
     #[test]
     fn imported_repeat_blocks_count_sounding_instances_not_finished_triggers() {
         let mut app = an_app();

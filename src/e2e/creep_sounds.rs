@@ -81,6 +81,22 @@ fn look_at(client: &mut Client, (x, y): (i32, i32)) {
     camera.focus = bevy::prelude::Vec3::new(x as f32, 0.0, -(y as f32));
 }
 
+/// Frames a sound is waited for at most once its fight is on, at [`FRAME`] each: a sound that is
+/// missing fails the test by its own assertion after that much simulated time, not by the
+/// harness's deadline.
+const SOUND_WITHIN: usize = 1500;
+
+/// Runs frames until `heard` holds, at most [`SOUND_WITHIN`] of them.
+fn hears(client: &mut Client, what: &str, mut heard: impl FnMut(&mut Client) -> bool) {
+    for _ in 0..SOUND_WITHIN {
+        if heard(client) {
+            return;
+        }
+        client.frames(1);
+    }
+    assert!(heard(client), "{what}: not within {SOUND_WITHIN} frames");
+}
+
 /// A match with the hero set apart and invulnerable, and the camera over a lane fight of both
 /// sides' creeps (one wave of each, facing each other): no sound is of the hero's.
 fn lane_fight() -> (Server, Client, Log, (i32, i32)) {
@@ -110,7 +126,7 @@ fn lane_fight() -> (Server, Client, Log, (i32, i32)) {
 #[test]
 fn melee_creeps_fighting_each_other_whoosh_then_clash() {
     let (_server, mut client, log, _) = lane_fight();
-    client.until("both sides' melee blows sounded", |_| {
+    hears(&mut client, "both sides' melee blows sounded", |_| {
         of(&log, "Creep_Good_Melee.Attack").len() >= 3
             && of(&log, "Creep_Bad_Melee.Attack").len() >= 3
     });
@@ -136,26 +152,30 @@ fn melee_creeps_fighting_each_other_whoosh_then_clash() {
 fn ranged_creeps_sound_their_missiles_leaving_and_landing() {
     let (_server, mut client, log, _) = lane_fight();
     let mut seen = 0;
-    client.until("both sides' ranged launches and landings sounded", |c| {
-        let launches =
-            of(&log, "Creep_Good_Range.Attack").len() + of(&log, "Creep_Bad_Range.Attack").len();
-        if launches > seen {
-            seen = launches;
-            let view = c.view();
-            assert!(
-                view.projectiles.iter().any(|p| {
-                    p.source
-                        .and_then(|id| view.unit(id))
-                        .is_some_and(|u| u.kind == UnitKind::CreepRanged)
-                }),
-                "a launch sounds while a ranged creep's missile is in the air"
-            );
-        }
-        ["Good", "Bad"].iter().all(|side| {
-            !of(&log, &format!("Creep_{side}_Range.Attack")).is_empty()
-                && !of(&log, &format!("Creep_{side}_Range.ProjectileImpact")).is_empty()
-        })
-    });
+    hears(
+        &mut client,
+        "both sides' ranged launches and landings sounded",
+        |c| {
+            let launches = of(&log, "Creep_Good_Range.Attack").len()
+                + of(&log, "Creep_Bad_Range.Attack").len();
+            if launches > seen {
+                seen = launches;
+                let view = c.view();
+                assert!(
+                    view.projectiles.iter().any(|p| {
+                        p.source
+                            .and_then(|id| view.unit(id))
+                            .is_some_and(|u| u.kind == UnitKind::CreepRanged)
+                    }),
+                    "a launch sounds while a ranged creep's missile is in the air"
+                );
+            }
+            ["Good", "Bad"].iter().all(|side| {
+                !of(&log, &format!("Creep_{side}_Range.Attack")).is_empty()
+                    && !of(&log, &format!("Creep_{side}_Range.ProjectileImpact")).is_empty()
+            })
+        },
+    );
     for side in ["Good", "Bad"] {
         let launch = of(&log, &format!("Creep_{side}_Range.Attack"))[0].clone();
         let landing = of(&log, &format!("Creep_{side}_Range.ProjectileImpact"))[0].clone();
@@ -206,6 +226,50 @@ fn a_full_wave_fighting_does_not_stack_into_noise() {
         loudest <= 1.0,
         "no creep sound is started above full volume"
     );
+}
+
+/// More creeps than a tick sounds swings of (32), with those of the fight to come to spare.
+const MORE_THAN_A_TICK_SOUNDS: usize = 36;
+
+/// Creeps elsewhere do not take the place of the fight under the camera: more creeps than a tick
+/// sounds swings of are in sight (the first made, far from the camera), and the later wave that
+/// fights under it is heard all the same.
+#[test]
+fn a_fight_under_the_camera_is_heard_among_more_creeps_than_a_tick_sounds() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.stand_at(MID);
+    client.cheat(Cheat::Invulnerable { on: true });
+    for far in 0..10 {
+        client.cheat(Cheat::CreateCreeps {
+            enemy: false,
+            at: At::from_ints(MID.0 - 3500 - 150 * far, MID.1),
+        });
+    }
+    client.until("more creeps in sight than a tick sounds swings of", |c| {
+        c.view()
+            .units
+            .iter()
+            .filter(|u| matches!(u.kind, UnitKind::CreepMelee | UnitKind::CreepRanged))
+            .count()
+            >= MORE_THAN_A_TICK_SOUNDS
+    });
+    let fight = (MID.0 + APART, MID.1);
+    for (enemy, dx) in [(false, 0), (true, 500)] {
+        client.cheat(Cheat::CreateCreeps {
+            enemy,
+            at: At::from_ints(fight.0 + dx, fight.1),
+        });
+    }
+    look_at(&mut client, fight);
+    client
+        .world_mut()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
+    let log = audio_log(&mut client);
+    hears(&mut client, "the fight under the camera heard", |_| {
+        of(&log, "Creep_Good_Melee.Attack").len() >= 3
+            && of(&log, "Creep_Bad_Melee.Attack").len() >= 3
+    });
 }
 
 /// Creeps beating a hero are heard whichever hero it is: one's own, an ally's or an enemy's.
@@ -303,12 +367,16 @@ fn siege_creeps_sound_their_missiles_leaving_and_landing() {
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
     let log = audio_log(&mut client);
-    client.until("both sides' catapults launched and landed", |_| {
-        ["Good", "Bad"].iter().all(|side| {
-            !of(&log, &format!("Creep_{side}_Engine.Attack")).is_empty()
-                && !of(&log, &format!("Creep_{side}_Engine.ProjectileImpact")).is_empty()
-        })
-    });
+    hears(
+        &mut client,
+        "both sides' catapults launched and landed",
+        |_| {
+            ["Good", "Bad"].iter().all(|side| {
+                !of(&log, &format!("Creep_{side}_Engine.Attack")).is_empty()
+                    && !of(&log, &format!("Creep_{side}_Engine.ProjectileImpact")).is_empty()
+            })
+        },
+    );
     for side in ["Good", "Bad"] {
         let launch = of(&log, &format!("Creep_{side}_Engine.Attack"))[0].clone();
         let landing = of(&log, &format!("Creep_{side}_Engine.ProjectileImpact"))[0].clone();
@@ -365,7 +433,7 @@ fn neutral_attack_sounds(ranged: bool) -> (String, Log) {
         .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
     let log = audio_log(&mut client);
     let wanted_event = format!("{set}.attack");
-    client.until("the neutral's attack sounded", |_| {
+    hears(&mut client, "the neutral's attack sounded", |_| {
         log.lock()
             .expect("unpoisoned")
             .iter()

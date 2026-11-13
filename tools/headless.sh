@@ -10,7 +10,8 @@
 # command starts (cargo tests that spawn dbota, a server and its clients) shares it.
 #
 # Environment:
-#   DBOTA_SHOW=1               run COMMAND on the desktop instead, windows shown (interactive debugging)
+#   DBOTA_SHOW=1               run COMMAND on the desktop instead, windows shown (interactive debugging); its sounds
+#                              go to no device unless DBOTA_NULL_AUDIO=0
 #   DBOTA_HEADLESS_SIZE=WxH    the virtual output's size (default 1920x1080)
 #   DBOTA_HEADLESS_SCALE=N     its integer scale (default 1)
 #   DBOTA_WESTON=PATH          the weston to run (default: `weston` on PATH; packaged as `weston`)
@@ -43,7 +44,15 @@ if [ $# -eq 0 ]; then
     exit 2
 fi
 # Shown on request, and not nested: a command already inside a headless compositor stays in it.
-if [ "${DBOTA_SHOW:-0}" = 1 ] || [ -n "${DBOTA_HEADLESS:-}" ]; then
+# Neither plays to a sound device: the silent output is chosen here, before the command runs, as the
+# private environment chooses it for a command that does not take these two ways out. Only a person
+# who looks at the windows with DBOTA_SHOW=1 can keep their sound, by saying DBOTA_NULL_AUDIO=0.
+if [ "${DBOTA_SHOW:-0}" = 1 ]; then
+    export DBOTA_NULL_AUDIO="${DBOTA_NULL_AUDIO:-1}"
+    exec "$@"
+fi
+if [ -n "${DBOTA_HEADLESS:-}" ]; then
+    export DBOTA_NULL_AUDIO=1
     exec "$@"
 fi
 

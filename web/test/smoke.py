@@ -443,10 +443,21 @@ def browser_arguments():
         "--enable-unsafe-webgpu", *graphics[selected], "--enable-features=Vulkan",
         # Local test servers must not open a browser permission prompt.
         "--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests",
+        # The page plays its sounds to the audio graph and nobody: a check never reaches the machine's speakers.
+        "--mute-audio",
     ]
 
 
 BROWSER_ARGS = browser_arguments()
+# Firefox's way of the same: no volume.
+FIREFOX_PREFERENCES = {"media.volume_scale": "0.0"}
+
+
+def launch_engine(p, engine):
+    """The browser of an engine, started so that its page plays to no speakers."""
+    if engine == "chromium":
+        return p.chromium.launch(args=BROWSER_ARGS)
+    return getattr(p, engine).launch(firefox_user_prefs=FIREFOX_PREFERENCES)
 # The dashboard button's middle in a replay page of 1280x720 (logical pixels).
 DASHBOARD = (15, 15)
 
@@ -607,7 +618,7 @@ def check_escape_in_fullscreen(directory):
         server = serve(directory)
         base = f"http://127.0.0.1:{server.server_address[1]}/"
         for engine in ("chromium", "firefox"):
-            browser = getattr(p, engine).launch(args=BROWSER_ARGS if engine == "chromium" else [])
+            browser = launch_engine(p, engine)
             page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
             console = []
             page.on("console", lambda m: console.append(m.text))
@@ -1123,7 +1134,7 @@ def check_boot_page(directory):
         with sync_playwright() as p:
             server = serve(directory)
             try:
-                browser = getattr(p, engine).launch(args=BROWSER_ARGS if engine == "chromium" else [])
+                browser = launch_engine(p, engine)
             except Exception as e:
                 # a browser that is not there is a check that did not run: it fails
                 sys.exit(f"boot [{engine}]: no browser ({str(e)[:200]})")
@@ -1281,7 +1292,7 @@ def check_busy_page(directory):
         Busy.refuse, Busy.asked = refuse, {}
         with sync_playwright() as p:
             server = serve(directory, Busy)
-            browser = getattr(p, engine).launch(args=BROWSER_ARGS if engine == "chromium" else [])
+            browser = launch_engine(p, engine)
             page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
             page.add_init_script(said_log)
             page.goto(f"http://127.0.0.1:{server.server_address[1]}/{query}", wait_until="commit")

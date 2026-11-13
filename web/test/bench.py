@@ -31,6 +31,7 @@ ARGS = [
     "--enable-unsafe-webgpu", "--enable-features=Vulkan", "--use-angle=vulkan", "--ignore-gpu-blocklist",
     "--disable-gpu-vsync", "--disable-frame-rate-limit",
     "--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests",
+    "--mute-audio",
 ]
 # What ends a run: the client died. Its other ERROR lines are said on stderr with the result.
 FAILED = re.compile(r"panicked|RuntimeError")

@@ -47,7 +47,7 @@ class VoiceWorkerTests(unittest.TestCase):
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
         cls.playwright = sync_playwright().start()
-        cls.browser = cls.playwright.chromium.launch(args=["--no-sandbox"])
+        cls.browser = cls.playwright.chromium.launch(args=["--no-sandbox", "--mute-audio"])
         cls.page = cls.browser.new_page()
         cls.page.goto(f"http://127.0.0.1:{cls.server.server_port}/cache.js")
 

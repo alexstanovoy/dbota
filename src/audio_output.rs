@@ -29,7 +29,7 @@ use bevy::audio::{
 };
 use bevy::prelude::*;
 use rodio::cpal::StreamError;
-use rodio::mixer::Mixer;
+use rodio::mixer::{Mixer, MixerSource};
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
 
 /// The variable that makes the client play to no device. Anything but empty or `0` asks for it.
@@ -74,6 +74,55 @@ const SILENT_RATE: u32 = 44_100;
 /// How much of the sound the silent output takes in at a time, which is also how often it wakes.
 const SILENT_STEP: Duration = Duration::from_millis(20);
 
+/// When the silent output takes its next step, kept apart from the clock so that it can be driven
+/// by a simulated one. Steps are due one [`SILENT_STEP`] apart; one a little late is made up by
+/// the next, but after a stall (more than a step behind) the missed time is not made up: a device
+/// that was not served plays nothing for it, and sounds queued after the stall must not be
+/// drained in a burst, ending sooner than their length.
+struct Pace {
+    due: Duration,
+}
+
+impl Pace {
+    fn new(now: Duration) -> Pace {
+        Pace { due: now }
+    }
+
+    /// How long to sleep after a step taken at `now` (time since the output opened).
+    fn after_step(&mut self, now: Duration) -> Duration {
+        self.due += SILENT_STEP;
+        if now > self.due + SILENT_STEP {
+            self.due = now + SILENT_STEP;
+        }
+        self.due.saturating_sub(now)
+    }
+}
+
+/// What a step of the silent output takes: the mixer's samples for [`SILENT_STEP`].
+struct Drain {
+    source: MixerSource,
+    per_step: usize,
+}
+
+impl Drain {
+    fn new(source: MixerSource) -> Drain {
+        let samples =
+            u128::from(SILENT_RATE) * u128::from(SILENT_CHANNELS) * SILENT_STEP.as_millis() / 1000;
+        Drain {
+            source,
+            per_step: usize::try_from(samples).expect("a step's samples fit"),
+        }
+    }
+
+    fn step(&mut self) {
+        for _ in 0..self.per_step {
+            if self.source.next().is_none() {
+                break;
+            }
+        }
+    }
+}
+
 /// An output with no device behind it. A worker takes the mixer's samples at the pace of the
 /// sample rate, a step at a time, sleeping between steps, so that a sound ends when it would on a
 /// device and the thread is idle in between.
@@ -85,25 +134,16 @@ struct Silent {
 
 impl Silent {
     fn open() -> Silent {
-        let channels = NonZero::new(SILENT_CHANNELS).expect("some channels");
-        let rate = NonZero::new(SILENT_RATE).expect("some rate");
-        let (mixer, mut source) = rodio::mixer::mixer(channels, rate);
+        let (mixer, source) = silent_mixer();
         let stop = Arc::new(AtomicBool::new(false));
         let ending = Arc::clone(&stop);
-        let per_step = (u128::from(SILENT_RATE)
-            * u128::from(SILENT_CHANNELS)
-            * SILENT_STEP.as_millis()
-            / 1000) as usize;
         let worker = std::thread::spawn(move || {
-            let mut due = Instant::now();
+            let mut drain = Drain::new(source);
+            let opened = Instant::now();
+            let mut pace = Pace::new(Duration::ZERO);
             while !ending.load(Ordering::Acquire) {
-                for _ in 0..per_step {
-                    if source.next().is_none() {
-                        break;
-                    }
-                }
-                due += SILENT_STEP;
-                std::thread::sleep(due.saturating_duration_since(Instant::now()));
+                drain.step();
+                std::thread::sleep(pace.after_step(opened.elapsed()));
             }
         });
         Silent {
@@ -112,6 +152,13 @@ impl Silent {
             worker: Some(worker),
         }
     }
+}
+
+/// The mixer of a silent output and the source its steps drain.
+fn silent_mixer() -> (Mixer, MixerSource) {
+    let channels = NonZero::new(SILENT_CHANNELS).expect("some channels");
+    let rate = NonZero::new(SILENT_RATE).expect("some rate");
+    rodio::mixer::mixer(channels, rate)
 }
 
 impl Drop for Silent {
@@ -413,33 +460,82 @@ mod tests {
         assert_eq!(Kind::of(Some("1")), Kind::Silent);
     }
 
-    /// The silent output keeps the pace of a device: a sound of a third of a second is not over
-    /// when it is started, and is not over before a quarter of a second has passed, but it ends.
-    #[test]
-    fn a_silent_output_plays_a_sound_out_at_the_pace_of_a_device() {
-        let silent = Silent::open();
+    /// A sound of a third of a second, as the silent output's mixer takes it.
+    fn a_third_of_a_second(mixer: &Mixer) -> Player {
         let samples = vec![0.0; (SILENT_RATE * u32::from(SILENT_CHANNELS) / 3) as usize];
         let sound = rodio::buffer::SamplesBuffer::new(
             NonZero::new(SILENT_CHANNELS).expect("channels"),
             NonZero::new(SILENT_RATE).expect("rate"),
             samples,
         );
-        let player = Player::connect_new(&silent.mixer);
-        let started = Instant::now();
+        let player = Player::connect_new(mixer);
         player.append(sound);
-        assert!(!player.empty(), "a sound just started is playing");
-        while !player.empty() {
-            assert!(
-                started.elapsed() < Duration::from_secs(10),
-                "the sound never ended"
-            );
-            std::thread::sleep(Duration::from_millis(5));
+        player
+    }
+
+    /// Runs the silent output's steps on a simulated clock from `from` until `player` has played
+    /// out, a step at the time its pace says; the time it ended.
+    fn until_over(
+        drain: &mut Drain,
+        pace: &mut Pace,
+        mut now: Duration,
+        player: &Player,
+    ) -> Duration {
+        for _ in 0..1000 {
+            drain.step();
+            if player.empty() {
+                return now;
+            }
+            now += pace.after_step(now).max(Duration::from_millis(1));
         }
+        panic!("the sound never ended");
+    }
+
+    /// The silent output keeps the pace of a device: a sound of a third of a second is playing
+    /// when it is started and over only once a third of a second of the clock has passed.
+    #[test]
+    fn a_silent_output_plays_a_sound_out_in_its_own_length() {
+        let (mixer, source) = silent_mixer();
+        let mut drain = Drain::new(source);
+        let mut pace = Pace::new(Duration::ZERO);
+        let player = a_third_of_a_second(&mixer);
+        assert!(!player.empty(), "a sound just started is playing");
+        let ended = until_over(&mut drain, &mut pace, Duration::ZERO, &player);
         assert!(
-            started.elapsed() >= Duration::from_millis(250),
-            "a third of a second of sound ended after {:?}",
-            started.elapsed()
+            ended >= Duration::from_millis(300) && ended <= Duration::from_millis(360),
+            "a third of a second of sound ended at {ended:?}"
         );
+    }
+
+    /// A stall of the worker does not make up its time on what is queued after it: a sound
+    /// started after a pause of seconds plays out in its own length, not in a burst.
+    #[test]
+    fn a_stalled_silent_output_does_not_drain_a_sound_started_after_the_stall_early() {
+        let (mixer, source) = silent_mixer();
+        let mut drain = Drain::new(source);
+        let mut pace = Pace::new(Duration::ZERO);
+        drain.step();
+        let stalled_until = Duration::from_secs(5);
+        let sleep = pace.after_step(stalled_until);
+        assert_eq!(sleep, SILENT_STEP, "a step after a stall waits a full step");
+        let player = a_third_of_a_second(&mixer);
+        let began = stalled_until + sleep;
+        let ended = until_over(&mut drain, &mut pace, began, &player);
+        assert!(
+            ended - began >= Duration::from_millis(300),
+            "a sound queued after a stall ended after {:?}",
+            ended - began
+        );
+    }
+
+    /// A step a little late is made up by the next; the pace is still one step to a step.
+    #[test]
+    fn a_step_a_little_late_is_made_up_by_the_next() {
+        let mut pace = Pace::new(Duration::ZERO);
+        let first = pace.after_step(Duration::ZERO);
+        assert_eq!(first, SILENT_STEP);
+        let late = pace.after_step(SILENT_STEP + Duration::from_millis(15));
+        assert_eq!(late, Duration::from_millis(5));
     }
 
     /// With no device at the start there is none to lose and none to wait for.

@@ -229,3 +229,94 @@ fn hero_voice_lines_carry_their_lip_sync() {
     println!("voice lines: {lines} with phonemes, {curves} with morph curves");
     assert!(lines >= 48 && curves > 0);
 }
+
+/// The real importer, over a real WAV of the install, refuses to write it under an `.mp3` name and
+/// says so by name; the same sound under its right name is written.
+#[test]
+#[ignore = "needs a local Dota 2 install"]
+fn the_importer_refuses_a_wav_it_is_asked_to_name_mp3() {
+    use dbota_import::import::{Flow, Plan, Sink, run};
+    #[derive(Default)]
+    struct Memory(std::collections::BTreeMap<String, usize>);
+    impl Sink for Memory {
+        fn write(&mut self, path: &str, data: &[u8]) -> heatel::Result<()> {
+            self.0.insert(path.to_owned(), data.len());
+            Ok(())
+        }
+    }
+    let dota_path = std::env::var_os("DBOTA_DOTA_PATH").map(PathBuf::from);
+    let game = find_game_dir(dota_path.as_deref()).expect("Dota 2 not found");
+    let plan = Plan::parse(
+        "sound a sounds/ambient/mega_horn_dire_2d.vsnd_c sounds/mega/wrong.mp3 event=MegaCreeps.Radiant\n\
+         sound b sounds/ambient/mega_horn_dire_2d.vsnd_c sounds/mega/right.wav event=MegaCreeps.Radiant\n",
+        "",
+    )
+    .expect("a plan");
+    let mut sink = Memory::default();
+    let report = run(DirSource::new(game), &plan, &mut sink, &mut |_| {
+        Flow::Continue
+    })
+    .expect("the import runs");
+    assert!(
+        !sink.0.contains_key("sounds/mega/wrong.mp3"),
+        "{:?}",
+        sink.0
+    );
+    assert!(sink.0.contains_key("sounds/mega/right.wav"), "{:?}", sink.0);
+    assert!(
+        report
+            .failed
+            .iter()
+            .any(|(_, why)| why
+                == "sound: the sound is a wav, not the cache's sounds/mega/wrong.mp3"),
+        "{:?}",
+        report.failed
+    );
+}
+
+/// The map's placements as the real importer makes them from the committed manifest: the soundscape
+/// list and the sounds imported leave out the Ancients' loops the world line omits, and keep the
+/// spawn loops beside them.
+#[test]
+#[ignore = "needs a local Dota 2 install"]
+fn the_manifests_omitted_soundscape_sounds_are_not_imported() {
+    use dbota_import::import::{Flow, Item, Plan, Sink, run};
+    #[derive(Default)]
+    struct Memory(std::collections::BTreeMap<String, Vec<u8>>);
+    impl Sink for Memory {
+        fn write(&mut self, path: &str, data: &[u8]) -> heatel::Result<()> {
+            self.0.insert(path.to_owned(), data.to_vec());
+            Ok(())
+        }
+    }
+    let dota_path = std::env::var_os("DBOTA_DOTA_PATH").map(PathBuf::from);
+    let game = find_game_dir(dota_path.as_deref()).expect("Dota 2 not found");
+    let mut plan = Plan::parse(
+        &std::fs::read_to_string(repo().join("assets-manifest/manifest.txt")).unwrap(),
+        &std::fs::read_to_string(repo().join("assets-manifest/ids.txt")).unwrap(),
+    )
+    .expect("the committed manifest");
+    plan.items
+        .retain(|item| matches!(item, Item::Placements { .. }));
+    assert_eq!(plan.items.len(), 1, "the map's placements");
+    let mut sink = Memory::default();
+    run(DirSource::new(game), &plan, &mut sink, &mut |_| {
+        Flow::Continue
+    })
+    .expect("the placements import");
+    let list = String::from_utf8(sink.0["map/mid/soundscapes.txt"].clone()).unwrap();
+    for omitted in ["radiant_ancient_lp_01", "dire_ancient_lp_01"] {
+        assert!(!list.contains(omitted), "{omitted} is listed");
+        assert!(
+            !sink.0.keys().any(|path| path.contains(omitted)),
+            "{omitted} is imported"
+        );
+    }
+    for kept in ["radiant_spawn_loop_02", "dire_spawn_loop_01"] {
+        assert!(list.contains(kept), "{kept} is no longer listed");
+        assert!(
+            sink.0.keys().any(|path| path.contains(kept)),
+            "{kept} is no longer imported"
+        );
+    }
+}

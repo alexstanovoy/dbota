@@ -1031,9 +1031,25 @@ fn throws_missiles(unit: &bota_proto::UnitView) -> bool {
     }
 }
 
+/// At most `cap` of `items`, the nearest to `focus` first: the budget of sounds a tick starts is
+/// spent where the camera is, not on whatever comes first in the view.
+fn nearest_first<T>(mut items: Vec<T>, focus: Vec2, cap: usize, at: impl Fn(&T) -> Vec2) -> Vec<T> {
+    let distance = |item: &T| at(item).distance_squared(focus);
+    if items.len() > cap {
+        items.select_nth_unstable_by(cap, |a, b| distance(a).total_cmp(&distance(b)));
+        items.truncate(cap);
+    }
+    items
+}
+
+/// A point of the world as the camera's frame has it.
+fn spot(pos: bota_proto::Vec2) -> Vec2 {
+    Vec2::new(pos.x.to_f32(), pos.y.to_f32())
+}
+
 /// The shots of creeps and towers that let a missile go this tick, and the landing of those of
 /// creeps: a unit's set plays its `Attack` as the missile leaves and its `ProjectileImpact` as
-/// it lands.
+/// it lands. At most [`SHOTS_PER_TICK`] of each, the nearest to the camera.
 fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut Sounder) {
     let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
@@ -1041,15 +1057,19 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
     if view.tick == prev.tick || core.smooth.since > 0.0 {
         return;
     }
-    let new = view.projectiles.iter().filter(|p| {
-        p.inflictor.is_none()
-            && !fog.hides(p.seen_by)
-            && prev
-                .projectiles
-                .binary_search_by_key(&p.id, |q| q.id)
-                .is_err()
-    });
-    for p in new.take(SHOTS_PER_TICK) {
+    let launched = view
+        .projectiles
+        .iter()
+        .filter(|p| {
+            p.inflictor.is_none()
+                && !fog.hides(p.seen_by)
+                && prev
+                    .projectiles
+                    .binary_search_by_key(&p.id, |q| q.id)
+                    .is_err()
+        })
+        .collect();
+    for p in nearest_first(launched, sound.focus, SHOTS_PER_TICK, |p| spot(p.pos)) {
         let at = Some((p.pos.x.to_f32(), p.pos.y.to_f32()));
         let Some(shooter) = p.source.and_then(|id| view.unit(id)) else {
             continue;
@@ -1070,14 +1090,19 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
         );
     }
     // A creep's missile gone since the last tick has landed.
-    for p in prev.projectiles.iter().filter(|p| {
-        p.inflictor.is_none()
-            && !fog.hides(p.seen_by)
-            && view
-                .projectiles
-                .binary_search_by_key(&p.id, |q| q.id)
-                .is_err()
-    }) {
+    let landed = prev
+        .projectiles
+        .iter()
+        .filter(|p| {
+            p.inflictor.is_none()
+                && !fog.hides(p.seen_by)
+                && view
+                    .projectiles
+                    .binary_search_by_key(&p.id, |q| q.id)
+                    .is_err()
+        })
+        .collect();
+    for p in nearest_first(landed, sound.focus, SHOTS_PER_TICK, |p| spot(p.pos)) {
         let shooter = p.source.and_then(|id| prev.unit(id));
         if let Some(subject) = shooter.and_then(|u| creep_set(u, sound.manifest)) {
             let at = Some((p.pos.x.to_f32(), p.pos.y.to_f32()));
@@ -1092,10 +1117,23 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
     }
 }
 
+/// A swing of a unit that begins or lands this tick, to be sounded.
+struct Swing<'a> {
+    unit: &'a bota_proto::UnitView,
+    subject: Subject,
+    /// The swing began this tick.
+    began: bool,
+    /// The blow of a creep that swings at its target landed; its target.
+    struck: Option<Option<EntityId>>,
+}
+
 /// Windup sounds for visible heroes and creeps, plus the strikes of the creeps that swing at
 /// their target. Hero impacts already come through their damage cues; sounding them here too
 /// would duplicate a hit and sound canceled or missed blows. A missile thrower's `Attack` is
-/// its missile leaving ([`shots`]).
+/// its missile leaving ([`shots`]). Every unit in sight is looked at, but the budget of sounds a
+/// tick starts ([`SHOTS_PER_TICK`] creeps' and as many heroes') is spent on swings that begin or
+/// land, the nearest to the camera first: units standing idle, or fighting far from it, do not
+/// take the place of the fight under it.
 fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut Sounder) {
     let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
@@ -1111,43 +1149,50 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
     };
     let strike_of =
         |of: &bota_proto::WorldView, id| swing_of(of, id).map(|swing| of.tick + swing.strike_in);
-    let creeps = view
-        .units
-        .iter()
-        .filter(|u| !fog.hides(u.seen_by))
-        .filter_map(|u| Some((u, creep_set(u, sound.manifest)?)))
-        .take(SHOTS_PER_TICK);
-    // Hero windups do not consume the existing creep sound budget.
-    let heroes = view
-        .units
-        .iter()
-        .filter(|u| u.kind == UnitKind::Hero && !fog.hides(u.seen_by))
-        .filter_map(|u| Some((u, Subject::Hero(u.hero?))))
-        .take(SHOTS_PER_TICK);
-    for (u, subject) in creeps.chain(heroes) {
-        let at = Some((u.pos.x.to_f32(), u.pos.y.to_f32()));
-        let (now, before) = (strike_of(view, u.id), strike_of(prev, u.id));
-        if now.is_some() && now != before {
+    let (mut creeps, mut heroes) = (Vec::new(), Vec::new());
+    for unit in view.units.iter().filter(|u| !fog.hides(u.seen_by)) {
+        let (subject, list) = match (unit.kind, unit.hero) {
+            (UnitKind::Hero, Some(hero)) => (Subject::Hero(hero), &mut heroes),
+            _ => match creep_set(unit, sound.manifest) {
+                Some(set) => (set, &mut creeps),
+                None => continue,
+            },
+        };
+        let (now, before) = (strike_of(view, unit.id), strike_of(prev, unit.id));
+        let began = now.is_some() && now != before;
+        let struck = (matches!(subject, Subject::Set(_))
+            && !throws_missiles(unit)
+            && before.is_some_and(|due| now != Some(due) && due <= view.tick))
+        .then(|| swing_of(prev, unit.id).map(|swing| swing.target));
+        if began || struck.is_some() {
+            list.push(Swing {
+                unit,
+                subject,
+                began,
+                struck,
+            });
+        }
+    }
+    let focus = sound.focus;
+    let chosen = nearest_first(creeps, focus, SHOTS_PER_TICK, |s| spot(s.unit.pos))
+        .into_iter()
+        .chain(nearest_first(heroes, focus, SHOTS_PER_TICK, |s| {
+            spot(s.unit.pos)
+        }));
+    for swing in chosen {
+        let at = Some((swing.unit.pos.x.to_f32(), swing.unit.pos.y.to_f32()));
+        let id = Some(swing.unit.id);
+        if swing.began {
             sound.sound(
-                row(subject, Event::PreAttack, None),
+                row(swing.subject, Event::PreAttack, None),
                 1.0,
                 at,
-                Some(u.id),
+                id,
                 None,
             );
         }
-        if matches!(subject, Subject::Set(_))
-            && !throws_missiles(u)
-            && before.is_some_and(|due| now != Some(due) && due <= view.tick)
-        {
-            let target = swing_of(prev, u.id).map(|swing| swing.target);
-            sound.sound(
-                row(subject, Event::Attack, None),
-                1.0,
-                at,
-                Some(u.id),
-                target,
-            );
+        if let Some(target) = swing.struck {
+            sound.sound(row(swing.subject, Event::Attack, None), 1.0, at, id, target);
         }
     }
 }

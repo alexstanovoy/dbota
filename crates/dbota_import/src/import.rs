@@ -1685,20 +1685,26 @@ fn face_text(item: &Item, bytes: &[u8]) -> Result<String> {
     })
 }
 
+/// Whether the cache file `dest` is named by what the sound holds (`wav` or `mp3`): the client picks
+/// its decoder by the extension, so a WAV in an `.mp3` file, or a name with no extension, is refused.
+pub fn check_sound_name(dest: &str, extension: &str) -> Result<()> {
+    let named = std::path::Path::new(dest)
+        .extension()
+        .and_then(|extension| extension.to_str());
+    if named == Some(extension) {
+        return Ok(());
+    }
+    Err(malformed(
+        "sound",
+        format!("the sound is a {extension}, not the cache's {dest}"),
+    ))
+}
+
 /// A sound's audio file at `dest`, and a voice line's lip sync beside it. A line whose lip sync
 /// does not read is still heard (its face stays still); the failure is reported.
 fn sound(bytes: &[u8], dest: &str, out: &mut Out<'_>) -> Result<()> {
     let sound = Sound::parse(bytes, &mut heatel::Budget::default())?;
-    // The cache names a file by what it holds: the client picks a decoder by the extension.
-    if !dest.ends_with(sound.extension()) {
-        return Err(malformed(
-            "sound",
-            format!(
-                "the sound is a {}, not the cache's {dest}",
-                sound.extension()
-            ),
-        ));
-    }
+    check_sound_name(dest, sound.extension())?;
     match Lipsync::parse(bytes, &mut heatel::Budget::default()) {
         Ok(lipsync) if !lipsync.is_empty() => {
             out.put(&lipsync_path(dest), lipsync_txt(&lipsync).as_bytes())?;
@@ -2019,16 +2025,7 @@ fn later(src: &impl Source, packages: &[&Vpk], job: &Pending, out: &mut Out<'_>)
         Later::Sound(vsnd) => {
             let bytes = read_from(src, packages, vsnd)?;
             let sound = Sound::parse(&bytes, &mut heatel::Budget::default())?;
-            if !job.path.ends_with(sound.extension()) {
-                return Err(malformed(
-                    "sound",
-                    format!(
-                        "{vsnd} is a {}, not the cache's {}",
-                        sound.extension(),
-                        job.path
-                    ),
-                ));
-            }
+            check_sound_name(&job.path, sound.extension())?;
             sound.file().into_owned()
         }
     };
