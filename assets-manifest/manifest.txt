@@ -2323,9 +2323,11 @@ sound sound.announcer.mega.radiant sounds/vo/announcer/announcer_mega_now_rad.vs
 sound sound.announcer.mega.dire sounds/vo/announcer/announcer_mega_now_dire.vsnd_c sounds/vo/announcer/announcer_mega_now_dire.mp3 event=announcer_announcer_mega_now_dire
 
 # A buyback: the default music pack's stinger, one event for the player who bought back and one for everyone else
-# (both play the pack's one file), the line of the event message and the button's word.
+# (both play the pack's one file), the clock of a cooldown on the button, the line of the event message and the
+# button's words.
 sound sound.global.buyback sounds/music/valve_dota_001/stingers/buy_back.vsnd_c sounds/music/valve_dota_001/stingers/buy_back.mp3 event=valve_dota_001.stinger.buy_back
 sound sound.global.buyback.own sounds/music/valve_dota_001/stingers/buy_back.vsnd_c sounds/music/valve_dota_001/stingers/buy_back_player.mp3 event=valve_dota_001.stinger.buy_back_player
+texture hud.clock panorama/images/status_icons/clock_psd.vtex_c hud/status_clock_psd.png
 label resource/localization/dota_english.txt DOTA_HUD_BoughtBack
 label resource/localization/dota_english.txt DOTA_Buyback
 label resource/localization/dota_english.txt DOTA_Hud_BuybackLabel

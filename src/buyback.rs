@@ -67,6 +67,9 @@ const RIM: Color = Color::srgb(0.471, 0.843, 0.749);
 /// The ground of a button that cannot be pressed: Dota takes the button's style off it.
 const OFF_TOP: Color = Color::srgb(0.16, 0.17, 0.18);
 const OFF_FOOT: Color = Color::srgb(0.09, 0.09, 0.1);
+/// How much brighter the button is under the cursor (Dota's hover doubles the brightness; the
+/// colours are kept within what a screen shows).
+const HOVER: f32 = 1.5;
 /// The cost's gold (`#EFDB63`) and the red of what cannot be bought (`#ff2020`).
 const COST_INK: Color = Color::srgb(0.937, 0.859, 0.388);
 const RED: Color = Color::srgb(1.0, 0.125, 0.125);
@@ -91,6 +94,7 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, portrait: Entity) {
     let button = commands
         .spawn((
             BuybackButton::Hidden,
+            BuybackLook::default(),
             Button,
             Hovered::default(),
             Blocker,
@@ -107,7 +111,7 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, portrait: Entity) {
                 border: UiRect::top(px(2)),
                 ..default()
             },
-            ground(true),
+            BuybackLook::default().ground().0,
             BorderColor::all(RIM),
             ZIndex(1000),
             ChildOf(portrait),
@@ -151,17 +155,77 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, portrait: Entity) {
     ));
 }
 
-/// The button's ground: Dota's gradient when a click buys back, a dark one when none can.
-fn ground(ready: bool) -> BackgroundGradient {
-    let (top, foot) = if ready {
-        (TOP, FOOT)
-    } else {
-        (OFF_TOP, OFF_FOOT)
-    };
-    BackgroundGradient::from(LinearGradient::to_bottom(vec![
-        ColorStop::auto(top),
-        ColorStop::auto(foot),
-    ]))
+/// How the button is drawn: its ground, its border and the picture before its amount.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct BuybackLook {
+    /// Whether a click would buy back: Dota's gradient, else the dark ground of a button whose
+    /// style is taken off.
+    pub ready: bool,
+    /// Whether the whole button is brightened under the cursor, as Dota doubles its
+    /// brightness on hover: only a button that is ready lights up.
+    pub lit: bool,
+    /// The picture before the amount.
+    pub mark: BuybackMark,
+}
+
+/// The picture before the button's amount.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum BuybackMark {
+    #[default]
+    None,
+    /// The gold coin, before the cost.
+    Coin,
+    /// The clock washed red, before the cooldown's time.
+    Clock,
+}
+
+impl BuybackLook {
+    fn of(state: BuybackButton, hovered: bool) -> BuybackLook {
+        let ready = matches!(state, BuybackButton::Ready { .. });
+        BuybackLook {
+            ready,
+            lit: ready && hovered,
+            mark: match state {
+                BuybackButton::Hidden => BuybackMark::None,
+                BuybackButton::Ready { .. } | BuybackButton::Short { .. } => BuybackMark::Coin,
+                BuybackButton::Cooling { .. } => BuybackMark::Clock,
+            },
+        }
+    }
+
+    /// The ground and the border: brightened together when lit.
+    pub(crate) fn ground(self) -> (BackgroundGradient, BorderColor) {
+        let (top, foot, rim) = if self.ready {
+            (TOP, FOOT, RIM)
+        } else {
+            (OFF_TOP, OFF_FOOT, ui::EDGE)
+        };
+        let shade = |colour: Color| {
+            if self.lit {
+                let lit = colour.to_srgba() * HOVER;
+                Color::srgb(lit.red.min(1.0), lit.green.min(1.0), lit.blue.min(1.0))
+            } else {
+                colour
+            }
+        };
+        (
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                ColorStop::auto(shade(top)),
+                ColorStop::auto(shade(foot)),
+            ])),
+            BorderColor::all(shade(rim)),
+        )
+    }
+
+    /// The mark's art in the cache and its tint.
+    fn mark(self) -> Option<(&'static str, Color)> {
+        match self.mark {
+            BuybackMark::None => None,
+            BuybackMark::Coin if self.lit => Some(("hud.gold_small", Color::srgb(1.6, 1.6, 1.6))),
+            BuybackMark::Coin => Some(("hud.gold_small", Color::WHITE)),
+            BuybackMark::Clock => Some(("hud.clock", RED)),
+        }
+    }
 }
 
 /// The frame and the header of the shop button.
@@ -247,6 +311,7 @@ fn button(
         &Hovered,
         &mut BackgroundGradient,
         &mut BorderColor,
+        &mut BuybackLook,
     )>,
     mut word: Single<(&mut Text, &mut TextColor), (With<Word>, Without<Amount>)>,
     mut amount: Single<(&mut Text, &mut TextColor), (With<Amount>, Without<Word>)>,
@@ -268,34 +333,26 @@ fn button(
         .label("DOTA_Buyback", &[])
         .unwrap_or_else(|| "BUYBACK".to_owned());
     word.0.set_if_neq(Text(label));
-    let (text, ink, word_ink, with_coin) = match state {
-        BuybackButton::Hidden => (String::new(), COST_INK, Color::WHITE, false),
-        BuybackButton::Ready { cost } => (cost.to_string(), COST_INK, Color::WHITE, true),
-        BuybackButton::Short { cost } => (cost.to_string(), RED, RED, true),
-        BuybackButton::Cooling { seconds } => (clock(seconds), RED, RED, false),
+    let (text, ink, word_ink) = match state {
+        BuybackButton::Hidden => (String::new(), COST_INK, Color::WHITE),
+        BuybackButton::Ready { cost } => (cost.to_string(), COST_INK, Color::WHITE),
+        BuybackButton::Short { cost } => (cost.to_string(), RED, RED),
+        BuybackButton::Cooling { seconds } => (clock(seconds), RED, RED),
     };
     amount.0.set_if_neq(Text(text));
     amount.1.set_if_neq(TextColor(ink));
     word.1.set_if_neq(TextColor(word_ink));
-    let ready = matches!(state, BuybackButton::Ready { .. });
-    let wanted = ground(ready);
-    if *button.3 != wanted {
-        *button.3 = wanted;
+    let look = BuybackLook::of(state, button.2.get());
+    button.5.set_if_neq(look);
+    let (ground, border) = look.ground();
+    if *button.3 != ground {
+        *button.3 = ground;
     }
-    button
-        .4
-        .set_if_neq(BorderColor::all(if ready { RIM } else { ui::EDGE }));
-    // Brighter under the cursor when a click would buy back, as Dota's hover.
-    let lit = ready && button.2.get();
-    let art = manifest
-        .file("hud.gold_small")
-        .filter(|_| with_coin)
-        .map(|path| server.load(path));
-    let (image, tint) = match art {
-        Some(image) if lit => (image, Color::srgb(1.6, 1.6, 1.6)),
-        Some(image) => (image, Color::WHITE),
-        None => (Handle::default(), Color::NONE),
-    };
+    button.4.set_if_neq(border);
+    let art = look
+        .mark()
+        .and_then(|(logical, tint)| Some((server.load(manifest.file(logical)?), tint)));
+    let (image, tint) = art.unwrap_or((Handle::default(), Color::NONE));
     if coin.image != image {
         coin.image = image;
     }
@@ -396,6 +453,29 @@ pub(crate) fn drawn_button(world: &mut World) -> (Entity, BuybackButton, bool, S
         .0
         .clone();
     (entity, state, laid_out, amount)
+}
+
+/// How the button is drawn now: its ground, its border, and the cache file and tint of the
+/// picture before its amount (no file while it shows none).
+#[cfg(test)]
+pub(crate) fn drawn_look(
+    world: &mut World,
+) -> (BackgroundGradient, BorderColor, Option<String>, Color) {
+    let (ground, border) = world
+        .query_filtered::<(&BackgroundGradient, &BorderColor), With<BuybackButton>>()
+        .single(world)
+        .map(|(ground, border)| (ground.clone(), *border))
+        .expect("one buyback button");
+    let (image, tint) = world
+        .query_filtered::<&ImageNode, With<Coin>>()
+        .single(world)
+        .map(|mark| (mark.image.clone(), mark.color))
+        .expect("its mark");
+    let file = world
+        .resource::<AssetServer>()
+        .get_path(image.id())
+        .map(|path| path.to_string());
+    (ground, border, file, tint)
 }
 
 /// What the shop button's marks draw: whether the frame shows, whether the header shows, and

@@ -8,7 +8,9 @@ use bota_client_core::{CueKind, FeedKind};
 use bota_proto::{Cheat, HeroId};
 
 use super::harness::{Client, Server};
-use crate::buyback::{BuybackButton, drawn_button, drawn_shop_marks};
+use crate::buyback::{
+    BuybackButton, BuybackLook, BuybackMark, drawn_button, drawn_look, drawn_shop_marks,
+};
 
 fn me(client: &Client) -> &bota_proto::PlayerView {
     let slot = client.core().my_slot.expect("a seat");
@@ -23,12 +25,40 @@ fn state(client: &mut Client) -> BuybackButton {
     drawn_button(client.world_mut()).1
 }
 
-/// Clicks the middle of the button as it is drawn.
-fn click_button(client: &mut Client) {
+/// Moves the pointer onto the middle of the button as it is drawn.
+fn hover_button(client: &mut Client) {
     let (button, _, laid_out, _) = drawn_button(client.world_mut());
     assert!(laid_out, "the button is drawn");
     client.hover_ui(button, std::time::Duration::from_secs(20));
+}
+
+/// Clicks the middle of the button as it is drawn.
+fn click_button(client: &mut Client) {
+    hover_button(client);
     client.click(MouseButton::Left);
+}
+
+/// Asserts the button is drawn as a look says: that look's ground and border, and that look's
+/// picture before the amount, from the cache.
+fn assert_drawn(client: &mut Client, look: BuybackLook, what: &str) {
+    let (ground, border, file, tint) = drawn_look(client.world_mut());
+    let (wanted_ground, wanted_border) = look.ground();
+    assert!(ground == wanted_ground, "{what}: the ground");
+    assert!(border == wanted_border, "{what}: the border");
+    let logical = match look.mark {
+        BuybackMark::None => None,
+        BuybackMark::Coin => Some("hud.gold_small"),
+        BuybackMark::Clock => Some("hud.clock"),
+    };
+    let wanted_file = logical.map(|name| {
+        client
+            .world()
+            .resource::<crate::manifest::Manifest>()
+            .file(name)
+            .expect("in the cache")
+    });
+    assert_eq!(file, wanted_file, "{what}: the picture before the amount");
+    assert!(tint != Color::NONE, "{what}: the picture shows");
 }
 
 fn dies(client: &mut Client) {
@@ -80,9 +110,27 @@ fn a_click_on_a_dead_heros_button_buys_it_back_and_the_button_tells_why_it_canno
         cost.to_string(),
         "the cost is written on the button"
     );
+    let ready = BuybackLook {
+        ready: true,
+        lit: false,
+        mark: BuybackMark::Coin,
+    };
+    let lit = BuybackLook { lit: true, ..ready };
+    assert!(
+        ready.ground() != lit.ground(),
+        "a lit button is drawn otherwise"
+    );
+    assert_drawn(&mut client, ready, "ready, the pointer elsewhere");
+    hover_button(&mut client);
+    client.frames(2);
+    assert_drawn(
+        &mut client,
+        lit,
+        "ready, under the pointer: the whole button lit",
+    );
     let sent = client.record_sent_orders();
     let orders_before = sent.get();
-    click_button(&mut client);
+    client.click(MouseButton::Left);
     client.until("bought back", |c| me(c).respawn_left == 0);
     assert_eq!(sent.get(), orders_before + 1, "one order for one click");
     assert_eq!(gold(&client), before - cost, "the seat paid the cost");
@@ -128,9 +176,23 @@ fn a_click_on_a_dead_heros_button_buys_it_back_and_the_button_tells_why_it_canno
         "{seconds} of Dota's 480 left"
     );
     assert_eq!(amount, format!("{}:{:02}", seconds / 60, seconds % 60));
+    let cooling = BuybackLook {
+        ready: false,
+        lit: false,
+        mark: BuybackMark::Clock,
+    };
+    assert!(
+        cooling.ground() != ready.ground(),
+        "the style is off a cooling button"
+    );
     let orders_before = sent.get();
     click_button(&mut client);
     client.frames(20);
+    assert_drawn(
+        &mut client,
+        cooling,
+        "cooling, under the pointer: the clock, dark, and no light",
+    );
     assert_eq!(
         sent.get(),
         orders_before,
@@ -146,6 +208,14 @@ fn a_click_on_a_dead_heros_button_buys_it_back_and_the_button_tells_why_it_canno
     let orders_before = sent.get();
     click_button(&mut client);
     client.frames(20);
+    assert_drawn(
+        &mut client,
+        BuybackLook {
+            mark: BuybackMark::Coin,
+            ..cooling
+        },
+        "short of gold: the coin on the dark ground",
+    );
     assert_eq!(
         sent.get(),
         orders_before,
