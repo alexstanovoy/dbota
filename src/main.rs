@@ -116,6 +116,7 @@ mod terrain;
 mod test_support;
 mod texture_file;
 mod theme;
+mod tip_band;
 mod tip_content;
 mod tip_numbers;
 mod tips;

@@ -829,22 +829,17 @@ impl Draw<'_, '_, '_> {
             Kind::Active => "tip.active",
             Kind::Use => "tip.use",
         };
-        let mut bar = self.commands.spawn((
-            Node {
-                width: percent(100),
-                height: px(26),
-                padding: UiRect::new(px(8), px(8), px(4), px(0)),
-                ..default()
-            },
-            Pickable::IGNORE,
-            ChildOf(self.parent),
-        ));
-        // Dota's header label wears the section's ground like its body, the bar's art over it.
-        bar.insert(BackgroundColor(palette.ground.unwrap_or(Color::NONE)));
-        if let Some(path) = is_item.then(|| self.manifest.file(logical)).flatten() {
-            bar.insert(ImageNode::new(self.server.load(path)));
-        }
-        let bar = bar.id();
+        // Dota's header label wears the section's ground like its body, the bar's art over it. An
+        // ability's header wears the same art as a passive item's: the base style of the label.
+        let art = self
+            .manifest
+            .file(if is_item { logical } else { "tip.passive" });
+        let bar = crate::tip_band::spawn(
+            self.commands,
+            self.parent,
+            art.map(|path| self.server.load(path)),
+            palette.ground.unwrap_or(Color::NONE),
+        );
         self.commands.spawn((
             ui::text(
                 text.to_string(),

@@ -29,6 +29,18 @@ while IFS= read -r file; do
                 bad=1
             fi
             ;;
+        src/tip_band.rs)
+            test_name=tip_band::render::each_band_draws_its_art_from_the_left_end_unscaled_at_every_scale
+            ignored=$(awk '
+                /^[[:space:]]*#\[ignore/ { count++; pending=1 }
+                pending && /^[[:space:]]*fn / { name=$2; sub(/\(.*/, "", name); print name; pending=0 }
+                END { if (count != 1) print "unexpected ignored count: " count }
+            ' "$file")
+            if [ "$ignored" != "${test_name##*::}" ] || ! grep -Fq -- "--bin dbota $test_name" tools/visual_check.sh; then
+                echo "ignored_audit: $file must route exactly its named render contract"
+                bad=1
+            fi
+            ;;
         tests/*.rs)                     # tools/visual_check.sh, one `--test NAME` per file
             name=$(basename "$file" .rs)
             grep -q -- "--test $name\b" tools/visual_check.sh || { echo "ignored_audit: $file has ignored tests that tools/visual_check.sh does not run"; bad=1; } ;;

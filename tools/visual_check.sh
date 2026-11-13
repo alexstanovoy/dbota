@@ -64,6 +64,16 @@ else
     echo "visual check: FAIL full readability material (see $out/clarity.log)"
     exit 1
 fi
+# The tooltip's header band, drawn from the asset cache: its art starts at the band's left end, unscaled.
+if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
+    --bin dbota tip_band::render::each_band_draws_its_art_from_the_left_end_unscaled_at_every_scale \
+    -- --ignored --exact --nocapture > "$out/tip_band.log" 2>&1 \
+    && grep -Fq 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$out/tip_band.log"; then
+    echo "visual check: PASS the tooltip's header bands start at their left end"
+else
+    echo "visual check: FAIL the tooltip's header bands (see $out/tip_band.log)"
+    exit 1
+fi
 status=0
 "$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check- --distance 6500 \
