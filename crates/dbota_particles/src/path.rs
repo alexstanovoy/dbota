@@ -4,7 +4,7 @@
 use bevy::math::Vec3;
 use heatel::particle::{FloatInput, Initializer, Operator, Path, SequentialPath};
 
-use super::eval::{Scene, between, float};
+use super::eval::{Scene, between, float, initializer_float};
 use super::init::Batch;
 use super::ops::Call;
 use super::store::{self, Particles};
@@ -165,6 +165,11 @@ impl Walk {
     }
 }
 
+/// A bounded layout size; the emitter separately controls the active particle count.
+fn point_count(value: f32) -> f32 {
+    (value.max(0.0) as u32).clamp(1, heatel::particle::MAX_PARTICLES) as f32
+}
+
 /// `C_INIT_CreateSequentialPath`: each new particle at the next point of the path (looping or
 /// turning back at its ends), offset at random by up to the maximum distance per axis; with
 /// the offset saved, its share of the way and its segment's control points go to its hitbox
@@ -173,11 +178,16 @@ pub fn create_sequential_path(init: &Initializer, scene: &Scene<'_>, batch: &mut
     let Initializer::CreateSequentialPath(s) = init else {
         return;
     };
+    // Counts use the emitter's truncation and the shared particle limit. One point
+    // collapses this layout; the emitter still owns how many particles are made.
+    let count = point_count(initializer_float(
+        &s.count,
+        scene,
+        batch.parts,
+        None,
+        batch.salt,
+    ));
     for i in batch.first..batch.parts.len() {
-        // Counts use the emitter's truncation and the shared particle limit. One point
-        // collapses this layout; the emitter still owns how many particles are made.
-        let count = (float(&s.count, scene, batch.parts, Some(i), batch.salt).max(0.0) as u32)
-            .clamp(1, heatel::particle::MAX_PARTICLES) as f32;
         let walk = batch.memory.path.get_or_insert_with(|| Walk::new(s, count));
         let (t, from, to) = walk.next(s, count);
         let creation = batch.parts.scalars[store::CREATION][i];
@@ -185,12 +195,14 @@ pub fn create_sequential_path(init: &Initializer, scene: &Scene<'_>, batch: &mut
         let seed = batch.parts.seed[i];
         // Leave room for a three-dimensional diameter's squared length, as bounds and
         // rendering use lengths as well as positions. Negative or NaN distance is zero.
-        let distance = float(&s.max_distance, scene, batch.parts, Some(i), batch.salt).max(0.0);
+        let distance =
+            initializer_float(&s.max_distance, scene, batch.parts, Some(i), batch.salt + 1)
+                .max(0.0);
         let d = distance.min(f32::MAX.sqrt() / 8.0);
         let jitter = Vec3::new(
-            between(seed, batch.salt, -d, d),
-            between(seed, batch.salt + 1, -d, d),
             between(seed, batch.salt + 2, -d, d),
+            between(seed, batch.salt + 3, -d, d),
+            between(seed, batch.salt + 4, -d, d),
         );
         let position = curve.at(t) + jitter;
         if s.save_offset {
@@ -306,7 +318,7 @@ pub fn maintain_path(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, ca
     let count = if m.use_particle_count {
         parts.len() as f32
     } else {
-        value(&m.count)
+        point_count(value(&m.count))
     };
     let spacing = if count <= 1.0 {
         0.0

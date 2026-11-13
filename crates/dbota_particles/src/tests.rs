@@ -1431,3 +1431,389 @@ fn sequential_path_refreshes_distance_when_control_points_change_between_batches
     assert!(positions[2..].iter().all(|p| p.abs().max_element() <= 0.25));
     assert!(positions[2..].iter().any(|p| p.length_squared() > 0.001));
 }
+
+#[test]
+fn sequential_path_random_distance_has_a_separate_draw_from_x_jitter() {
+    let template = sequential_path_instance(
+        FloatInput::Literal(1.0),
+        FloatInput::Random {
+            min: 0.0,
+            max: 1.0,
+            varying: false,
+            bias: None,
+            sign_flip: false,
+        },
+        false,
+    );
+    let mut minimum_x = 0.0f32;
+    for seed in 1..=8 {
+        let mut instance = Instance::new(template.effect.clone(), seed);
+        instance.advance(0.02, None);
+        assert_eq!(
+            instance.nodes[0].parts.len(),
+            16,
+            "the full burst for seed {seed}"
+        );
+        for position in &instance.nodes[0].parts.vectors[store::POSITION] {
+            minimum_x = minimum_x.min(position.x);
+        }
+    }
+    // Reusing u for both distance=u and x direction=2u-1 gives x=2u²-u,
+    // whose minimum is -1/8. Independent draws can reach below that artificial cutoff.
+    assert!(
+        minimum_x < -0.2,
+        "seeds 1..=8 should not share the distance/x draw: {minimum_x}"
+    );
+}
+
+fn radius_attribute(initial: bool) -> FloatInput {
+    FloatInput::ParticleFloat {
+        field: Field::RADIUS,
+        initial,
+        mapping: Mapping::Direct,
+    }
+}
+
+fn radius_from_particle_index(min: f32, max: f32) -> Initializer {
+    Initializer::InitFloat {
+        field: Field::RADIUS,
+        value: FloatInput::ParticleNumberNormalized(Mapping::Remap {
+            input: [0.0, 1.0],
+            output: [min, max],
+            looped: false,
+            bias: None,
+        }),
+        set_method: SetMethod::Replace,
+        strength: FloatInput::Literal(1.0),
+    }
+}
+
+fn birth_attribute_instance(initial: bool) -> Instance {
+    let template =
+        sequential_path_instance(radius_attribute(initial), FloatInput::Literal(0.0), true);
+    let mut definition = template.effect.defs[0].system.clone();
+    definition
+        .initializers
+        .insert(0, always(radius_from_particle_index(3.0, 7.0)));
+    let effect = Arc::new(Effect::new(&[("birth_attributes".to_owned(), definition)]));
+    let mut instance = Instance::new(effect, 42);
+    instance.set_control_point(4, Vec3::X * 100.0, Vec3::X, true);
+    instance
+}
+
+#[test]
+fn sequential_path_constant_random_count_is_shared_within_a_birth_batch() {
+    let template = sequential_path_instance(
+        FloatInput::Random {
+            min: 8.0,
+            max: 16.0,
+            varying: false,
+            bias: None,
+            sign_flip: false,
+        },
+        FloatInput::Literal(0.0),
+        false,
+    );
+    for seed in 1..=8 {
+        let mut instance = Instance::new(template.effect.clone(), seed);
+        instance.set_control_point(4, Vec3::X * 100.0, Vec3::X, true);
+        instance.advance(0.02, None);
+        let positions = &instance.nodes[0].parts.vectors[store::POSITION];
+        assert_eq!(positions.len(), 16);
+        let first = positions[1].x - positions[0].x;
+        let second = positions[2].x - positions[1].x;
+        assert!(
+            (first - second).abs() < 0.001,
+            "one count for seed {seed}: {first} vs {second}"
+        );
+    }
+}
+
+#[test]
+fn particle_collection_random_uses_its_system_seed_and_is_stable_for_the_same_seed() {
+    let mut definition = bare(
+        1.0,
+        vec![lifetime_of(10.0)],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    definition.max_particles = 64;
+    definition.emitters = vec![always(Emitter::Instantaneous {
+        count: FloatInput::Random {
+            min: 4.0,
+            max: 64.0,
+            varying: false,
+            bias: None,
+            sign_flip: false,
+        },
+        start_time: FloatInput::Literal(0.0),
+        max_per_frame: -1,
+    })];
+    let effect = Arc::new(Effect::new(&[("seeded_burst".to_owned(), definition)]));
+    let mut counts = Vec::new();
+    for seed in 1..=8 {
+        let mut first = Instance::new(effect.clone(), seed);
+        let mut again = Instance::new(effect.clone(), seed);
+        first.advance(0.02, None);
+        again.advance(0.02, None);
+        let count = first.nodes[0].parts.len();
+        assert!((4..=64).contains(&count));
+        assert_eq!(
+            count,
+            again.nodes[0].parts.len(),
+            "stable system seed {seed}"
+        );
+        counts.push(count);
+    }
+    assert!(
+        counts.iter().any(|count| *count != counts[0]),
+        "distinct system seeds: {counts:?}"
+    );
+}
+
+#[test]
+fn sequential_path_collection_count_reads_system_zero_in_later_birth_batches() {
+    let mut instance = birth_attribute_instance(false);
+    instance.advance(0.1, None);
+    instance.advance(0.1, None);
+    let positions = &instance.nodes[0].parts.vectors[store::POSITION];
+    assert_eq!(positions.len(), 4);
+    for (index, x) in [0.0, 50.0, 100.0, 50.0].into_iter().enumerate() {
+        assert!(
+            (positions[index].x - x).abs() < 0.001,
+            "point {index}: {:?} vs {x}",
+            positions[index]
+        );
+    }
+}
+
+#[test]
+fn sequential_path_initial_attribute_count_reads_current_values_while_initializing() {
+    let mut instance = birth_attribute_instance(true);
+    instance.advance(0.1, None);
+    assert_eq!(instance.nodes[0].parts.len(), 2);
+    assert!((instance.nodes[0].parts.vectors[store::POSITION][1].x - 50.0).abs() < 0.001);
+    instance.nodes[0].parts.scalars[store::RADIUS][0] = 9.0;
+    instance.advance(0.1, None);
+    let positions = &instance.nodes[0].parts.vectors[store::POSITION];
+    assert_eq!(positions.len(), 4);
+    assert!((positions[2].x - 100.0).abs() < 0.001);
+    assert!(
+        (positions[3].x - 12.5).abs() < 0.001,
+        "current system0 value: {:?}",
+        positions[3]
+    );
+}
+
+fn maintained_path_instance(
+    count: FloatInput,
+    maximum: FloatInput,
+    cohesion: FloatInput,
+    radius: Initializer,
+    looped: bool,
+) -> Instance {
+    use heatel::particle::{MaintainPath, Path};
+    let path = Path {
+        start: point(3),
+        mid: None,
+        end: point(4),
+        bulge_control: 0,
+        bulge: 0.0,
+        mid_point: 0.5,
+        start_offset: [0.0; 3],
+        mid_offset: [0.0; 3],
+        end_offset: [0.0; 3],
+    };
+    let definition = bare(
+        4.0,
+        vec![radius, lifetime_of(10.0)],
+        vec![always(Operator::MaintainSequentialPath(Box::new(
+            MaintainPath {
+                max_distance: maximum,
+                count,
+                cohesion,
+                tolerance: 0.0,
+                looped,
+                use_particle_count: false,
+                path,
+            },
+        )))],
+        Vec::new(),
+        Vec::new(),
+    );
+    let effect = Arc::new(Effect::new(&[("maintained_path".to_owned(), definition)]));
+    let mut instance = Instance::new(effect, 42);
+    instance.set_control_point(4, Vec3::X * 100.0, Vec3::X, true);
+    instance
+}
+
+#[test]
+fn maintained_path_count_is_shared_from_system_zero_instead_of_each_particle() {
+    let mut instance = maintained_path_instance(
+        radius_attribute(false),
+        FloatInput::Literal(0.0),
+        FloatInput::Literal(1.0),
+        radius_from_particle_index(3.0, 7.0),
+        true,
+    );
+    instance.advance(0.02, None);
+    let positions = &instance.nodes[0].parts.vectors[store::POSITION];
+    assert_eq!(positions.len(), 4);
+    for (index, x) in [0.0, 50.0, 100.0, 0.0].into_iter().enumerate() {
+        assert!(
+            (positions[index].x - x).abs() < 0.001,
+            "point {index}: {:?} vs {x}",
+            positions[index]
+        );
+    }
+}
+
+#[test]
+fn maintained_path_distance_and_cohesion_read_system_zero_once() {
+    let mut distance = maintained_path_instance(
+        FloatInput::Literal(4.0),
+        radius_attribute(false),
+        FloatInput::Literal(0.0),
+        radius_from_particle_index(3.0, 7.0),
+        true,
+    );
+    distance.advance(0.02, None);
+    let positions = &distance.nodes[0].parts.vectors[store::POSITION];
+    assert_eq!(positions.len(), 4);
+    for (index, x) in [0.0, 100.0 / 3.0 - 3.0, 200.0 / 3.0 - 3.0, 97.0]
+        .into_iter()
+        .enumerate()
+    {
+        assert!(
+            (positions[index].x - x).abs() < 0.001,
+            "shared distance at {index}: {:?}",
+            positions[index]
+        );
+    }
+    let mut cohesion = maintained_path_instance(
+        FloatInput::Literal(4.0),
+        FloatInput::Literal(1000.0),
+        radius_attribute(false),
+        radius_from_particle_index(0.25, 1.25),
+        true,
+    );
+    cohesion.advance(0.02, None);
+    let positions = &cohesion.nodes[0].parts.vectors[store::POSITION];
+    for (index, x) in [0.0, 25.0 / 3.0, 50.0 / 3.0, 25.0].into_iter().enumerate() {
+        assert!(
+            (positions[index].x - x).abs() < 0.001,
+            "shared cohesion at {index}: {:?}",
+            positions[index]
+        );
+    }
+}
+
+#[test]
+fn maintained_path_initial_attribute_count_retains_the_initial_buffer() {
+    let mut instance = maintained_path_instance(
+        radius_attribute(true),
+        FloatInput::Literal(0.0),
+        FloatInput::Literal(1.0),
+        radius_from_particle_index(3.0, 7.0),
+        true,
+    );
+    instance.advance(0.02, None);
+    instance.nodes[0].parts.scalars[store::RADIUS][0] = 9.0;
+    instance.advance(0.02, None);
+    let positions = &instance.nodes[0].parts.vectors[store::POSITION];
+    assert_eq!(positions.len(), 4);
+    assert!(
+        (positions[1].x - 50.0).abs() < 0.001,
+        "initial scalar preserved: {:?}",
+        positions[1]
+    );
+}
+
+#[test]
+fn maintained_path_attribute_counts_cannot_overflow_the_bounce_index() {
+    for (value, second) in [(-f32::MAX, 0.0), (f32::MAX, 100.0 / 4999.0), (2.75, 100.0)] {
+        let radius = Initializer::InitFloat {
+            field: Field::RADIUS,
+            value: FloatInput::Literal(value),
+            set_method: SetMethod::Replace,
+            strength: FloatInput::Literal(1.0),
+        };
+        let mut instance = maintained_path_instance(
+            radius_attribute(false),
+            FloatInput::Literal(0.0),
+            FloatInput::Literal(1.0),
+            radius,
+            false,
+        );
+        instance.advance(0.02, None);
+        let positions = &instance.nodes[0].parts.vectors[store::POSITION];
+        assert_eq!(positions.len(), 4);
+        assert!(
+            (positions[1].x - second).abs() < 1e-5,
+            "count {value}: {:?} vs {second}",
+            positions[1]
+        );
+    }
+}
+
+#[test]
+fn maintained_path_collection_number_uses_active_zero_and_active_count() {
+    for (reverse, mapping, expected) in [
+        (
+            false,
+            Mapping::Remap {
+                input: [0.0, 1.0],
+                output: [3.0, 4.0],
+                looped: false,
+                bias: None,
+            },
+            [0.0, 50.0, 100.0, 0.0],
+        ),
+        (
+            true,
+            Mapping::Direct,
+            [0.0, 100.0 / 3.0, 200.0 / 3.0, 100.0],
+        ),
+    ] {
+        let mut instance = maintained_path_instance(
+            FloatInput::ParticleNumber { reverse, mapping },
+            FloatInput::Literal(0.0),
+            FloatInput::Literal(1.0),
+            lifetime_of(10.0),
+            true,
+        );
+        instance.advance(0.02, None);
+        instance.nodes[0].parts.number[0] = 100;
+        instance.advance(0.02, None);
+        let positions = &instance.nodes[0].parts.vectors[store::POSITION];
+        assert_eq!(positions.len(), 4);
+        for (index, x) in expected.into_iter().enumerate() {
+            assert!(
+                (positions[index].x - x).abs() < 0.001,
+                "active numbering reverse={reverse}: {:?}",
+                positions[index]
+            );
+        }
+    }
+}
+
+#[test]
+fn particle_collection_attribute_input_is_safe_before_any_particle_exists() {
+    let mut definition = bare(
+        1.0,
+        vec![lifetime_of(10.0)],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    definition.emitters = vec![always(Emitter::Instantaneous {
+        count: radius_attribute(false),
+        start_time: FloatInput::Literal(0.0),
+        max_per_frame: -1,
+    })];
+    let effect = Arc::new(Effect::new(&[("empty_collection".to_owned(), definition)]));
+    let mut instance = Instance::new(effect, 42);
+    instance.advance(0.02, None);
+    assert_eq!(instance.nodes[0].parts.len(), 0);
+}

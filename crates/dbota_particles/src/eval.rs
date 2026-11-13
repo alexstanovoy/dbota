@@ -366,7 +366,7 @@ pub fn float(
     i: Option<usize>,
     salt: u32,
 ) -> f32 {
-    let seed = i.map_or(0x5EED, |i| parts.seed[i]);
+    let seed = i.map_or(scene.seed, |i| parts.seed[i]);
     match input {
         FloatInput::Literal(v) => *v,
         FloatInput::Random { .. } => random(input, scene, seed, salt),
@@ -381,7 +381,57 @@ pub fn float(
             map(mapping, p[usize::from(*component).min(2)])
         }
         FloatInput::Unsupported { literal, .. } => *literal,
-        other => i.map_or(0.0, |i| particle_float(other, scene, parts, i)),
+        other => match i {
+            Some(i) => particle_float(other, scene, parts, i),
+            None => match other {
+                FloatInput::ParticleFloat { .. }
+                | FloatInput::ParticleAge(_)
+                | FloatInput::ParticleAgeNormalized(_)
+                    if !parts.is_empty() =>
+                {
+                    particle_float(other, scene, parts, 0)
+                }
+                FloatInput::ParticleNumber { reverse, mapping } => {
+                    map(mapping, if *reverse { parts.len() as f32 } else { 0.0 })
+                }
+                _ => 0.0,
+            },
+        },
+    }
+}
+
+/// Creation inputs read current attributes while initial values are still being built.
+pub fn initializer_float(
+    input: &FloatInput,
+    scene: &Scene<'_>,
+    parts: &Particles,
+    i: Option<usize>,
+    salt: u32,
+) -> f32 {
+    if i.is_none() && matches!(input, FloatInput::ParticleNumber { reverse: false, .. }) {
+        // Collection birth-number inputs are not currently supplied.
+        return 0.0;
+    }
+    match input {
+        FloatInput::ParticleFloat {
+            field,
+            initial: true,
+            mapping,
+        } => {
+            let selected = i.or_else(|| (!parts.is_empty()).then_some(0));
+            selected.map_or(0.0, |i| {
+                let value = parts.scalar(slot(*field), i);
+                map(
+                    mapping,
+                    if field.is_angle() {
+                        value.to_degrees()
+                    } else {
+                        value
+                    },
+                )
+            })
+        }
+        _ => float(input, scene, parts, i, salt),
     }
 }
 
