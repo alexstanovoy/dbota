@@ -113,6 +113,7 @@ mod strategy;
 mod talents;
 mod talk;
 mod talk_check;
+mod tally;
 mod teleport;
 mod terrain;
 #[cfg(test)]
@@ -749,6 +750,7 @@ fn client_plugins(app: &mut App, read_environment: bool) {
             base_blockers::plugin,
             soundscape::plugin,
             hero_voice::plugin,
+            tally::plugin,
         ))
         .add_plugins((
             fortified::plugin,

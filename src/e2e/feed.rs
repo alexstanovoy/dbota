@@ -132,7 +132,16 @@ fn a_fallen_tower_is_worded_as_dota_words_it() {
     } else {
         "Dire"
     };
-    assert_eq!(text.trim(), format!("{side} Top Tier 2 Tower"));
+    let destroyer = crate::seat_name::seat_name(
+        client.core(),
+        SlotId(foe),
+        client.world().get_resource::<crate::dota_text::Texts>(),
+    );
+    assert_eq!(
+        text.trim(),
+        format!("{destroyer}{side} Top Tier 2 Tower 110each"),
+        "the destroyer's name, the tower, and what its fall pays each seat"
+    );
     assert_ne!(
         icons[0],
         portrait(&client, client.core().my_slot.expect("a seat").0),
@@ -140,8 +149,12 @@ fn a_fallen_tower_is_worded_as_dota_words_it() {
     );
     assert_eq!(
         icons,
-        vec![portrait(&client, foe), file(&client, "hud.kill_enemy")],
-        "the hero that destroyed it, then the sword of the other side"
+        vec![
+            portrait(&client, foe),
+            file(&client, "hud.kill_enemy"),
+            file(&client, "hud.gold")
+        ],
+        "the hero that destroyed it, the sword of the other side, the coin"
     );
 }
 
@@ -184,8 +197,8 @@ fn a_rune_taken_is_a_toast_at_the_left_with_its_icon() {
     assert!(left, "at the left above the HUD: {text:?}");
     assert_eq!(
         icons,
-        vec![file(&client, "icon.rune.haste")],
-        "the rune's own icon"
+        vec![portrait(&client, me.0), file(&client, "icon.rune.haste")],
+        "the hero that took it, then the rune's own icon"
     );
 }
 

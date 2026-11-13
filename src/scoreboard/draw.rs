@@ -1,6 +1,6 @@
 //! The scoreboard's parts, laid out as Dota's `dota_hud_scoreboard` lays
 //! them out, at its sizes: Dota's pixels are of a 1080-line screen and ours
-//! of a 900-line one, hence [`DOTA`].
+//! of a 1200-line one, hence [`DOTA`].
 
 use bevy::prelude::*;
 use bevy::{picking::hover::Hovered, ui_widgets::Button};

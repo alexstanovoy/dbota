@@ -300,6 +300,17 @@ fn complaints(client: &mut Client, window: Vec2) -> Vec<String> {
             all.push(format!("{}: {} is not laid out", part.region, part.name));
             continue;
         };
+        // For the comparison page: the rectangles laid out, as `hud_rect <window> <part> x y w h`.
+        println!(
+            "hud_rect {}x{} {} {:.1} {:.1} {:.1} {:.1}",
+            window.x,
+            window.y,
+            part.name,
+            got.min.x,
+            got.min.y,
+            got.width(),
+            got.height()
+        );
         let off = |a: f32, b: f32| (a - b).abs() / window.y;
         let edges = [
             ("left", got.min.x, want.min.x),
@@ -321,6 +332,17 @@ fn complaints(client: &mut Client, window: Vec2) -> Vec<String> {
     all
 }
 
+/// Waits until the game is on screen (the loading screen gone), where the game's interface scale
+/// holds: before that the interface is laid out for the menu.
+pub(super) fn on_screen(client: &mut Client) {
+    client.within(
+        std::time::Duration::from_secs(120),
+        "the game on screen",
+        |c| c.world().resource::<crate::ui::HudShown>().0,
+    );
+    client.frames(10);
+}
+
 /// The client in a game, laid out in a window of `width` by `height`.
 fn in_window(width: u32, height: u32) -> (Client, Vec2) {
     let server = Server::start(2, &[]);
@@ -328,6 +350,7 @@ fn in_window(width: u32, height: u32) -> (Client, Vec2) {
     let size = format!("{width}x{height}");
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--window", &size]);
     // The fonts and the first layout settle over a few frames.
+    on_screen(&mut client);
     client.frames(30);
     (client, Vec2::new(width as f32, height as f32))
 }
@@ -360,4 +383,90 @@ fn hud_layout_follows_the_reference_in_a_16_by_10_window() {
 #[test]
 fn hud_layout_follows_the_reference_in_an_ultrawide_window() {
     layout_follows_reference_at(3440, 1440);
+}
+
+/// The Demo Hero game's panel at the left: its width is the reference's (418 of 1620 lines of the
+/// height), its top edge is at 175, and it stays clear of the minimap under it.
+fn demo_panel_follows_reference_at(width: u32, height: u32) {
+    use crate::main_menu::{Act, MenuCore};
+    use bevy::ui_widgets::Button as NativeButton;
+
+    let size = format!("{width}x{height}");
+    let mut client = Client::run(&["--window", &size]);
+    client.frames(30);
+    crate::main_menu::tests::use_matching_local_server(
+        &mut client.world_mut().non_send_mut::<MenuCore>(),
+    );
+    super::menu::act(&mut client, Act::InspectHero(HeroId::SHADOW_FIEND));
+    let world = client.world_mut();
+    let demo = world
+        .query_filtered::<(Entity, &Name), With<NativeButton>>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "demo")
+        .map(|(entity, _)| entity)
+        .expect("the hero page's demo button");
+    let at = client.centre_of(demo).expect("the demo button laid out");
+    client.mouse(at);
+    client.click(MouseButton::Left);
+    client.within(
+        std::time::Duration::from_secs(120),
+        "the sandbox's hero",
+        |c| c.core().my_hero().is_some(),
+    );
+    on_screen(&mut client);
+    client.frames(30);
+    let window = Vec2::new(width as f32, height as f32);
+    let panel = measured(&mut client, Named("hud demo panel")).expect("the demo panel is drawn");
+    let minimap = measured(&mut client, Named("hud minimap")).expect("the minimap");
+    let scale = window.y / FRAME.y;
+    let off = |got: f32, want: f32| (got - want).abs() / window.y;
+    let mut complaints = Vec::new();
+    if off(panel.min.x, 0.0) > TOLERANCE {
+        complaints.push(format!("left edge at {}, wanted 0", panel.min.x));
+    }
+    if off(panel.min.y, 175.0 * scale) > TOLERANCE {
+        complaints.push(format!(
+            "top edge at {}, wanted {}",
+            panel.min.y,
+            175.0 * scale
+        ));
+    }
+    if off(panel.max.x, 418.0 * scale) > TOLERANCE {
+        complaints.push(format!(
+            "right edge at {}, wanted {}",
+            panel.max.x,
+            418.0 * scale
+        ));
+    }
+    if panel.max.y > minimap.min.y + 0.5 {
+        complaints.push(format!(
+            "bottom edge {} runs into the minimap at {}",
+            panel.max.y, minimap.min.y
+        ));
+    }
+    assert!(
+        complaints.is_empty(),
+        "at {size}: {}",
+        complaints.join("; ")
+    );
+}
+
+#[test]
+fn demo_panel_follows_the_reference_at_1920x1080() {
+    demo_panel_follows_reference_at(1920, 1080);
+}
+
+#[test]
+fn demo_panel_follows_the_reference_in_a_16_by_10_window() {
+    demo_panel_follows_reference_at(1920, 1200);
+}
+
+/// The tally in the corner tells one's own seat's figures in Dota's two lines.
+#[test]
+fn the_corner_tally_tells_kills_deaths_assists_and_last_hits_and_denies() {
+    let (mut client, _) = in_window(1920, 1080);
+    let shown = client.shown_texts();
+    for line in ["K / D / A", "0 / 0 / 0", "LH / DN", "0 / 0"] {
+        assert!(shown.iter().any(|t| t == line), "{line:?} in {shown:?}");
+    }
 }

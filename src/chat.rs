@@ -26,8 +26,15 @@ const ROWS: usize = 8;
 /// Seconds a line stays whole, and then takes to fade away.
 const FADE_AFTER: f32 = 8.0;
 const FADE_SECS: f32 = 2.0;
-/// The log's width in interface pixels.
+/// The log's width in interface pixels, and the least height it keeps, in which a line of chat shows
+/// under the toasts.
 const WIDTH: f32 = 420.0;
+const ZONE: f32 = 90.0;
+/// How far the log stands from the screen's edge, and its padding.
+const LOG_LEFT: f32 = 4.0;
+const LOG_PADDING: f32 = 4.0;
+/// How far the log's foot stands over the screen's: over the minimap.
+const LOG_BOTTOM: f32 = crate::minimap::SIDE + 5.0;
 const SIZE: f32 = 14.0;
 /// Seconds a fault of one's own line is shown.
 const FAULT_SECS: f32 = 3.0;
@@ -338,13 +345,15 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
             Name::new("chat log"),
             Node {
                 position_type: PositionType::Absolute,
-                left: px(8),
-                // Over the minimap and its margin.
-                bottom: px(crate::minimap::SIDE + 14.0),
+                left: px(LOG_LEFT),
+                // Over the minimap and its margin; the log keeps its zone free, so that the toasts
+                // above it stand where Dota's do.
+                bottom: px(LOG_BOTTOM),
                 width: px(WIDTH),
+                min_height: px(ZONE),
                 flex_direction: FlexDirection::Column,
                 row_gap: px(1),
-                padding: UiRect::all(px(4)),
+                padding: UiRect::all(px(LOG_PADDING)),
                 ..default()
             },
             BackgroundColor(Color::NONE),
@@ -360,7 +369,8 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
             // Each row is as wide as what it says, as Dota's rows are.
             align_items: AlignItems::FlexStart,
             row_gap: px(2),
-            margin: UiRect::bottom(px(4)),
+            // The toasts stand at the screen's edge, out of the log's own room.
+            margin: UiRect::new(px(-(LOG_LEFT + LOG_PADDING)), px(0), px(0), px(4)),
             ..default()
         },
         Pickable::IGNORE,
@@ -779,17 +789,14 @@ fn loading_faces(
 }
 
 fn loading_log(node: &mut Node, color: &mut BackgroundColor, shown: bool, typing: Typing) {
-    node.left = px(if shown { 24.0 } else { 8.0 });
-    node.bottom = px(if shown {
-        24.0
-    } else {
-        crate::minimap::SIDE + 14.0
-    });
+    node.left = px(if shown { 24.0 } else { LOG_LEFT });
+    node.bottom = px(if shown { 24.0 } else { LOG_BOTTOM });
+    node.min_height = px(if shown { 0.0 } else { ZONE });
     node.width = px(if shown { 520.0 } else { WIDTH });
     node.padding = if shown {
         UiRect::axes(px(12), px(8))
     } else {
-        UiRect::all(px(4))
+        UiRect::all(px(LOG_PADDING))
     };
     node.border = UiRect::all(px(if shown { 1.0 } else { 0.0 }));
     if shown {

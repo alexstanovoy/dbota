@@ -42,7 +42,7 @@ struct GlyphSweep;
 struct GlyphSeconds;
 
 /// Logical pixels across the button, and the frame's padding round it.
-const BUTTON: f32 = 42.0;
+const BUTTON: f32 = 55.0;
 const PAD: f32 = 7.0;
 
 pub fn plugin(app: &mut App) {

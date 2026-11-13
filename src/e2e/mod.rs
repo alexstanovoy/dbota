@@ -110,6 +110,7 @@ mod start;
 mod strategy;
 mod talent_glow;
 mod tip_band;
+mod toasts;
 mod tower_cadence;
 mod tower_fall;
 mod trees;

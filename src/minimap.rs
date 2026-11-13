@@ -26,8 +26,9 @@ pub(crate) mod outline;
 
 /// World units of the map along each axis.
 const MAP_SIZE: f32 = bota_core::rules::MAP_SIZE as f32;
-/// Interface pixels of the minimap's side.
-pub const SIDE: f32 = 250.0;
+/// Interface pixels of the minimap's side, its frame included: the reference game's minimap stands at the
+/// screen's corner, a square of a quarter of the window's height.
+pub const SIDE: f32 = 308.0;
 /// Pixels of the photograph's side.
 const PHOTO: u32 = 512;
 /// Unit marks kept initially; retained nodes grow only to the admitted snapshot size.

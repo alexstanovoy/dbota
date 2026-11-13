@@ -25,8 +25,9 @@ use crate::session::Session;
 use crate::ui::{self, Extent, Fonts};
 use crate::wash::Washed;
 
-// The hero panel's measures, in interface pixels: Dota's at 720 lines
-// times 5/3, so that an ability box is ours.
+// The hero panel's measures, in interface pixels: Dota's at 1080 lines times 10/9, which is what a
+// pixel of Dota's is in [`ui::DOTA`] interface pixels (the scale of the game's interface is that of a
+// 1200-line window). The reference game's panel, measured at 1620 lines, is these numbers times 1.35.
 
 /// The size of an ability box.
 const ABILITY: f32 = 58.0;
@@ -39,32 +40,68 @@ const INACTIVE_ICON: Color = Color::srgb(0.55, 0.55, 0.55);
 const SUNKEN_EDGE: Color = Color::srgb(0.05, 0.06, 0.07);
 /// The badge under the key of an item, Dota's `#Hotkey` (`#2127268a`).
 const KEY_BADGE: Color = Color::srgba(0.13, 0.15, 0.15, 0.54);
-/// The height of a backpack box.
-const BACKPACK_ROW: f32 = 30.0;
+/// The height of a backpack box, and the room over it, which is more than the rows of the inventory
+/// keep between them.
+const BACKPACK_ROW: f32 = 35.5;
+const BACKPACK_GAP: f32 = 1.5;
+/// The inventory's gaps between its boxes, by column and by row.
+const ITEM_GAPS: (f32, f32) = (7.0, 2.2);
 /// The portrait's frame, of Dota's shape.
-pub const PORTRAIT: (f32, f32) = (176.0, 156.0);
-/// The ring round the level.
-const LEVEL_RING: f32 = 42.0;
-/// The innate's round mark.
-const INNATE: f32 = 34.0;
-/// The level-up plate over an ability.
-const LEVEL_UP: (f32, f32) = (ABILITY, 30.0);
-/// The height of the row of level pips under an ability, with its gap.
-const PIPS: f32 = 10.0;
+pub const PORTRAIT: (f32, f32) = (176.0, 160.0);
+/// The ring round the level, and how far it stands from the panel's foot.
+const LEVEL_RING: f32 = 46.0;
+const LEVEL_RING_LIFT: f32 = 5.0;
+/// The innate's round mark, and the room either side of it that the talent button and the
+/// abilities leave.
+const INNATE: f32 = 41.0;
+const INNATE_SPACE: (f32, f32) = (5.0, 3.6);
+/// The level-up plate over an ability, and the room between its foot and the ability's top.
+const LEVEL_UP: (f32, f32) = (ABILITY, 35.0);
+const LEVEL_UP_GAP: f32 = 11.0;
+/// The height of the row of level pips under an ability, and the room over it.
+const PIPS: f32 = 4.0;
+const PIPS_GAP: f32 = 7.0;
+/// The panel's room left of the abilities' column after the portrait, between the column and the
+/// inventory, and the column's width: the health and mana bars run so far, past the last ability,
+/// where Dota keeps the scepter's and the shard's marks.
+const COLUMN_LEFT: f32 = 15.5;
+const COLUMN_WIDTH: f32 = 555.0;
+const INVENTORY_LEFT: f32 = 19.3;
+/// The panel's room under the abilities' column and the inventory.
+const PANEL_FOOT: f32 = 9.6;
+/// The room kept right of the inventory for the round slots, which stand in it.
+const SLOTS_ROOM: f32 = 65.4;
+/// The room the panel leaves at the right: Dota's frame is wider there than it is at the left, and
+/// the panel stands that much to the left of the screen's middle.
+const PANEL_RIGHT: f32 = 23.7;
+/// How far the level ring reaches out of the panel's left edge.
+const LEVEL_RING_OUT: f32 = 7.0;
+const SLOTS_RIGHT: f32 = 9.6;
+/// How far the round slots column reaches over the panel's top, and under it.
+const SLOTS_TOP: f32 = -10.0;
+const SLOTS_BOTTOM: f32 = 14.0;
 /// Pips an ability box has room for.
 const MAX_PIPS: u8 = 4;
-/// The height of the health and the mana bar.
-const POOL: f32 = 24.0;
-/// The room between the level pips and the health bar: Dota's ten
-/// (`#AbilityLevelContainer` 20 over `#AbilitiesAndStatBranch`'s 50, the
-/// bars' top at 60).
-const POOLS_GAP: f32 = 11.0;
+/// The height of the health and the mana bar, and the room between them.
+const POOL: f32 = 28.5;
+const POOL_GAP: f32 = 2.0;
+/// The room between the level pips and the health bar.
+const POOLS_GAP: f32 = 12.5;
 /// The round neutral and town portal slots.
-const ROUND_SLOT: f32 = 46.0;
+const NEUTRAL_SLOT: f32 = 47.0;
+const PORTAL_SLOT: f32 = 52.0;
 /// The panel's padding and the gaps of the ability row.
 const GAP: f32 = 6.0;
-/// A seat's portrait in the top bar.
-const SEAT: (f32, f32) = (86.0, 48.0);
+/// A seat's portrait in the top bar (the seats touch: Dota's bar is one strip of them).
+const SEAT: (f32, f32) = (68.5, 36.0);
+/// The health under a seat's portrait.
+const SEAT_HEALTH: f32 = 5.0;
+/// The clock's figures, a side's score, and the sun or the moon over the time.
+const CLOCK_SIZE: f32 = 15.0;
+const SCORE_SIZE: f32 = 22.0;
+const SUN: f32 = 19.0;
+/// The clock panel between the two halves of the bar, with each side's score in it.
+const CLOCK: (f32, f32) = (235.5, 47.5);
 /// A slot box's edge.
 const SLOT_EDGE: Color = Color::srgb(0.2, 0.22, 0.27);
 /// The gold of the name over the portrait.
@@ -107,6 +144,13 @@ pub(crate) fn seats_shown(columns: &Query<(&SeatColumn, &Node)>) -> (u8, u8) {
     };
     (count(Team::Radiant), count(Team::Dire))
 }
+
+/// A place of the top bar, by place: what holds the room of a seat nobody holds.
+#[derive(Component, Clone, Copy)]
+struct SeatPlace(Place);
+
+/// The dark of a place nobody holds.
+const EMPTY_PLACE: Color = Color::srgba(0.04, 0.045, 0.05, 0.75);
 
 /// A seat's portrait in the top bar, by place.
 #[derive(Component, Clone, Copy)]
@@ -418,21 +462,13 @@ fn spawn_docks(mut commands: Commands) {
     let left = dock(&mut commands, 1, JustifySelf::Start, Extent::Left);
     let right = dock(&mut commands, 3, JustifySelf::End, Extent::Right);
     let minimap = commands
-        .spawn((
-            Node {
-                margin: UiRect::new(px(6), px(0), px(0), px(6)),
-                ..default()
-            },
-            Pickable::IGNORE,
-            ChildOf(left),
-        ))
+        .spawn((Node::default(), Pickable::IGNORE, ChildOf(left)))
         .id();
     let minimap_buttons = commands
         .spawn((
             Node {
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::FlexEnd,
-                margin: UiRect::bottom(px(6)),
                 ..default()
             },
             Pickable::IGNORE,
@@ -508,8 +544,8 @@ fn spawn_bottom(kit: &mut Spawner, row: Entity) {
                 grid_row: GridPlacement::start(1),
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::FlexEnd,
-                padding: UiRect::all(px(GAP)),
-                column_gap: px(10),
+                padding: UiRect::right(px(SLOTS_ROOM)),
+                margin: UiRect::right(px(PANEL_RIGHT)),
                 border: UiRect::top(px(2)).with_left(px(2)).with_right(px(2)),
                 border_radius: BorderRadius::top(px(10)),
                 ..default()
@@ -534,7 +570,7 @@ fn spawn_level(kit: &mut Spawner, bar: Entity) {
             Node {
                 width: px(LEVEL_RING),
                 height: px(LEVEL_RING),
-                margin: UiRect::right(px(-4)),
+                margin: UiRect::new(px(-LEVEL_RING_OUT), px(-1), px(0), px(LEVEL_RING_LIFT)),
                 border_radius: BorderRadius::MAX,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
@@ -633,6 +669,8 @@ fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
             Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: px(POOLS_GAP),
+                width: px(COLUMN_WIDTH),
+                margin: UiRect::left(px(COLUMN_LEFT)).with_bottom(px(PANEL_FOOT)),
                 ..default()
             },
             ChildOf(bar),
@@ -645,7 +683,7 @@ fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
                 position_type: PositionType::Absolute,
                 bottom: percent(100),
                 left: px(0),
-                margin: UiRect::bottom(px(LEVEL_UP.1 + 2.0 * GAP)),
+                margin: UiRect::bottom(px(LEVEL_UP.1 + LEVEL_UP_GAP + GAP)),
                 ..default()
             },
             Pickable::IGNORE,
@@ -689,7 +727,12 @@ fn spawn_innate(kit: &mut Spawner, row: Entity) {
         .entry::<Node>()
         .and_modify(|mut node| {
             node.align_self = AlignSelf::Center;
-            node.margin = UiRect::bottom(px(PIPS));
+            node.margin = UiRect::new(
+                px(INNATE_SPACE.0),
+                px(INNATE_SPACE.1),
+                px(0),
+                px(PIPS + PIPS_GAP),
+            );
         });
 }
 
@@ -742,7 +785,7 @@ fn spawn_ability_cell(kit: &mut Spawner, row: Entity, slot: u8) {
             Node {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                row_gap: px(3),
+                row_gap: px(PIPS_GAP),
                 ..default()
             },
             ChildOf(row),
@@ -761,7 +804,7 @@ fn spawn_ability_cell(kit: &mut Spawner, row: Entity, slot: u8) {
         .commands
         .spawn((
             Node {
-                height: px(PIPS - 3.0),
+                height: px(PIPS),
                 column_gap: px(3),
                 ..default()
             },
@@ -775,7 +818,7 @@ fn spawn_ability_cell(kit: &mut Spawner, row: Entity, slot: u8) {
             PartOf(ability),
             Node {
                 width: px(9),
-                height: px(PIPS - 3.0),
+                height: px(PIPS),
                 border_radius: BorderRadius::all(px(1)),
                 ..default()
             },
@@ -802,7 +845,7 @@ fn spawn_level_up(kit: &mut Spawner, cell: Entity, slot: u8) {
                 bottom: percent(100),
                 width: px(LEVEL_UP.0),
                 height: px(LEVEL_UP.1),
-                margin: UiRect::bottom(px(GAP)),
+                margin: UiRect::bottom(px(LEVEL_UP_GAP)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 border_radius: BorderRadius::all(px(2)),
@@ -845,7 +888,7 @@ fn spawn_pools(kit: &mut Spawner, column: Entity) {
         .spawn((
             Node {
                 flex_direction: FlexDirection::Column,
-                row_gap: px(3),
+                row_gap: px(POOL_GAP),
                 ..default()
             },
             ChildOf(column),
@@ -924,8 +967,9 @@ fn spawn_items(kit: &mut Spawner, bar: Entity) {
             Node {
                 display: Display::Grid,
                 grid_template_columns: RepeatedGridTrack::px(3, ITEM.0),
-                column_gap: px(5),
-                row_gap: px(5),
+                column_gap: px(ITEM_GAPS.0),
+                row_gap: px(ITEM_GAPS.1),
+                margin: UiRect::left(px(INVENTORY_LEFT)).with_bottom(px(PANEL_FOOT)),
                 ..default()
             },
             ChildOf(bar),
@@ -937,7 +981,7 @@ fn spawn_items(kit: &mut Spawner, bar: Entity) {
         } else {
             ITEM
         };
-        spawn_slot_box(
+        let item = spawn_slot_box(
             kit.commands,
             kit.fonts,
             grid,
@@ -946,6 +990,12 @@ fn spawn_items(kit: &mut Spawner, bar: Entity) {
             slot < INVENTORY_SLOTS,
             false,
         );
+        if slot >= INVENTORY_SLOTS {
+            kit.commands
+                .entity(item)
+                .entry::<Node>()
+                .and_modify(|mut node| node.margin = UiRect::top(px(BACKPACK_GAP)));
+        }
     }
     spawn_round_slots(kit, bar);
 }
@@ -958,11 +1008,17 @@ fn spawn_round_slots(kit: &mut Spawner, bar: Entity) {
         .commands
         .spawn((
             Node {
+                position_type: PositionType::Absolute,
+                right: px(SLOTS_RIGHT),
+                top: px(SLOTS_TOP),
+                bottom: px(SLOTS_BOTTOM),
+                width: px(PORTAL_SLOT),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::SpaceBetween,
-                height: px(2.0 * ITEM.1 + BACKPACK_ROW + 10.0),
+                align_items: AlignItems::Center,
                 ..default()
             },
+            Pickable::IGNORE,
             ChildOf(bar),
         ))
         .id();
@@ -974,8 +1030,8 @@ fn spawn_round_slots(kit: &mut Spawner, bar: Entity) {
             Hovered::default(),
             Blocker,
             Node {
-                width: px(ROUND_SLOT),
-                height: px(ROUND_SLOT),
+                width: px(NEUTRAL_SLOT),
+                height: px(NEUTRAL_SLOT),
                 border: UiRect::all(px(1)),
                 border_radius: BorderRadius::MAX,
                 ..default()
@@ -998,7 +1054,7 @@ fn spawn_round_slots(kit: &mut Spawner, bar: Entity) {
         kit.commands,
         kit.fonts,
         column,
-        (ROUND_SLOT, ROUND_SLOT),
+        (PORTAL_SLOT, PORTAL_SLOT),
         ItemBox(TOWN_PORTAL_SLOT),
         true,
         true,
@@ -1196,7 +1252,6 @@ fn spawn_top(kit: &mut Spawner, root: Entity) {
             Name::new("hud top bar"),
             Node {
                 align_items: AlignItems::FlexStart,
-                column_gap: px(6),
                 ..default()
             },
             Pickable::IGNORE,
@@ -1227,18 +1282,18 @@ fn spawn_top(kit: &mut Spawner, root: Entity) {
 }
 
 /// The clock between the seats: each side's kills either side of the time
-/// and the sun or the moon.
+/// with the sun or the moon over it.
 fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
     let clock = commands
         .spawn((
             Name::new("hud clock"),
             panel(Node {
-                width: px(178),
-                height: px(54),
+                width: px(CLOCK.0),
+                height: px(CLOCK.1),
                 flex_direction: FlexDirection::Row,
                 justify_content: JustifyContent::SpaceBetween,
                 align_items: AlignItems::Center,
-                padding: UiRect::horizontal(px(10)),
+                padding: UiRect::horizontal(px(20)),
                 border: UiRect::bottom(px(2)).with_left(px(2)).with_right(px(2)),
                 border_radius: BorderRadius::bottom(px(8)),
                 ..default()
@@ -1251,7 +1306,7 @@ fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
         ui::text(
             "0",
             &fonts.bold,
-            20.0,
+            SCORE_SIZE,
             crate::overlay::team_color(Team::Radiant),
         ),
         ChildOf(clock),
@@ -1259,9 +1314,8 @@ fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
     let time = commands
         .spawn((
             Node {
-                flex_direction: FlexDirection::Row,
+                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                column_gap: px(5),
                 ..default()
             },
             ChildOf(clock),
@@ -1270,8 +1324,8 @@ fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
     commands.spawn((
         DayNight,
         Node {
-            width: px(24),
-            height: px(24),
+            width: px(SUN),
+            height: px(SUN),
             ..default()
         },
         ImageNode::default(),
@@ -1279,7 +1333,7 @@ fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
     ));
     commands.spawn((
         Readout::Clock,
-        ui::text("0:00", &fonts.bold, 22.0, ui::INK),
+        ui::text("0:00", &fonts.bold, CLOCK_SIZE, ui::INK),
         ChildOf(time),
     ));
     commands.spawn((
@@ -1287,7 +1341,7 @@ fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
         ui::text(
             "0",
             &fonts.bold,
-            20.0,
+            SCORE_SIZE,
             crate::overlay::team_color(Team::Dire),
         ),
         ChildOf(clock),
@@ -1300,18 +1354,32 @@ fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
 /// gone.
 fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: Place) {
     let commands = &mut *kit.commands;
+    // The place keeps its room in the bar while nobody holds it, as Dota's bar is five places a
+    // side whoever plays, and shows dark then.
+    let place = commands
+        .spawn((
+            SeatPlace(seat),
+            Name::new(format!("hud seat {:?} {}", seat.team, seat.n)),
+            Node {
+                width: px(SEAT.0),
+                height: px(SEAT.1 + 2.0 + SEAT_HEALTH),
+                ..default()
+            },
+            BackgroundColor(EMPTY_PLACE),
+            Pickable::IGNORE,
+            ChildOf(parent),
+        ))
+        .id();
     let column = commands
         .spawn((
             SeatColumn(seat),
-            Name::new(format!("hud seat {:?} {}", seat.team, seat.n)),
             Node {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 row_gap: px(2),
-                margin: UiRect::top(px(4)),
                 ..default()
             },
-            ChildOf(parent),
+            ChildOf(place),
         ))
         .id();
     let card = commands
@@ -1418,7 +1486,7 @@ fn spawn_seat_health(commands: &mut Commands, column: Entity, seat: Place) {
             SeatAlive(seat),
             Node {
                 width: px(SEAT.0),
-                height: px(6),
+                height: px(SEAT_HEALTH),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
@@ -1437,16 +1505,16 @@ fn spawn_seat_health(commands: &mut Commands, column: Entity, seat: Place) {
     ));
 }
 
-/// Space either side of a menu button, and how far the first button sits from
-/// the screen's left and top edges: half of the 14.5 it sat from the left
-/// before, the same from the top.
-const MENU_BUTTON_MARGIN: f32 = 6.5;
-const MENU_INSET: f32 = 7.25;
+/// A menu button's size and the space either side of it, and how far the first button sits from the
+/// screen's left and top edges.
+const MENU_BUTTON: f32 = 29.5;
+const MENU_BUTTON_MARGIN: f32 = 10.7;
+const MENU_ORIGIN: (f32, f32) = (16.3, 14.8);
 
 /// The menu in the top-left corner (Dota's `DOTAHudMenuButtons`): the
-/// dashboard (Dota's return-to-game arrow turned up) and the scoreboard, 30
-/// of Dota's pixels with 8 either side. No settings button: the settings are
-/// the dashboard's, and Escape's.
+/// dashboard (Dota's return-to-game arrow turned up) and the scoreboard. No
+/// settings or combat log button: the settings are the dashboard's, and
+/// Escape's.
 fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer, corner: Entity) {
     let bar = commands
         .spawn((Node::default(), Pickable::IGNORE, ChildOf(corner)))
@@ -1465,8 +1533,8 @@ fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer
             Hovered::default(),
             Blocker,
             Node {
-                width: px(25),
-                height: px(25),
+                width: px(MENU_BUTTON),
+                height: px(MENU_BUTTON),
                 margin: UiRect::horizontal(px(MENU_BUTTON_MARGIN)),
                 ..default()
             },
@@ -1495,8 +1563,8 @@ fn spawn_corner(kit: &mut Spawner, root: Entity) {
             Name::new("hud menu"),
             Node {
                 position_type: PositionType::Absolute,
-                left: px(MENU_INSET - MENU_BUTTON_MARGIN),
-                top: px(MENU_INSET),
+                left: px(MENU_ORIGIN.0 - MENU_BUTTON_MARGIN),
+                top: px(MENU_ORIGIN.1),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::FlexStart,
                 row_gap: px(2),
@@ -1518,6 +1586,7 @@ fn spawn_corner(kit: &mut Spawner, root: Entity) {
         },
         ChildOf(root),
     ));
+    crate::tally::spawn(commands, fonts, root);
     crate::feed::spawn(commands, root);
     let middle = commands
         .spawn((
@@ -2396,11 +2465,20 @@ fn seats(
     mut cards: Query<(&SeatBox, &mut ImageNode, &mut BorderColor)>,
     mut strips: Query<(&SeatColour, &mut BackgroundColor)>,
     mut columns: Query<(&SeatColumn, &mut Node)>,
+    mut places: Query<(&SeatPlace, &mut BackgroundColor), Without<SeatColour>>,
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
         return;
     };
+    for (SeatPlace(place), mut ground) in &mut places {
+        let held = seat_of(view, *place).is_some();
+        ground.set_if_neq(BackgroundColor(if held {
+            Color::NONE
+        } else {
+            EMPTY_PLACE
+        }));
+    }
     for (SeatColumn(place), mut node) in &mut columns {
         let display = if seat_of(view, *place).is_some() {
             Display::Flex

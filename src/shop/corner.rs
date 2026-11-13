@@ -59,6 +59,9 @@ const COURIER_LEFT: f32 = 114.0;
 const STASH_BG: (f32, f32) = (291.0, 67.0);
 const STASH_BOX: (f32, f32) = (40.0, 31.0);
 const STASH_ROW: (f32, f32) = (16.0, 31.0);
+/// The room between the stash and the quick-buy rows under it: the stash stands over them as
+/// Dota's does, at the foot of the shop's panel, not against the rows.
+const STASH_LIFT: f32 = 35.0;
 /// GRAB ALL's tab, drawn at nine tenths (`.Reborn #grab_all_button`), and
 /// the room from its right edge to the stash's.
 const GRAB: (f32, f32) = (0.9 * 102.0, 0.9 * 26.0);
@@ -185,6 +188,7 @@ fn spawn_stash(
             Node {
                 width: dota(STASH_BG.0),
                 height: dota(STASH_BG.1),
+                margin: UiRect::bottom(dota(STASH_LIFT)),
                 justify_content: JustifyContent::Center,
                 padding: UiRect::top(dota(9.0)),
                 ..default()

@@ -20,7 +20,7 @@ use crate::hud::Blocker;
 use crate::main_menu::{Act, MenuCore};
 use crate::manifest::Manifest;
 use crate::session::Session;
-use crate::ui::{self, Fonts};
+use crate::ui::{self, Fonts, dota};
 
 /// Gold one click of the panel gives, and its bigger button.
 const GOLD_STEPS: [i32; 2] = [1_000, 10_000];
@@ -29,8 +29,20 @@ const GOLD_STEPS: [i32; 2] = [1_000, 10_000];
 const SPAWN_AHEAD: i32 = 1_600;
 /// Items the search shows at most.
 const FOUND_ITEMS: usize = 12;
-/// The panel's width: Dota's `.ControlPanelContainer`.
+/// The panel's measures, in Dota's pixels: its width (`.ControlPanelContainer`), the padding round
+/// its contents, a button's height, the space over and under a row of buttons and between the
+/// buttons of one, and the sizes of the words on it.
 const WIDTH: f32 = 280.0;
+const PADDING: (f32, f32) = (9.5, 6.0);
+const BUTTON_HEIGHT: f32 = 26.0;
+const ROW_SPACE: f32 = 5.0;
+const BUTTON_GAP: f32 = 2.0;
+const HEADER_SIZE: f32 = 14.0;
+const BUTTON_SIZE: f32 = 13.0;
+/// How far the panel stands under the screen's top, in interface pixels, and the room it leaves over
+/// the minimap.
+const TOP: f32 = 129.5;
+const MINIMAP_ROOM: f32 = 10.0;
 
 /// What waits for a click on the ground.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,8 +139,8 @@ fn spawn_root(mut commands: Commands) {
         Node {
             position_type: PositionType::Absolute,
             left: px(0),
-            top: px(96),
-            bottom: px(340),
+            top: px(TOP),
+            bottom: px(crate::minimap::SIDE + MINIMAP_ROOM),
             ..default()
         },
         Pickable::IGNORE,
@@ -426,14 +438,14 @@ impl Kit<'_, '_, '_> {
         let line = self.node(
             parent,
             Node {
-                margin: UiRect::bottom(px(6)),
+                margin: UiRect::bottom(dota(4.0)),
                 ..default()
             },
         );
         self.text(
             line,
             text.to_uppercase(),
-            15.0,
+            HEADER_SIZE * ui::DOTA,
             Color::srgb(0.96, 0.96, 0.96),
         );
     }
@@ -444,8 +456,8 @@ impl Kit<'_, '_, '_> {
             parent,
             Node {
                 width: percent(100),
-                column_gap: px(3),
-                margin: UiRect::vertical(px(3)),
+                column_gap: dota(BUTTON_GAP),
+                margin: UiRect::vertical(dota(ROW_SPACE)),
                 ..default()
             },
         )
@@ -463,7 +475,7 @@ impl Kit<'_, '_, '_> {
                 Blocker,
                 Name::new(press.name()),
                 Node {
-                    height: px(30),
+                    height: dota(BUTTON_HEIGHT),
                     flex_grow: 1.0,
                     flex_basis: px(0),
                     justify_content: JustifyContent::Center,
@@ -477,7 +489,12 @@ impl Kit<'_, '_, '_> {
             ))
             .id();
         self.commands.spawn((
-            ui::text(label.to_uppercase(), &self.fonts.regular, 14.0, BUTTON_INK),
+            ui::text(
+                label.to_uppercase(),
+                &self.fonts.regular,
+                BUTTON_SIZE * ui::DOTA,
+                BUTTON_INK,
+            ),
             TextLayout::justify(Justify::Center),
             Pickable::IGNORE,
             ChildOf(button),
@@ -495,7 +512,7 @@ impl Kit<'_, '_, '_> {
             Node {
                 width: percent(100),
                 height: px(1),
-                margin: UiRect::vertical(px(6)),
+                margin: UiRect::vertical(dota(5.0)),
                 ..default()
             },
             BackgroundColor(RULE),
@@ -513,7 +530,8 @@ fn build(kit: &mut Kit, root: Entity, shown: &Shown) {
         .spawn((
             Node {
                 flex_direction: FlexDirection::Row,
-                height: percent(100),
+                align_items: AlignItems::FlexStart,
+                max_height: percent(100),
                 ..default()
             },
             Pickable::IGNORE,
@@ -526,11 +544,12 @@ fn build(kit: &mut Kit, root: Entity, shown: &Shown) {
             .spawn((
                 Blocker,
                 Hovered::default(),
+                Name::new("hud demo panel"),
                 Node {
-                    width: px(WIDTH),
-                    height: percent(100),
+                    width: dota(WIDTH),
+                    max_height: percent(100),
                     flex_direction: FlexDirection::Column,
-                    padding: UiRect::axes(px(12), px(8)),
+                    padding: UiRect::axes(dota(PADDING.0), dota(PADDING.1)),
                     border: UiRect::all(px(1)),
                     overflow: Overflow::scroll_y(),
                     ..default()
@@ -576,10 +595,6 @@ fn build(kit: &mut Kit, root: Entity, shown: &Shown) {
 
 fn contents(kit: &mut Kit, body: Entity, shown: &Shown) {
     let panel = &shown.panel;
-    let name = kit.word("addon_game_name", "Hero Demo");
-    kit.text(body, name.to_uppercase(), 18.0, Color::WHITE);
-    kit.rule(body);
-
     // SPAWN: the hero to spawn, and on which side.
     let spawn = kit.word("SpawnUnits_ButtonCategory", "Spawn");
     kit.header(body, spawn);

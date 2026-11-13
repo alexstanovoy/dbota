@@ -26,8 +26,10 @@ use crate::config::Settings;
 use crate::manifest::Manifest;
 use crate::theme::Face;
 
-/// Logical window height at which the interface scale is one.
-pub(crate) const HUD_DESIGN_HEIGHT: f32 = 900.0;
+/// Logical window height at which the game's interface scale is one. The HUD scales with the window's
+/// height alone, as Dota's does, so this is the one number that sizes it: Dota lays its HUD out for
+/// 1080 lines, and the hero panel's measures here are Dota's times 1200/1080.
+pub(crate) const HUD_DESIGN_HEIGHT: f32 = 1200.0;
 /// Menu controls use a compact height-based design space, independent of HUD fitting.
 pub(crate) const MENU_DESIGN_HEIGHT: f32 = 1024.0;
 /// The minimum logical menu width; narrow windows shrink the interface to fit it.

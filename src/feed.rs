@@ -3,14 +3,18 @@
 //! them (an Outpost captured, a Shrine of Wisdom gathered, a rune taken,
 //! bottled or destroyed); without them, the client's own text.
 
+use bevy::color::Mix;
 use bevy::prelude::*;
 use bota_client_core::{App as Core, FeedKind, FeedLine, Killer, RuneAct, Victim};
 use bota_proto::{RuneKind, Team, UnitKind, Vec2};
+
+mod toast;
 
 use crate::dota_text::{Part, Texts};
 use crate::manifest::Manifest;
 use crate::seat_name::seat_name;
 use crate::ui::{self, Fonts};
+use toast::toast;
 
 /// Lines shown at most: what the client keeps.
 const ROWS: usize = 8;
@@ -69,9 +73,21 @@ pub(crate) const SLIDE: f32 = 40.0;
 /// styles.
 const LINE_SECONDS: f32 = bota_client_core::FEED_LINE_SECONDS;
 
+/// The width of a plate that carries the kind of a toast's event (the slanted separator between
+/// who did it and what), and the neutral colour of one that is about neither side.
+const PLATE_WIDTH: f32 = 44.0;
+const PLATE_NEUTRAL: [Color; 2] = [hex(0x5a, 0x62, 0x6b, 0xff), hex(0x45, 0x4c, 0x54, 0xff)];
+/// The yellow of a number in a toast (gold, experience).
+pub(crate) const NUMBER_INK: Color = Color::srgb(1.0, 0.8, 0.2);
+
 /// One line of the feed, from the top.
 #[derive(Component)]
 struct Row(usize, Place);
+
+/// The icon of a pair of a line: the box that holds it, which is a plate when it tells the event's
+/// kind, and the picture in it.
+#[derive(Component)]
+struct IconImage(Entity);
 
 /// Whose side a line is good for, as Dota tints it: its own (`.AllyEvent`) or the other's
 /// (`.EnemyEvent`).
@@ -236,19 +252,36 @@ fn spawn_row(commands: &mut Commands, fonts: &Fonts, column: Entity, row: usize,
         ));
     }
     for n in 0..SLOTS {
-        commands.spawn((
-            Slot::Icon(n),
-            Node {
-                width: ui::dota(ICON),
-                height: ui::dota(ICON),
-                margin: UiRect::right(ui::dota(4.0)),
-                display: Display::None,
-                ..default()
-            },
-            ImageNode::default(),
-            Pickable::IGNORE,
-            ChildOf(line),
-        ));
+        let holder = commands
+            .spawn((
+                Slot::Icon(n),
+                Node {
+                    width: ui::dota(ICON),
+                    height: ui::dota(ICON),
+                    margin: UiRect::right(ui::dota(4.0)),
+                    display: Display::None,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                Pickable::IGNORE,
+                ChildOf(line),
+            ))
+            .id();
+        let image = commands
+            .spawn((
+                Node {
+                    width: ui::dota(ICON),
+                    height: ui::dota(ICON),
+                    ..default()
+                },
+                ImageNode::default(),
+                Pickable::IGNORE,
+                ChildOf(holder),
+            ))
+            .id();
+        commands.entity(holder).insert(IconImage(image));
         commands.spawn((
             Slot::Text(n),
             ui::text("", &fonts.bold, LABEL_SIZE * ui::DOTA, Color::WHITE),
@@ -263,12 +296,52 @@ fn spawn_row(commands: &mut Commands, fonts: &Fonts, column: Entity, row: usize,
     }
     if place == Place::Corner {
         slash(commands);
+    } else {
+        // The slanted bar that ends a toast, as the one that begins it.
+        commands.spawn((
+            Bar,
+            Node {
+                position_type: PositionType::Absolute,
+                right: ui::dota(BAR_LEFT),
+                top: ui::dota(BAR_TOP),
+                width: ui::dota(BAR.0),
+                height: ui::dota(BAR.1),
+                display: Display::None,
+                ..default()
+            },
+            UiTransform::from_rotation(Rot2::degrees(BAR_TURN_DEGREES)),
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                ColorStop::new(Color::WHITE, percent(0)),
+                ColorStop::new(Color::WHITE, percent(100)),
+            ])),
+            Pickable::IGNORE,
+            ChildOf(line),
+        ));
     }
 }
 
 /// A line laid out: up to [`SLOTS`] pairs of an icon (a cache file) and a
 /// text.
 type Laid = [(Option<String>, String); SLOTS];
+
+/// How a pair of a line is drawn: the ink of its text, and whether its icon stands on a plate (the
+/// kind of the event).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Style {
+    pub ink: Color,
+    pub plate: bool,
+}
+
+impl Default for Style {
+    fn default() -> Style {
+        Style {
+            ink: Color::WHITE,
+            plate: false,
+        }
+    }
+}
+
+type Styles = [Style; SLOTS];
 
 /// The scale a row has `age` seconds after it came (`@keyframes CombatEvent`): from a fifth to
 /// one and a half in the first half of its entrance, then down to one.
@@ -283,9 +356,9 @@ fn entrance_scale(age: f32) -> f32 {
 
 /// How opaque a row is `age` seconds after it came: fading in with the entrance, out in the
 /// seconds before the client drops the line.
-fn opacity_at(age: f32) -> f32 {
+fn opacity_at(age: f32, line_age: f32) -> f32 {
     let entering = (age / (ENTER_SECONDS / 2.0)).clamp(0.0, 1.0);
-    let leaving = ((LINE_SECONDS - age) / SLIDE_SECONDS).clamp(0.0, 1.0);
+    let leaving = ((LINE_SECONDS - line_age) / SLIDE_SECONDS).clamp(0.0, 1.0);
     entering.min(leaving)
 }
 
@@ -345,13 +418,20 @@ struct Parts<'w, 's> {
         's,
         (
             &'static Slot,
-            Option<&'static mut ImageNode>,
+            Option<&'static IconImage>,
+            Option<&'static mut BackgroundColor>,
             Option<&'static mut Text>,
             Option<&'static mut TextColor>,
             &'static mut Node,
         ),
-        (Without<Row>, Without<Slash>, Without<Bar>),
+        (
+            Without<Row>,
+            Without<Slash>,
+            Without<Bar>,
+            Without<ImageNode>,
+        ),
     >,
+    images: Query<'w, 's, &'static mut ImageNode>,
     slashes: Query<
         'w,
         's,
@@ -373,6 +453,7 @@ fn show(
     fonts: Res<Fonts>,
     sight: crate::fog::EventSight,
     texts: Option<Res<Texts>>,
+    colours: Res<crate::player_colour::PlayerColours>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     mut rows: Query<(
@@ -435,7 +516,9 @@ fn show(
         let Some(line) = line else {
             continue;
         };
-        let scale = bevy::math::Vec2::splat(entrance_scale(line.age));
+        // A line that waits to be drawn (see [`delay`]) comes in when its wait is over.
+        let age = line.age - delay(&line.kind);
+        let scale = bevy::math::Vec2::splat(entrance_scale(age));
         if transform.scale != scale {
             transform.scale = scale;
         }
@@ -444,19 +527,19 @@ fn show(
             Place::Left => -SLIDE,
             Place::Corner => SLIDE,
         };
-        let slid = Val2::px(from * displacement_at(line.age) * ui::DOTA, 0.0);
+        let slid = Val2::px(from * displacement_at(age) * ui::DOTA, 0.0);
         if transform.translation != slid {
             transform.translation = slid;
         }
         let wanted = Dress {
             side: side_of(core, &line.kind),
-            opacity: opacity_at(line.age),
+            opacity: opacity_at(age, line.age),
         };
         let dressed = *dress != wanted;
         if dressed {
             dress_row(&mut commands, entity, *place, &wanted);
         }
-        let laid = lay(core, texts.as_deref(), &manifest, line);
+        let (laid, styles) = lay(core, texts.as_deref(), &manifest, &colours, line);
         for child in children {
             if let Ok((mut node, mut background)) = parts.slashes.get_mut(*child) {
                 if dressed {
@@ -491,11 +574,12 @@ fn show(
                 }
                 continue;
             }
-            let Ok((slot, image, text, colour, mut node)) = parts.slots.get_mut(*child) else {
+            let Ok((slot, holder, plate, text, colour, mut node)) = parts.slots.get_mut(*child)
+            else {
                 continue;
             };
-            match (*slot, image, text) {
-                (Slot::Icon(n), Some(mut image), _) => {
+            match (*slot, holder, text) {
+                (Slot::Icon(n), Some(IconImage(picture)), _) => {
                     let path = laid[n].0.as_deref();
                     let display = if path.is_some() {
                         Display::Flex
@@ -505,20 +589,41 @@ fn show(
                     if node.display != display {
                         node.display = display;
                     }
-                    if let Some(path) = path {
+                    // The kind of the event stands on a plate of its side's colour, a little
+                    // wider than an icon and as high as the row.
+                    let (width, height) = if styles[n].plate {
+                        (ui::dota(PLATE_WIDTH), percent(100))
+                    } else {
+                        (ui::dota(ICON), ui::dota(ICON))
+                    };
+                    if node.width != width || node.height != height {
+                        node.width = width;
+                        node.height = height;
+                    }
+                    if let Some(mut plate) = plate {
+                        let tint = if styles[n].plate {
+                            let [top, bottom] = wanted.side.map_or(PLATE_NEUTRAL, Side::bar);
+                            faded(top.mix(&bottom, 0.5), wanted.opacity)
+                        } else {
+                            Color::NONE
+                        };
+                        plate.set_if_neq(BackgroundColor(tint));
+                    }
+                    if let (Some(path), Ok(mut image)) = (path, parts.images.get_mut(*picture)) {
                         let handle: Handle<Image> = server.load(path.to_owned());
                         if image.image != handle {
                             image.image = handle;
                         }
-                    }
-                    if dressed {
-                        image.color = faded(Color::WHITE, wanted.opacity);
+                        let tint = faded(Color::WHITE, wanted.opacity);
+                        if image.color != tint {
+                            image.color = tint;
+                        }
                     }
                 }
                 (Slot::Text(n), _, Some(mut text)) => {
                     text.set_if_neq(Text(laid[n].1.clone()));
-                    if let (true, Some(mut colour)) = (dressed, colour) {
-                        colour.0 = faded(Color::WHITE, wanted.opacity);
+                    if let Some(mut colour) = colour {
+                        colour.set_if_neq(TextColor(faded(styles[n].ink, wanted.opacity)));
                     }
                 }
                 _ => {}
@@ -549,11 +654,24 @@ fn dress_row(commands: &mut Commands, row: Entity, place: Place, dress: &Dress) 
         ])));
 }
 
+/// Seconds a line of this kind waits after it is told before it is drawn: what a message that
+/// follows a sound (a building's fall, after the sound of its destruction) is put off by.
+fn delay(kind: &FeedKind) -> f32 {
+    match kind {
+        FeedKind::StructureFell { .. } => STRUCTURE_DELAY_SECONDS,
+        _ => 0.0,
+    }
+}
+
+/// How long the message of a fallen building waits for the sound of its destruction.
+pub(crate) const STRUCTURE_DELAY_SECONDS: f32 = 0.0;
+
 fn visible_lines<'a>(core: &'a Core, sight: &crate::fog::EventSight) -> Vec<&'a FeedLine> {
     let mut lines: Vec<&FeedLine> = core
         .feed
         .iter()
         .rev()
+        .filter(|line| line.age >= delay(&line.kind))
         .filter(|line| {
             line.told
                 .as_ref()
@@ -566,10 +684,24 @@ fn visible_lines<'a>(core: &'a Core, sight: &crate::fog::EventSight) -> Vec<&'a 
 }
 
 /// A line as Dota words it, or the client's text.
-fn lay(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine) -> Laid {
+fn lay(
+    core: &Core,
+    texts: Option<&Texts>,
+    manifest: &Manifest,
+    colours: &crate::player_colour::PlayerColours,
+    line: &FeedLine,
+) -> (Laid, Styles) {
     if let Some(laid) = hero_kill(core, manifest, &line.kind) {
-        return laid;
+        return (laid, Styles::default());
     }
+    if Place::of(&line.kind) == Place::Left {
+        return toast(core, texts, manifest, colours, line);
+    }
+    (lay_parts(core, texts, manifest, line), Styles::default())
+}
+
+/// A line of Dota's own label's words and icons, or the client's text.
+fn lay_parts(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine) -> Laid {
     let mut laid: Laid = Default::default();
     let dota = texts.and_then(|texts| dota_parts(core, texts, &line.kind));
     let Some(parts) = dota else {
@@ -1097,11 +1229,12 @@ pub fn shown(world: &mut World) -> Vec<(bool, Vec<String>, String)> {
         }
         let (mut icons, mut text) = (Vec::new(), String::new());
         for child in children {
-            if let (Some(Slot::Icon(_)), Some(image), Some(node)) = (
+            if let (Some(Slot::Icon(_)), Some(IconImage(picture)), Some(node)) = (
                 world.get::<Slot>(child),
-                world.get::<ImageNode>(child),
+                world.get::<IconImage>(child),
                 world.get::<Node>(child),
             ) && node.display != Display::None
+                && let Some(image) = world.get::<ImageNode>(*picture)
                 && let Some(path) = server.get_path(image.image.id())
             {
                 icons.push(path.to_string());
@@ -1201,6 +1334,83 @@ pub fn looks(world: &mut World) -> Vec<Look> {
             look
         })
         .collect()
+}
+
+/// One pair of a toast as it is drawn, for the end-to-end tests: its icon's file, its text, the
+/// text's ink, and the plate under the icon (its colour) when the icon is the event's kind.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct Segment {
+    pub icon: Option<String>,
+    pub text: String,
+    pub ink: Option<Color>,
+    pub plate: Option<Color>,
+}
+
+/// The toasts at the left, from the top: each row's rectangle in the window's pixels and its
+/// pairs in order.
+#[cfg(test)]
+pub fn toasts(world: &mut World) -> Vec<(Rect, Vec<Segment>)> {
+    let server = world.resource::<AssetServer>().clone();
+    let rows: Vec<(Entity, usize, Vec<Entity>)> = world
+        .query::<(Entity, &Row, &Children, &Node)>()
+        .iter(world)
+        .filter(|(_, row, _, node)| row.1 == Place::Left && node.display != Display::None)
+        .map(|(entity, row, children, _)| (entity, row.0, children.to_vec()))
+        .collect();
+    let mut found = Vec::new();
+    for (entity, at, children) in rows {
+        let size = world.get::<ComputedNode>(entity).expect("laid out").size();
+        let centre = world
+            .get::<bevy::ui::UiGlobalTransform>(entity)
+            .expect("placed")
+            .translation;
+        let (mut icons, mut texts) = (Vec::new(), Vec::new());
+        for child in children {
+            let shown = world
+                .get::<Node>(child)
+                .is_some_and(|node| node.display != Display::None);
+            match (world.get::<Slot>(child), shown) {
+                (Some(Slot::Icon(n)), true) => {
+                    let picture = world.get::<IconImage>(child).expect("an image").0;
+                    let path = world
+                        .get::<ImageNode>(picture)
+                        .and_then(|image| server.get_path(image.image.id()))
+                        .map(|p| p.to_string());
+                    let plate = world
+                        .get::<BackgroundColor>(child)
+                        .map(|c| c.0)
+                        .filter(|c| *c != Color::NONE);
+                    icons.push((*n, path, plate));
+                }
+                (Some(Slot::Text(n)), _) => {
+                    let text = world.get::<Text>(child).map(|t| t.0.clone());
+                    let ink = world.get::<TextColor>(child).map(|c| c.0);
+                    if let Some(text) = text.filter(|t| !t.is_empty()) {
+                        texts.push((*n, text, ink));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut segments = Vec::new();
+        for n in 0..SLOTS {
+            let icon = icons.iter().find(|(at, ..)| *at == n);
+            let text = texts.iter().find(|(at, ..)| *at == n);
+            if icon.is_none() && text.is_none() {
+                continue;
+            }
+            segments.push(Segment {
+                icon: icon.and_then(|(_, path, _)| path.clone()),
+                text: text.map(|(_, t, _)| t.clone()).unwrap_or_default(),
+                ink: text.and_then(|(_, _, ink)| *ink),
+                plate: icon.and_then(|(_, _, plate)| *plate),
+            });
+        }
+        found.push((at, Rect::from_center_size(centre, size), segments));
+    }
+    found.sort_by_key(|(at, ..)| *at);
+    found.into_iter().map(|(_, rect, s)| (rect, s)).collect()
 }
 
 #[cfg(test)]
