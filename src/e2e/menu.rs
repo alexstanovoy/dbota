@@ -1574,7 +1574,10 @@ fn an_unranked_mode_is_drawn_and_its_find_button_joins_that_queue() {
     let service = crate::main_menu::tests::service_with_unranked();
     let mut client = signed_up(&service, "casual_player");
     click_menu_button(&mut client, "play");
-    act(&mut client, Act::Play(PlayAction::Ranked(false)));
+    act(
+        &mut client,
+        Act::Play(PlayAction::Section(crate::main_menu::PlaySection::Unranked)),
+    );
     assert!(
         client
             .shown_texts()
@@ -1766,5 +1769,56 @@ fn a_page_without_dates_keeps_its_widgets_when_the_wall_clock_passes_a_minute() 
         find(&mut client),
         Some(drawn),
         "a minute on the wall clock redraws no page that shows no time"
+    );
+}
+
+/// The texts drawn inside the Play drawer.
+fn drawer_texts(client: &mut Client) -> Vec<String> {
+    let world = client.world_mut();
+    let drawer = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "play drawer")
+        .map(|(entity, _)| entity)
+        .expect("the Play drawer");
+    super::harness::subtree(world, drawer)
+        .into_iter()
+        .filter_map(|entity| world.get::<Text>(entity).map(|text| text.0.clone()))
+        .collect()
+}
+
+#[test]
+fn play_stacks_custom_lobbies_ranked_and_unranked_with_one_section_open() {
+    let service = crate::main_menu::tests::service_with_unranked();
+    let mut client = signed_up(&service, "casual_player");
+    click_menu_button(&mut client, "play");
+    let shown = drawer_texts(&mut client);
+    for heading in ["CUSTOM LOBBIES", "RANKED", "UNRANKED"] {
+        assert!(
+            shown.iter().any(|text| text == heading),
+            "{heading} is a stacked section: {shown:?}"
+        );
+    }
+    assert!(
+        shown.iter().any(|text| text == "1X1 MID ONLY"),
+        "Ranked is open at first: {shown:?}"
+    );
+    assert!(
+        !shown.iter().any(|text| text == "UNRANKED MID"),
+        "only one section is open: {shown:?}"
+    );
+    click_menu_button(&mut client, "unranked");
+    let shown = drawer_texts(&mut client);
+    assert!(
+        shown.iter().any(|text| text == "UNRANKED MID")
+            && !shown.iter().any(|text| text == "1X1 MID ONLY"),
+        "opening Unranked closes Ranked: {shown:?}"
+    );
+    click_menu_button(&mut client, "custom lobbies");
+    let shown = drawer_texts(&mut client);
+    assert!(
+        shown.iter().any(|text| text == "CREATE LOBBY")
+            && !shown.iter().any(|text| text == "UNRANKED MID"),
+        "Custom Lobbies opens its two buttons and closes the queues: {shown:?}"
     );
 }

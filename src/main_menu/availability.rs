@@ -30,7 +30,7 @@ impl Reason {
 
 pub fn reason(view: &MenuView) -> Option<Reason> {
     if !view.play.open
-        || view.play.lobbies
+        || view.play.section == super::play::Section::CustomLobbies
         || view.account.is_none()
         || view.offer.is_some()
         || !view.finding().0.is_empty()
@@ -53,7 +53,7 @@ pub fn reason(view: &MenuView) -> Option<Reason> {
     };
     let rows: Vec<_> = rulesets
         .iter()
-        .filter(|row| row.rated == view.play.ranked)
+        .filter(|row| view.play.lists(row.rated))
         .collect();
     let selected = rows
         .iter()

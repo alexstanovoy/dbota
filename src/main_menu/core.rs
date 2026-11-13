@@ -2948,16 +2948,17 @@ impl MenuCore {
                     self.go(Page::Home);
                 }
             }
-            PlayAction::Ranked(ranked) => {
-                self.play.ranked = ranked;
-                self.play.selected = None;
+            PlayAction::Section(section) => {
+                if self.play.section != section {
+                    self.play.section = section;
+                    self.play.selected = None;
+                }
             }
             PlayAction::Bots => {
                 self.play.bots = !self.play.bots;
                 self.prefs.allow_matchmaking_bots = self.play.bots;
                 self.save_prefs();
             }
-            PlayAction::Lobbies(lobbies) => self.play.lobbies = lobbies,
             PlayAction::Select(id) => self.select_queue(id),
             PlayAction::Find => self.find_selected(),
             PlayAction::LobbyLink(create) => {
@@ -2978,7 +2979,7 @@ impl MenuCore {
         }
         let available: Vec<_> = self
             .menu_rulesets()
-            .filter(|r| r.rated == self.play.ranked && r.rating_window.is_some())
+            .filter(|r| self.play.lists(r.rated) && r.rating_window.is_some())
             .map(|r| r.id.clone())
             .collect();
         if !available.contains(&id) {
@@ -3001,7 +3002,7 @@ impl MenuCore {
         };
         let available: Vec<_> = self
             .menu_rulesets()
-            .filter(|r| r.rated == self.play.ranked && r.rating_window.is_some())
+            .filter(|r| self.play.lists(r.rated) && r.rating_window.is_some())
             .collect();
         let chosen: Vec<_> = available
             .iter()

@@ -79,7 +79,7 @@ pub use lobby_chat::Incoming as LobbyChatMessage;
 #[cfg(test)]
 pub(crate) use lobby_chat::Port as LobbyChatPort;
 pub use lobby_controls::Action as LobbyAction;
-pub use play::PlayAction;
+pub use play::{PlayAction, Section as PlaySection};
 pub use prefs::page_service;
 pub(crate) use preview::loading_chat;
 pub use preview::{NAMES as PREVIEWS, view as preview};

@@ -12,19 +12,36 @@ use bevy::ui_widgets::Button;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlayState {
     pub open: bool,
-    pub ranked: bool,
+    pub section: Section,
     pub bots: bool,
-    pub lobbies: bool,
     pub selected: Option<Vec<RulesetId>>,
+}
+
+/// The drawer's stacked sections; exactly one is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    CustomLobbies,
+    Ranked,
+    Unranked,
+}
+
+impl Section {
+    /// Whether the queues the section lists are rated; `None` for the lobbies, which queue nowhere.
+    pub fn rated(self) -> Option<bool> {
+        match self {
+            Self::CustomLobbies => None,
+            Self::Ranked => Some(true),
+            Self::Unranked => Some(false),
+        }
+    }
 }
 
 impl Default for PlayState {
     fn default() -> Self {
         Self {
             open: false,
-            ranked: true,
+            section: Section::Ranked,
             bots: false,
-            lobbies: false,
             selected: None,
         }
     }
@@ -33,15 +50,19 @@ impl Default for PlayState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlayAction {
     Open(bool),
-    Ranked(bool),
+    Section(Section),
     Bots,
-    Lobbies(bool),
     Select(RulesetId),
     Find,
     LobbyLink(bool),
 }
 
 impl PlayState {
+    /// Whether a queue that is `rated` belongs to the open section.
+    pub fn lists(&self, rated: bool) -> bool {
+        self.section.rated() == Some(rated)
+    }
+
     pub fn chosen(&self, row: &RulesetRow, first: Option<&RulesetRow>) -> bool {
         self.selected.as_ref().map_or_else(
             || first.is_some_and(|first| first.id == row.id),
@@ -87,21 +108,35 @@ pub fn draw(
     let online = view.account.is_some();
     let searching = !view.finding().0.is_empty();
     let drawer = drawer(kit, root);
-    let lobbies = view.play.lobbies || !online;
+    // Without an account only the local lobbies exist.
+    let section = if online {
+        view.play.section
+    } else {
+        Section::CustomLobbies
+    };
+    let lobbies = section == Section::CustomLobbies;
     if online {
-        heading(kit, drawer, "MATCHMAKING", !lobbies, false);
-        if !lobbies {
-            matchmaking(kit, drawer, view, rulesets);
+        for (heading_section, title) in [
+            (Section::CustomLobbies, "CUSTOM LOBBIES"),
+            (Section::Ranked, "RANKED"),
+            (Section::Unranked, "UNRANKED"),
+        ] {
+            heading(
+                kit,
+                drawer,
+                title,
+                heading_section,
+                section == heading_section,
+            );
+            if section == heading_section {
+                match heading_section {
+                    Section::CustomLobbies => lobby_links(kit, drawer, online, view.can_host),
+                    _ => matchmaking(kit, drawer, view, rulesets),
+                }
+            }
         }
-    }
-    heading(
-        kit,
-        drawer,
-        if online { "LOBBIES" } else { "LOCAL LOBBIES" },
-        lobbies,
-        true,
-    );
-    if lobbies {
+    } else {
+        heading(kit, drawer, "LOCAL LOBBIES", section, true);
         lobby_links(kit, drawer, online, view.can_host);
     }
 
@@ -125,11 +160,11 @@ pub fn draw(
     );
 }
 
-fn heading(kit: &mut Kit, parent: Entity, title: &str, open: bool, lobbies: bool) {
+fn heading(kit: &mut Kit, parent: Entity, title: &str, section: Section, open: bool) {
     let button = kit.quiet(
         parent,
         title,
-        Act::Play(PlayAction::Lobbies(lobbies)),
+        Act::Play(PlayAction::Section(section)),
         theme::PLAY_SECTION,
         (if open { theme::INK_1 } else { theme::INK_3 }, theme::INK_1),
     );
@@ -173,10 +208,18 @@ fn matchmaking(kit: &mut Kit, parent: Entity, view: &MenuView, rulesets: &[Rules
     kit.commands
         .entity(body)
         .insert(BackgroundColor(theme::PLAY_BODY));
-    ranked_choice(kit, body, view);
+    kit.typed(
+        body,
+        match view.play.section {
+            Section::Unranked => "Matches by rating, more loosely, and never changes it.",
+            _ => "Changes your rating for the mode.",
+        },
+        theme::BODY,
+        theme::INK_3,
+    );
     let available: Vec<_> = rulesets
         .iter()
-        .filter(|r| r.rated == view.play.ranked)
+        .filter(|r| view.play.lists(r.rated))
         .collect();
     if available.is_empty() {
         kit.typed(
@@ -471,7 +514,7 @@ fn footer(
             ..default()
         },
     );
-    let selected = rulesets.iter().filter(|r| r.rated == view.play.ranked);
+    let selected = rulesets.iter().filter(|r| view.play.lists(r.rated));
     let first = selected.clone().next();
     let count = selected
         .clone()
@@ -511,64 +554,6 @@ fn footer(
         super::availability::strip(kit, root, view, reason);
         super::availability::explain(kit, button, reason);
     }
-}
-
-fn ranked_choice(kit: &mut Kit, body: Entity, view: &MenuView) {
-    let rank = kit.node(
-        body,
-        Node {
-            align_items: AlignItems::Center,
-            column_gap: px(6),
-            margin: UiRect::bottom(px(2)),
-            ..default()
-        },
-    );
-    let segment = kit.node(
-        rank,
-        Node {
-            padding: UiRect::all(px(3)),
-            border: UiRect::all(px(1)),
-            ..default()
-        },
-    );
-    kit.commands.entity(segment).insert((
-        BackgroundColor(theme::GROUND),
-        BorderColor::all(theme::WINDOW_EDGE),
-    ));
-    for (value, label) in [(true, "RANKED"), (false, "UNRANKED")] {
-        let chosen = value == view.play.ranked;
-        let button = kit.quiet(
-            segment,
-            label,
-            Act::Play(PlayAction::Ranked(value)),
-            theme::CAPTION,
-            (
-                if chosen { theme::INK_1 } else { theme::INK_4 },
-                theme::INK_1,
-            ),
-        );
-        kit.commands.entity(button).insert(Node {
-            width: px(if value { 90 } else { 110 }),
-            min_height: px(34),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border: UiRect::bottom(px(2)),
-            ..default()
-        });
-        if chosen {
-            kit.commands.entity(button).insert((
-                theme::downward(theme::PLAY_HEADING),
-                BorderColor::all(theme::SELECT),
-            ));
-        }
-    }
-    info(
-        kit,
-        rank,
-        "About ranked and unranked",
-        "Ranked changes your rating for the mode. Unranked also matches by rating, more loosely, and never changes it.",
-        false,
-    );
 }
 
 fn queue_frame(kit: &mut Kit, parent: Entity, row: &RulesetRow, chosen: bool) -> Entity {
