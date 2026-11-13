@@ -198,8 +198,8 @@ fn draw_account_page(
 ) -> bool {
     match &view.body {
         PageView::Heroes => super::catalogue::grid(kit, root),
-        PageView::Hero { hero, record, demo } => {
-            super::catalogue::hero(kit, body, *hero, texts, record, *demo);
+        PageView::Hero { hero, demo } => {
+            super::catalogue::hero(kit, body, *hero, texts, *demo);
         }
         PageView::Leaderboard { board, field } => {
             kit.commands.entity(body).remove::<MenuBody>();

@@ -41,50 +41,6 @@ impl Match {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HeroRecord {
-    pub hero: HeroId,
-    pub games: usize,
-    pub wins: usize,
-}
-
-impl HeroRecord {
-    pub fn percentage(&self) -> usize {
-        (self.wins * 100 + self.games / 2)
-            .checked_div(self.games)
-            .unwrap_or(0)
-    }
-}
-
-pub fn heroes(matches: &[Match]) -> Vec<HeroRecord> {
-    let mut heroes: Vec<HeroRecord> = Vec::new();
-    for game in matches.iter().filter(|game| {
-        matches!(
-            game.result,
-            ResultKind::Won | ResultKind::Lost | ResultKind::Draw
-        )
-    }) {
-        let Some(hero) = game.hero else {
-            continue;
-        };
-        let index = heroes
-            .iter()
-            .position(|row| row.hero == hero)
-            .unwrap_or_else(|| {
-                heroes.push(HeroRecord {
-                    hero,
-                    games: 0,
-                    wins: 0,
-                });
-                heroes.len() - 1
-            });
-        heroes[index].games += 1;
-        heroes[index].wins += usize::from(game.result == ResultKind::Won);
-    }
-    heroes.sort_by_key(|hero| (std::cmp::Reverse(hero.games), hero.hero.0));
-    heroes
-}
-
 pub fn mode_name(mode: &str) -> &str {
     match mode {
         "solo_mid" => "Solo Mid",

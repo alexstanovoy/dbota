@@ -2279,6 +2279,22 @@ fn replay_library_and_match_history_offer_no_file_import_controls() {
 }
 
 #[test]
+fn a_hero_page_has_no_machine_attribution_message_or_match_record() {
+    let mut client = local_menu();
+    act(
+        &mut client,
+        Act::Go(Page::Hero(bota_proto::HeroId::SHADOW_FIEND)),
+    );
+    assert!(
+        !client
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains("attributed matches") || text.contains("Your matches:")),
+        "hero pages do not compute machine-local match attribution"
+    );
+}
+
+#[test]
 fn a_served_profile_match_row_opens_match_details_without_leaving_the_profile() {
     use bevy::prelude::*;
     let service = crate::main_menu::tests::service();

@@ -267,7 +267,6 @@ pub enum PageView {
     MatchHistory(super::history_page::View),
     Hero {
         hero: bota_proto::HeroId,
-        record: String,
         /// Whether a Demo Hero can be started with it from here.
         demo: bool,
     },
@@ -656,15 +655,8 @@ impl MenuCore {
     }
 
     fn hero_page(&self, hero: bota_proto::HeroId) -> PageView {
-        let cards = self.local_history.cards(self.library.records());
-        let records = super::history::heroes(&cards);
-        let record = records.iter().find(|row| row.hero == hero).map_or_else(
-            || "No attributed matches on this machine.".to_owned(),
-            |row| format!("Your matches: {} · {}% won", row.games, row.percentage()),
-        );
         PageView::Hero {
             hero,
-            record,
             demo: self.demo_offered(),
         }
     }

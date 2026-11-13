@@ -213,16 +213,7 @@ fn body(page: Page, name: &str) -> PageView {
         },
         Page::Profile | Page::PlayerProfile(_) => profile_fixture(name),
         Page::Heroes => PageView::Heroes,
-        Page::Hero(hero) => PageView::Hero {
-            hero,
-            record: if hero == HeroId::SHADOW_FIEND {
-                "Your matches: 29 · 62% won"
-            } else {
-                "Your matches: 18 · 50% won"
-            }
-            .to_owned(),
-            demo: true,
-        },
+        Page::Hero(hero) => PageView::Hero { hero, demo: true },
         Page::Leaderboard => ladder_fixture(name),
         _ => PageView::Hidden,
     }

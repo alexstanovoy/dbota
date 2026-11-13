@@ -166,7 +166,7 @@ pub fn tall(kit: &mut Kit, parent: Entity, hero: HeroId, node: Node) {
     }
 }
 
-pub fn hero(kit: &mut Kit, root: Entity, id: HeroId, texts: &Texts, record: &str, demo: bool) {
+pub fn hero(kit: &mut Kit, root: Entity, id: HeroId, texts: &Texts, demo: bool) {
     let Some(hero) = bota_core::hero_def(id) else {
         return;
     };
@@ -174,7 +174,9 @@ pub fn hero(kit: &mut Kit, root: Entity, id: HeroId, texts: &Texts, record: &str
     hero_header(kit, body, hero);
     skills(kit, body, hero, texts);
     stats(kit, body, hero);
-    hero_actions(kit, body, id, record, demo);
+    if demo {
+        hero_actions(kit, body, id);
+    }
     talents(kit, body, hero, texts);
 }
 
@@ -407,21 +409,17 @@ fn skill(kit: &mut Kit, abilities: Entity, def: &bota_core::AbilityDef, innate: 
     }
 }
 
-/// Under the stats: the green DEMO HERO, which starts Dota's Demo Hero with this hero where one
-/// can be started, and the player's record with it.
-fn hero_actions(kit: &mut Kit, body: Entity, id: HeroId, record: &str, demo: bool) {
+/// Under the stats: the green DEMO HERO, which starts Dota's Demo Hero with this hero. It is only
+/// drawn where one can be started, so the page has no empty row otherwise.
+fn hero_actions(kit: &mut Kit, body: Entity, id: HeroId) {
     let bottom = kit.node(
         body,
         Node {
-            column_gap: px(14),
             align_items: AlignItems::Center,
             ..default()
         },
     );
-    if demo {
-        kit.button(bottom, "DEMO HERO", Act::Demo(id.0), Tone::Primary, 40.0);
-    }
-    kit.text(bottom, record, 13.0, theme::INK_3);
+    kit.button(bottom, "DEMO HERO", Act::Demo(id.0), Tone::Primary, 40.0);
 }
 
 /// The numbers: the three attributes, each as its base and its gain by level on one line, beside
