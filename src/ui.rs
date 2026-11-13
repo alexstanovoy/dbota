@@ -426,13 +426,17 @@ pub fn dota(v: f32) -> Val {
 /// Interface pixels between a corner's panel and the window's edge.
 pub const CORNER_MARGIN: f32 = 8.0;
 
+/// The room the hero panel keeps right of itself in the bottom row, which the scale leaves it too.
+pub const BAR_MARGIN: f32 = 23.7;
+
 /// The largest scale at which every [`Extent`] fits the window, given the
 /// size of each in interface pixels.
 fn fitting_scale(window: Vec2, size: impl Fn(Extent) -> Vec2) -> f32 {
     let (left, bar, right) = (size(Extent::Left), size(Extent::Bar), size(Extent::Right));
     let (top, corner) = (size(Extent::TopCentre), size(Extent::Corner));
     // The top centre stays clear of the corner on both sides.
-    let width = (left.x + bar.x + right.x).max(top.x + 2.0 * (corner.x + CORNER_MARGIN));
+    let width =
+        (left.x + bar.x + BAR_MARGIN + right.x).max(top.x + 2.0 * (corner.x + CORNER_MARGIN));
     // The top centre sits above the panel; the corner above the minimap.
     let height = (bar.y + top.y).max(left.y + corner.y + CORNER_MARGIN);
     let fit = |have: f32, need: f32| {

@@ -73,7 +73,7 @@ const PANEL_FOOT: f32 = 9.6;
 const SLOTS_ROOM: f32 = 65.4;
 /// The room the panel leaves at the right: Dota's frame is wider there than it is at the left, and
 /// the panel stands that much to the left of the screen's middle.
-const PANEL_RIGHT: f32 = 23.7;
+const PANEL_RIGHT: f32 = ui::BAR_MARGIN;
 /// How far the level ring reaches out of the panel's left edge.
 const LEVEL_RING_OUT: f32 = 7.0;
 const SLOTS_RIGHT: f32 = 9.6;
