@@ -1186,8 +1186,10 @@ impl MenuCore {
     /// Sends a request, noting what it was for its answer. With no link open it waits for one
     /// that is opened now and signed in again with the kept session.
     pub(super) fn ask(&mut self, msg: ClientMsg, asked: Asked) {
-        if let Some(read)=self.cached_read(&msg,asked) {
-            if let super::list_cache::Read::Reply(reply)=read {self.replied((*reply).clone(),asked);}
+        if let Some(read) = self.cached_read(&msg, asked) {
+            if let super::list_cache::Read::Reply(reply) = read {
+                self.replied((*reply).clone(), asked);
+            }
             return;
         }
         if self.link_ready() {
@@ -1249,9 +1251,12 @@ impl MenuCore {
             }
             return;
         }
-        let list_key=self.list_request_key(&msg,asked);
-        let lobby_changes=is_lobby && !matches!(msg,
-            ClientMsg::Rulesets|ClientMsg::LobbyList|ClientMsg::LobbySearch{..});
+        let list_key = self.list_request_key(&msg, asked);
+        let lobby_changes = is_lobby
+            && !matches!(
+                msg,
+                ClientMsg::Rulesets | ClientMsg::LobbyList | ClientMsg::LobbySearch { .. }
+            );
         let Some(client) = &mut self.client else {
             self.tell("Not connected to the service".to_owned(), true);
             return;
@@ -1267,8 +1272,12 @@ impl MenuCore {
         }
         match client.request(msg) {
             Ok(seq) => {
-                if lobby_changes {self.lobby_list_written();}
-                if let Some(key)=list_key {self.list_cache.sent(seq,key);}
+                if lobby_changes {
+                    self.lobby_list_written();
+                }
+                if let Some(key) = list_key {
+                    self.list_cache.sent(seq, key);
+                }
                 self.track_request(seq, asked);
                 if is_lobby {
                     self.lobby_request_sent(seq, asked);
@@ -1453,7 +1462,7 @@ impl MenuCore {
     }
 
     fn take_reply(&mut self, seq: u32, result: Result<Reply, Error>) {
-        self.remember_list_reply(seq,&result);
+        self.remember_list_reply(seq, &result);
         let remembered = self
             .lobby_ui
             .deadlines
@@ -3337,13 +3346,12 @@ mod identity_alias_tests {
     }
 }
 
-
 #[cfg(test)]
 impl MenuCore {
     pub(crate) fn list_requests_finished_for_test(&self) -> bool {
         self.asked.is_empty() && self.outbox.is_empty()
     }
     pub(crate) fn list_clock_for_test(&mut self, now: Instant) {
-        self.list_cache.now=Some(now);
+        self.list_cache.now = Some(now);
     }
 }

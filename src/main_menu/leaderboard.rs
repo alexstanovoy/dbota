@@ -103,9 +103,15 @@ impl Default for Board {
     }
 }
 impl Board {
-    fn has_work(&self)->bool {self.pending || self.flight.is_some() || self.retry_at.is_some()}
-    fn current_flight(&self,generation:u64)->bool {
-        self.generation==generation && self.flight.as_ref().is_some_and(|flight|flight.generation==generation)
+    fn has_work(&self) -> bool {
+        self.pending || self.flight.is_some() || self.retry_at.is_some()
+    }
+    fn current_flight(&self, generation: u64) -> bool {
+        self.generation == generation
+            && self
+                .flight
+                .as_ref()
+                .is_some_and(|flight| flight.generation == generation)
     }
     pub fn select(&mut self, query: Query) {
         self.select_at(query, Instant::now());
@@ -325,12 +331,16 @@ pub fn rating(value: f64) -> Option<String> {
 
 impl super::core::MenuCore {
     pub(super) fn open_leaderboard(&mut self) {
-        let query=self.board.query.clone();
+        let query = self.board.query.clone();
         self.form.focus(0);
         self.form.type_in(&query.nickname);
-        if self.restore_board(&query) {return;}
+        if self.restore_board(&query) {
+            return;
+        }
         self.board.origin = self.prefs.service.clone();
-        if self.board.flight.is_none() {self.board.refresh();}
+        if self.board.flight.is_none() {
+            self.board.refresh();
+        }
     }
     pub(super) fn edit_leaderboard(&mut self) {
         if self.page == super::core::Page::Leaderboard {
@@ -339,9 +349,11 @@ impl super::core::MenuCore {
             self.select_leaderboard(query);
         }
     }
-    pub(super) fn select_leaderboard(&mut self,mut query:Query) {
+    pub(super) fn select_leaderboard(&mut self, mut query: Query) {
         query.nickname.make_ascii_lowercase();
-        if !self.restore_board(&query) {self.board.select(query);}
+        if !self.restore_board(&query) {
+            self.board.select(query);
+        }
     }
     pub(super) fn drive_leaderboard(&mut self) {
         if self.page != super::core::Page::Leaderboard || !self.board.has_work() {
@@ -407,9 +419,11 @@ impl super::core::MenuCore {
             .as_ref()
             .and_then(|client| client.me())
             .map(|me| me.id.0);
-        let current=self.board.current_flight(generation);
+        let current = self.board.current_flight(generation);
         self.board.page(generation, page, account);
-        if current && self.board.status==Status::Ready {self.cache_board();}
+        if current && self.board.status == Status::Ready {
+            self.cache_board();
+        }
     }
     pub(super) fn leaderboard_refused(&mut self, generation: u64, error: &Error) {
         self.board.refused(generation, error);

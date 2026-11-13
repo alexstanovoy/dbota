@@ -259,7 +259,7 @@ fn section(kit: &mut Kit, parent: Entity, name: &str, width: Option<f32>) -> Ent
     let row = kit.node(
         column,
         Node {
-            width: width.map_or(Val::Auto,px),
+            width: width.map_or(Val::Auto, px),
             height: px(44),
             border: UiRect::all(px(1)),
             padding: UiRect::all(px(3)),
@@ -273,7 +273,14 @@ fn section(kit: &mut Kit, parent: Entity, name: &str, width: Option<f32>) -> Ent
     row
 }
 
-fn segment(kit: &mut Kit, parent: Entity, name: &str, act: Act, selected: bool, width: Option<f32>) {
+fn segment(
+    kit: &mut Kit,
+    parent: Entity,
+    name: &str,
+    act: Act,
+    selected: bool,
+    width: Option<f32>,
+) {
     let button = kit.quiet(
         parent,
         name,
@@ -288,7 +295,7 @@ fn segment(kit: &mut Kit, parent: Entity, name: &str, act: Act, selected: bool, 
         .entity(button)
         .entry::<Node>()
         .and_modify(move |mut node| {
-            node.width = width.map_or(Val::Auto,px);
+            node.width = width.map_or(Val::Auto, px);
             node.height = px(36);
             node.min_height = px(36);
             node.justify_content = JustifyContent::Center;

@@ -3582,9 +3582,12 @@ pub(crate) fn rank_in_served_board(menu: &MenuCore, account: u64) -> u64 {
     )
 }
 
-
 pub(crate) fn observed_reads(service: &Service, kind: radovid::test_support::Read) -> u64 {
-    service.service.as_ref().expect("running real service").request_count(kind)
+    service
+        .service
+        .as_ref()
+        .expect("running real service")
+        .request_count(kind)
 }
 pub(crate) fn menu_requests_finished(menu: &MenuCore) -> bool {
     menu.list_requests_finished_for_test()
@@ -3595,71 +3598,132 @@ pub(crate) fn board_loaded(menu: &MenuCore) -> bool {
 
 pub(crate) fn menu_page_entities(world: &mut bevy::prelude::World) -> Vec<bevy::prelude::Entity> {
     use bevy::prelude::*;
-    let root=world.query_filtered::<Entity,With<super::screens::PageRoot>>()
-        .single(world).expect("one drawn menu root");
-    crate::e2e::harness::subtree(world,root)
+    let root = world
+        .query_filtered::<Entity, With<super::screens::PageRoot>>()
+        .single(world)
+        .expect("one drawn menu root");
+    crate::e2e::harness::subtree(world, root)
 }
 
 pub(crate) fn rename_cache_profile(service: &Service) {
-    let mut player=Player::new(Some(service));
-    settle(&mut [&mut player],|player|player.menu.page()==Page::Login);
-    player.fill(&["profile_target",PASSWORD]);
+    let mut player = Player::new(Some(service));
+    settle(&mut [&mut player], |player| {
+        player.menu.page() == Page::Login
+    });
+    player.fill(&["profile_target", PASSWORD]);
     player.menu.act(Act::Submit);
-    settle(&mut [&mut player],|player|player.menu.page()==Page::Home && menu_requests_finished(&player.menu));
-    let client=player.menu.client.as_mut().expect("authenticated peer");
-    let sequence=client.request(bota_radovid::proto::ClientMsg::ChangeNickname {nickname:"cache_updated".into()}).expect("rename request");
+    settle(&mut [&mut player], |player| {
+        player.menu.page() == Page::Home && menu_requests_finished(&player.menu)
+    });
+    let client = player.menu.client.as_mut().expect("authenticated peer");
+    let sequence = client
+        .request(bota_radovid::proto::ClientMsg::ChangeNickname {
+            nickname: "cache_updated".into(),
+        })
+        .expect("rename request");
     for _ in 0..32 {
-        let incoming=client.wait(Duration::from_secs(10)).expect("real service response").expect("response deadline");
-        if let bota_radovid::Incoming::Reply {seq,result}=incoming && seq==sequence {
-            assert_eq!(result,Ok(bota_radovid::proto::Reply::Done));
+        let incoming = client
+            .wait(Duration::from_secs(10))
+            .expect("real service response")
+            .expect("response deadline");
+        if let bota_radovid::Incoming::Reply { seq, result } = incoming
+            && seq == sequence
+        {
+            assert_eq!(result, Ok(bota_radovid::proto::Reply::Done));
             return;
         }
     }
     panic!("the real nickname change was not acknowledged");
 }
 
-pub(crate) fn probe_public_deviation(service:&Service,account:u64)->f64 {
-    let mut player=Player::new(Some(service));
+pub(crate) fn probe_public_deviation(service: &Service, account: u64) -> f64 {
+    let mut player = Player::new(Some(service));
     player.register("confidence_probe");
-    let client=player.menu.client.as_mut().expect("client");
-    let sequence=client.request(bota_radovid::proto::ClientMsg::Account{account:bota_radovid::proto::AccountId(account)}).expect("public profile request");
+    let client = player.menu.client.as_mut().expect("client");
+    let sequence = client
+        .request(bota_radovid::proto::ClientMsg::Account {
+            account: bota_radovid::proto::AccountId(account),
+        })
+        .expect("public profile request");
     for _ in 0..32 {
-        let incoming=client.wait(Duration::from_secs(10)).expect("real reply").expect("reply deadline");
-        if let bota_radovid::Incoming::Reply{seq,result}=incoming &&seq==sequence {
-            let bota_radovid::proto::Reply::Account{account}=result.expect("visible profile") else {panic!("profile response")};
-            return account.ratings.iter().find(|(mode,_)|mode.0=="solo_mid").expect("played mode").1.rating.deviation;
+        let incoming = client
+            .wait(Duration::from_secs(10))
+            .expect("real reply")
+            .expect("reply deadline");
+        if let bota_radovid::Incoming::Reply { seq, result } = incoming
+            && seq == sequence
+        {
+            let bota_radovid::proto::Reply::Account { account } = result.expect("visible profile")
+            else {
+                panic!("profile response")
+            };
+            return account
+                .ratings
+                .iter()
+                .find(|(mode, _)| mode.0 == "solo_mid")
+                .expect("played mode")
+                .1
+                .rating
+                .deviation;
         }
     }
     panic!("public profile reply missing");
 }
-pub(crate) fn withhold_confidence_profile(service:&Service,account:u64,banned:bool) {
-    let script="import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); q='UPDATE accounts SET banned=1,ban_until=NULL,ban_reason=\"test restriction\" WHERE id=?' if sys.argv[3]=='ban' else 'UPDATE ratings SET hidden=1 WHERE account=?'; cur=c.execute(q,(int(sys.argv[2]),)); assert cur.rowcount>0; c.commit()";
-    assert!(std::process::Command::new("python3").args(["-c",script]).arg(service._dir.0.join("radovid.db"))
-        .arg(account.to_string()).arg(if banned {"ban"}else{"hide"}).status().expect("private fixture visibility").success());
+pub(crate) fn withhold_confidence_profile(service: &Service, account: u64, banned: bool) {
+    let script = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); q='UPDATE accounts SET banned=1,ban_until=NULL,ban_reason=\"test restriction\" WHERE id=?' if sys.argv[3]=='ban' else 'UPDATE ratings SET hidden=1 WHERE account=?'; cur=c.execute(q,(int(sys.argv[2]),)); assert cur.rowcount>0; c.commit()";
+    assert!(
+        std::process::Command::new("python3")
+            .args(["-c", script])
+            .arg(service._dir.0.join("radovid.db"))
+            .arg(account.to_string())
+            .arg(if banned { "ban" } else { "hide" })
+            .status()
+            .expect("private fixture visibility")
+            .success()
+    );
 }
 
 #[test]
 fn a_cached_service_catalogue_keeps_supported_modes_after_foreign_modes_on_reconnect() {
-    let service=service_with(|text| {
-        let (header,rest)=text.split_once("[[ruleset]]").expect("rulesets");
-        let first=rest.split("[[ruleset]]").next().expect("first ruleset");
-        let mut prefix=String::new();
+    let service = service_with(|text| {
+        let (header, rest) = text.split_once("[[ruleset]]").expect("rulesets");
+        let first = rest.split("[[ruleset]]").next().expect("first ruleset");
+        let mut prefix = String::new();
         for index in 0..70 {
             prefix.push_str("[[ruleset]]");
-            prefix.push_str(&first.replace("id = \"full\"",&format!("id = \"foreign_{index}\""))
-                .replace("game = \"bota\"","game = \"another_game\"")
-                .replace("rated = true","rated = false"));
+            prefix.push_str(
+                &first
+                    .replace("id = \"full\"", &format!("id = \"foreign_{index}\""))
+                    .replace("game = \"bota\"", "game = \"another_game\"")
+                    .replace("rated = true", "rated = false"),
+            );
         }
         format!("{header}{prefix}[[ruleset]]{rest}")
     });
-    let mut alice=Player::new(Some(&service));
+    let mut alice = Player::new(Some(&service));
     alice.register("catalogue_cache");
     alice.menu.act(Act::Go(Page::Lobbies));
-    settle(&mut [&mut alice], |alice|alice.menu.lobby_sync_settled());
-    assert!(alice.menu.view().lobby_ui.modes.iter().any(|mode|mode.id.0=="solo_mid"));
+    settle(&mut [&mut alice], |alice| alice.menu.lobby_sync_settled());
+    assert!(
+        alice
+            .menu
+            .view()
+            .lobby_ui
+            .modes
+            .iter()
+            .any(|mode| mode.id.0 == "solo_mid")
+    );
     lose_menu_control(&mut alice.menu);
     alice.menu.act(Act::RetryService);
-    settle(&mut [&mut alice], |alice|alice.menu.lobby_sync_settled());
-    assert!(alice.menu.view().lobby_ui.modes.iter().any(|mode|mode.id.0=="solo_mid"),
-        "cached replies must not spend the supported-mode budget on another game's modes");
+    settle(&mut [&mut alice], |alice| alice.menu.lobby_sync_settled());
+    assert!(
+        alice
+            .menu
+            .view()
+            .lobby_ui
+            .modes
+            .iter()
+            .any(|mode| mode.id.0 == "solo_mid"),
+        "cached replies must not spend the supported-mode budget on another game's modes"
+    );
 }

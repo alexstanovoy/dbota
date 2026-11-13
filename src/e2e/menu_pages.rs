@@ -1449,8 +1449,13 @@ fn foreign_and_corrupt_replay_profiles_never_supply_connection_instructions() {
     let service = crate::main_menu::tests::service();
     let mut client = super::menu::signed_up(&service, "replay_viewer");
     act(&mut client, Act::Go(Page::Profile));
-    client.until("authenticated own profile loaded before reading replay claims",|client|
-        crate::main_menu::tests::own_cached_profile_id(client.world().non_send::<MenuCore>()).is_some());
+    client.until(
+        "authenticated own profile loaded before reading replay claims",
+        |client| {
+            crate::main_menu::tests::own_cached_profile_id(client.world().non_send::<MenuCore>())
+                .is_some()
+        },
+    );
     let foreign = std::net::TcpListener::bind("127.0.0.1:0").expect("foreign destination trap");
     foreign.set_nonblocking(true).expect("nonblocking");
     let prefix = "wss://foreign.example/";
@@ -2562,164 +2567,305 @@ enum CachedList {
 fn check_list_cache(kind: CachedList) {
     use bevy::platform::time::Instant;
     use radovid::test_support::Read;
-    let service=crate::main_menu::tests::service();
-    let target=if matches!(kind,CachedList::PlayerMatches) {
+    let service = crate::main_menu::tests::service();
+    let target = if matches!(kind, CachedList::PlayerMatches) {
         Some(crate::main_menu::tests::registered_public_profile(&service).0)
-    } else {None};
-    let mut client=super::menu::signed_up(&service,"cache_viewer");
-    client.within(std::time::Duration::from_secs(10),"login reads completed",|client|crate::main_menu::tests::menu_requests_finished(client.world().non_send::<MenuCore>()));
-    let page=match kind {
-        CachedList::Leaderboard=>Page::Leaderboard,
-        CachedList::OwnMatches=>Page::Profile,
-        CachedList::Lobbies=>Page::Lobbies,
-        CachedList::PlayerMatches=>Page::PlayerProfile(target.expect("target")),
+    } else {
+        None
     };
-    let read=match kind {
-        CachedList::Leaderboard=>Read::Leaderboard,
-        CachedList::OwnMatches|CachedList::PlayerMatches=>Read::Matches,
-        CachedList::Lobbies=>Read::Lobbies,
+    let mut client = super::menu::signed_up(&service, "cache_viewer");
+    client.within(
+        std::time::Duration::from_secs(10),
+        "login reads completed",
+        |client| {
+            crate::main_menu::tests::menu_requests_finished(client.world().non_send::<MenuCore>())
+        },
+    );
+    let page = match kind {
+        CachedList::Leaderboard => Page::Leaderboard,
+        CachedList::OwnMatches => Page::Profile,
+        CachedList::Lobbies => Page::Lobbies,
+        CachedList::PlayerMatches => Page::PlayerProfile(target.expect("target")),
     };
-    let start=Instant::now();
-    client.world_mut().non_send_mut::<MenuCore>().list_clock_for_test(start);
-    let open=|client: &mut super::harness::Client| {
-        if let Some(account)=target {
-            client.world_mut().non_send_mut::<MenuCore>().inspect_player(
-                crate::main_menu::tests::profile_target(&service,account)).expect("same configured service");
+    let read = match kind {
+        CachedList::Leaderboard => Read::Leaderboard,
+        CachedList::OwnMatches | CachedList::PlayerMatches => Read::Matches,
+        CachedList::Lobbies => Read::Lobbies,
+    };
+    let start = Instant::now();
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .list_clock_for_test(start);
+    let open = |client: &mut super::harness::Client| {
+        if let Some(account) = target {
+            client
+                .world_mut()
+                .non_send_mut::<MenuCore>()
+                .inspect_player(crate::main_menu::tests::profile_target(&service, account))
+                .expect("same configured service");
             client.frames(3);
-        } else {act(client,Act::Go(page));}
+        } else {
+            act(client, Act::Go(page));
+        }
     };
-    let initial=crate::main_menu::tests::observed_reads(&service,read);
+    let initial = crate::main_menu::tests::observed_reads(&service, read);
     open(&mut client);
-    client.within(std::time::Duration::from_secs(10),"served list completed",|client| {
-        let menu=client.world().non_send::<MenuCore>();
-        crate::main_menu::tests::menu_requests_finished(menu)
-            && (!matches!(kind,CachedList::Leaderboard)||crate::main_menu::tests::board_loaded(menu))
-            && (!matches!(kind,CachedList::PlayerMatches)||client.shown_texts().iter().any(|text|text=="No public matches reported by this matchmaker"))
-    });
+    client.within(
+        std::time::Duration::from_secs(10),
+        "served list completed",
+        |client| {
+            let menu = client.world().non_send::<MenuCore>();
+            crate::main_menu::tests::menu_requests_finished(menu)
+                && (!matches!(kind, CachedList::Leaderboard)
+                    || crate::main_menu::tests::board_loaded(menu))
+                && (!matches!(kind, CachedList::PlayerMatches)
+                    || client
+                        .shown_texts()
+                        .iter()
+                        .any(|text| text == "No public matches reported by this matchmaker"))
+        },
+    );
     if target.is_some() {
-        client.within(std::time::Duration::from_secs(10),"served avatar decoded",|client|crate::main_menu::tests::drawn_profile_avatar(client.world_mut())==Some([60,130,210,255]));
+        client.within(
+            std::time::Duration::from_secs(10),
+            "served avatar decoded",
+            |client| {
+                crate::main_menu::tests::drawn_profile_avatar(client.world_mut())
+                    == Some([60, 130, 210, 255])
+            },
+        );
     }
-    let mut loaded=crate::main_menu::tests::observed_reads(&service,read);
-    assert!(loaded>0,"the real service observer must have counted a decoded request");
-    if !matches!(kind,CachedList::OwnMatches) {
-        assert_eq!(loaded,initial+1,"the initial list is requested exactly once");
+    let mut loaded = crate::main_menu::tests::observed_reads(&service, read);
+    assert!(
+        loaded > 0,
+        "the real service observer must have counted a decoded request"
+    );
+    if !matches!(kind, CachedList::OwnMatches) {
+        assert_eq!(
+            loaded,
+            initial + 1,
+            "the initial list is requested exactly once"
+        );
     }
     if target.is_some() {
         crate::main_menu::tests::rename_cache_profile(&service);
         // Exclude the fixture peer's login/history reads from the viewer's request delta.
-        loaded=crate::main_menu::tests::observed_reads(&service,read);
+        loaded = crate::main_menu::tests::observed_reads(&service, read);
     }
-    act(&mut client,Act::Go(Page::Heroes));
-    client.world_mut().non_send_mut::<MenuCore>().list_clock_for_test(start+std::time::Duration::from_secs(59));
+    act(&mut client, Act::Go(Page::Heroes));
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .list_clock_for_test(start + std::time::Duration::from_secs(59));
     open(&mut client);
-    assert_eq!(crate::main_menu::tests::observed_reads(&service,read),loaded,
-        "reopening a list younger than one minute sends zero requests to the real service");
-    if let Some(account)=target {
-        assert!(client.shown_texts().iter().any(|text|text==&format!("profile_target#{account}")),
-            "a fresh cached profile keeps the previously served snapshot");
+    assert_eq!(
+        crate::main_menu::tests::observed_reads(&service, read),
+        loaded,
+        "reopening a list younger than one minute sends zero requests to the real service"
+    );
+    if let Some(account) = target {
+        assert!(
+            client
+                .shown_texts()
+                .iter()
+                .any(|text| text == &format!("profile_target#{account}")),
+            "a fresh cached profile keeps the previously served snapshot"
+        );
     }
-    if matches!(kind,CachedList::Leaderboard) {
-        assert!(crate::main_menu::tests::board_loaded(client.world().non_send::<MenuCore>()),"cached rows are drawn immediately without a loading projection");
+    if matches!(kind, CachedList::Leaderboard) {
+        assert!(
+            crate::main_menu::tests::board_loaded(client.world().non_send::<MenuCore>()),
+            "cached rows are drawn immediately without a loading projection"
+        );
     }
-    let entities=|client:&mut super::harness::Client| {
+    let entities = |client: &mut super::harness::Client| {
         crate::main_menu::tests::menu_page_entities(client.world_mut())
     };
-    let before=entities(&mut client);
-    client.world_mut().non_send_mut::<MenuCore>().list_clock_for_test(start+std::time::Duration::from_secs(60));
+    let before = entities(&mut client);
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .list_clock_for_test(start + std::time::Duration::from_secs(60));
     client.frames(12);
-    assert_eq!(crate::main_menu::tests::observed_reads(&service,read),loaded,"an open screen does not periodically refetch");
-    assert_eq!(entities(&mut client),before,"cached list ageing causes zero re-layout or replacement of drawn controls");
-    act(&mut client,Act::Go(Page::Heroes));
+    assert_eq!(
+        crate::main_menu::tests::observed_reads(&service, read),
+        loaded,
+        "an open screen does not periodically refetch"
+    );
+    assert_eq!(
+        entities(&mut client),
+        before,
+        "cached list ageing causes zero re-layout or replacement of drawn controls"
+    );
+    act(&mut client, Act::Go(Page::Heroes));
     open(&mut client);
-    client.within(std::time::Duration::from_secs(10),"one stale-list refetch completed",|client|crate::main_menu::tests::observed_reads(&service,read)==loaded+1
-        && crate::main_menu::tests::menu_requests_finished(client.world().non_send::<MenuCore>()));
-    if let Some(account)=target {
-        client.within(std::time::Duration::from_secs(10),"the refreshed service name is drawn",|client|
-            client.shown_texts().iter().any(|text|text==&format!("cache_updated#{account}")));
+    client.within(
+        std::time::Duration::from_secs(10),
+        "one stale-list refetch completed",
+        |client| {
+            crate::main_menu::tests::observed_reads(&service, read) == loaded + 1
+                && crate::main_menu::tests::menu_requests_finished(
+                    client.world().non_send::<MenuCore>(),
+                )
+        },
+    );
+    if let Some(account) = target {
+        client.within(
+            std::time::Duration::from_secs(10),
+            "the refreshed service name is drawn",
+            |client| {
+                client
+                    .shown_texts()
+                    .iter()
+                    .any(|text| text == &format!("cache_updated#{account}"))
+            },
+        );
     }
     client.frames(12);
-    assert_eq!(crate::main_menu::tests::observed_reads(&service,read),loaded+1,"stale reopening refetches this request exactly once");
+    assert_eq!(
+        crate::main_menu::tests::observed_reads(&service, read),
+        loaded + 1,
+        "stale reopening refetches this request exactly once"
+    );
 }
 #[test]
-fn the_served_leaderboard_cache_refetches_only_on_stale_reopen() {check_list_cache(CachedList::Leaderboard)}
+fn the_served_leaderboard_cache_refetches_only_on_stale_reopen() {
+    check_list_cache(CachedList::Leaderboard)
+}
 #[test]
-fn the_served_own_match_list_cache_refetches_only_on_stale_reopen() {check_list_cache(CachedList::OwnMatches)}
+fn the_served_own_match_list_cache_refetches_only_on_stale_reopen() {
+    check_list_cache(CachedList::OwnMatches)
+}
 #[test]
-fn the_served_lobby_list_cache_refetches_only_on_stale_reopen() {check_list_cache(CachedList::Lobbies)}
+fn the_served_lobby_list_cache_refetches_only_on_stale_reopen() {
+    check_list_cache(CachedList::Lobbies)
+}
 #[test]
-fn the_served_player_match_list_cache_refetches_only_on_stale_reopen() {check_list_cache(CachedList::PlayerMatches)}
+fn the_served_player_match_list_cache_refetches_only_on_stale_reopen() {
+    check_list_cache(CachedList::PlayerMatches)
+}
 
-fn served_mode_geometry() -> (Vec<(f32,f32)>, f32, f32, f32) {
+fn served_mode_geometry() -> (Vec<(f32, f32)>, f32, f32, f32) {
     use bevy::prelude::*;
-    let service=crate::main_menu::tests::service();
-    let mut client=super::menu::signed_up(&service,"mode_geometry");
-    act(&mut client,Act::Go(Page::Leaderboard));
-    client.within(std::time::Duration::from_secs(10),"the actual mode row is ready",|client|crate::main_menu::tests::board_loaded(client.world().non_send::<MenuCore>()));
+    let service = crate::main_menu::tests::service();
+    let mut client = super::menu::signed_up(&service, "mode_geometry");
+    act(&mut client, Act::Go(Page::Leaderboard));
+    client.within(
+        std::time::Duration::from_secs(10),
+        "the actual mode row is ready",
+        |client| crate::main_menu::tests::board_loaded(client.world().non_send::<MenuCore>()),
+    );
     client.frames(5);
-    let world=client.world_mut();
-    let button=world.query::<(Entity,&crate::main_menu::MenuButton)>().iter(world)
-        .find(|(_,button)|matches!(&button.0,Act::LeaderboardMode(mode) if mode=="solo_mid"))
-        .expect("served mode control").0;
-    let parent=world.get::<ChildOf>(button).expect("mode strip").parent();
-    let strip_node=world.get::<ComputedNode>(parent).expect("strip layout");
-    let strip=strip_node.unrounded_size().x*strip_node.inverse_scale_factor();
-    let button_node=world.get::<ComputedNode>(button).expect("mode layout");
-    let scale=button_node.inverse_scale_factor();
-    let button_width=button_node.unrounded_size().x*scale;
-    let text=world.query::<(Entity,&Text,&ComputedNode,&bevy::text::TextLayoutInfo)>().iter(world)
-        .find(|(entity,_,_,_)|super::harness::descends_from(world,*entity,button)).expect("mode text");
-    assert_eq!(text.1.as_str(),"1X1 MID ONLY","the service's actual long label is measured");
-    let text_width=text.3.size.x*scale;
-    let children=world.get::<Children>(parent).expect("mode options");
-    let segments=children.iter().filter_map(|child| {
-        let node=world.get::<ComputedNode>(child)?;
-        let at=world.get::<UiGlobalTransform>(child)?.translation.x;
-        Some((at*scale,node.unrounded_size().x*scale))
-    }).collect();
-    (segments,strip,button_width,text_width)
+    let world = client.world_mut();
+    let button = world
+        .query::<(Entity, &crate::main_menu::MenuButton)>()
+        .iter(world)
+        .find(|(_, button)| matches!(&button.0,Act::LeaderboardMode(mode) if mode=="solo_mid"))
+        .expect("served mode control")
+        .0;
+    let parent = world.get::<ChildOf>(button).expect("mode strip").parent();
+    let strip_node = world.get::<ComputedNode>(parent).expect("strip layout");
+    let strip = strip_node.unrounded_size().x * strip_node.inverse_scale_factor();
+    let button_node = world.get::<ComputedNode>(button).expect("mode layout");
+    let scale = button_node.inverse_scale_factor();
+    let button_width = button_node.unrounded_size().x * scale;
+    let text = world
+        .query::<(Entity, &Text, &ComputedNode, &bevy::text::TextLayoutInfo)>()
+        .iter(world)
+        .find(|(entity, _, _, _)| super::harness::descends_from(world, *entity, button))
+        .expect("mode text");
+    assert_eq!(
+        text.1.as_str(),
+        "1X1 MID ONLY",
+        "the service's actual long label is measured"
+    );
+    let text_width = text.3.size.x * scale;
+    let children = world.get::<Children>(parent).expect("mode options");
+    let segments = children
+        .iter()
+        .filter_map(|child| {
+            let node = world.get::<ComputedNode>(child)?;
+            let at = world.get::<UiGlobalTransform>(child)?.translation.x;
+            Some((at * scale, node.unrounded_size().x * scale))
+        })
+        .collect();
+    (segments, strip, button_width, text_width)
 }
 #[test]
 fn a_single_served_leaderboard_mode_strip_has_no_empty_second_square() {
-    let (segments,strip,_,_)=served_mode_geometry();
-    assert_eq!(segments.len(),1,"the actual human rules catalogue serves one rated mode");
-    assert!((strip-segments[0].1-8.0).abs()<1.0,"mode strip hugs its square plus the two borders and insets: strip={strip}, square={}",segments[0].1);
+    let (segments, strip, _, _) = served_mode_geometry();
+    assert_eq!(
+        segments.len(),
+        1,
+        "the actual human rules catalogue serves one rated mode"
+    );
+    assert!(
+        (strip - segments[0].1 - 8.0).abs() < 1.0,
+        "mode strip hugs its square plus the two borders and insets: strip={strip}, square={}",
+        segments[0].1
+    );
 }
 #[test]
 fn the_served_long_mode_name_fits_with_visible_horizontal_padding() {
-    let (_,_,button,text)=served_mode_geometry();
-    assert!(button-text>=16.0,"the whole served mode label fits with at least eight pixels on each side: button={button}, text={text}");
+    let (_, _, button, text) = served_mode_geometry();
+    assert!(
+        button - text >= 16.0,
+        "the whole served mode label fits with at least eight pixels on each side: button={button}, text={text}"
+    );
 }
 
 #[test]
 fn own_and_public_profile_headers_keep_the_player_identity_inside_the_header() {
     use bevy::prelude::*;
-    for preview in ["profile","profile_other"] {
-        let mut client=design_preview(preview);
-        let world=client.world_mut();
-        let header=world.query::<(Entity,&Name)>().iter(world)
-            .find(|(_,name)|name.as_str()=="profile player header").expect("player header").0;
-        let children=world.get::<Children>(header).expect("header children");
-        let avatar=children[0];
-        let name=children[1];
-        let rectangle=|world:&World,entity| {
-            let node=world.get::<ComputedNode>(entity).expect("drawn node");
-            let centre=world.get::<UiGlobalTransform>(entity).expect("drawn position").translation;
-            Rect::from_center_size(centre,node.size())
+    for preview in ["profile", "profile_other"] {
+        let mut client = design_preview(preview);
+        let world = client.world_mut();
+        let header = world
+            .query::<(Entity, &Name)>()
+            .iter(world)
+            .find(|(_, name)| name.as_str() == "profile player header")
+            .expect("player header")
+            .0;
+        let children = world.get::<Children>(header).expect("header children");
+        let avatar = children[0];
+        let name = children[1];
+        let rectangle = |world: &World, entity| {
+            let node = world.get::<ComputedNode>(entity).expect("drawn node");
+            let centre = world
+                .get::<UiGlobalTransform>(entity)
+                .expect("drawn position")
+                .translation;
+            Rect::from_center_size(centre, node.size())
         };
-        let frame=rectangle(world,header);
-        for (entity,label) in [(avatar,"avatar"),(name,"name")] {
-            let bounds=rectangle(world,entity);
-            assert!(bounds.width()>40.0 && bounds.height()>40.0,
-                "{preview}: {label} has real drawn space: {bounds:?}");
-            assert!(frame.contains(bounds.min) && frame.contains(bounds.max),
-                "{preview}: {label} stays in the player header: {bounds:?} versus {frame:?}");
+        let frame = rectangle(world, header);
+        for (entity, label) in [(avatar, "avatar"), (name, "name")] {
+            let bounds = rectangle(world, entity);
+            assert!(
+                bounds.width() > 40.0 && bounds.height() > 40.0,
+                "{preview}: {label} has real drawn space: {bounds:?}"
+            );
+            assert!(
+                frame.contains(bounds.min) && frame.contains(bounds.max),
+                "{preview}: {label} stays in the player header: {bounds:?} versus {frame:?}"
+            );
         }
-        let title=world.query::<(Entity,&Text,&bevy::text::TextLayoutInfo)>().iter(world)
-            .find(|(entity,text,_)|text.as_str()=="mira#2207" && super::harness::descends_from(world,*entity,name))
+        let title = world
+            .query::<(Entity, &Text, &bevy::text::TextLayoutInfo)>()
+            .iter(world)
+            .find(|(entity, text, _)| {
+                text.as_str() == "mira#2207" && super::harness::descends_from(world, *entity, name)
+            })
             .expect("drawn player name");
-        assert!(title.2.size.x>0.0 && title.2.size.y>0.0,"{preview}: name glyphs are ready");
-        let title_bounds=rectangle(world,title.0);
-        assert!(rectangle(world,name).contains(title_bounds.min) && rectangle(world,name).contains(title_bounds.max),
-            "{preview}: the name is not clipped out of its identity block: {title_bounds:?}");
+        assert!(
+            title.2.size.x > 0.0 && title.2.size.y > 0.0,
+            "{preview}: name glyphs are ready"
+        );
+        let title_bounds = rectangle(world, title.0);
+        assert!(
+            rectangle(world, name).contains(title_bounds.min)
+                && rectangle(world, name).contains(title_bounds.max),
+            "{preview}: the name is not clipped out of its identity block: {title_bounds:?}"
+        );
     }
 }

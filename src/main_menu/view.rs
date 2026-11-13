@@ -308,7 +308,7 @@ pub enum PageView {
         read_only: bool,
         notice: Option<String>,
         avatar: super::avatar::View,
-        mode_names: Vec<(String,String)>,
+        mode_names: Vec<(String, String)>,
         matches: std::sync::Arc<Vec<super::history::Match>>,
     },
     /// The open lobbies (all, or those the search found), and the fields to make one and to
@@ -782,14 +782,17 @@ impl MenuCore {
             .account_profile
             .as_ref()
             .map_or_else(|| self.name(), |p| text::who(&p.nickname, p.id.0));
-        let ratings=self.profile_ratings();
+        let ratings = self.profile_ratings();
         let local = self.local_history.cards(self.library.records());
         let mut matches = local.as_ref().clone();
         if let Some(account) = self.my_id() {
             for result in &self.history {
                 let key = super::local_matches::service_key(&self.prefs.service, result.match_id.0);
                 if !matches.iter().any(|row| row.file == key) {
-                    matches.push(super::player_profile::public_match(result.clone(), account.0));
+                    matches.push(super::player_profile::public_match(
+                        result.clone(),
+                        account.0,
+                    ));
                 }
             }
         }
@@ -806,25 +809,46 @@ impl MenuCore {
         }
     }
 
-    pub(super) fn profile_ratings(&self)->Vec<super::account_page::Rating> {
-        self.account_profile.as_ref().map_or_else(Vec::new,|profile| {
-            self.menu_rulesets().filter(|mode|mode.rated).map(|mode| {
-                let published=profile.ratings.iter().find(|(id,_)|*id==mode.id).map(|(_,rating)|rating);
-                super::account_page::Rating {
-                    mode_id:mode.id.0.clone(),
-                    mode:ruleset_name(&self.catalogue,&mode.id),
-                    rating:published.and_then(|rating|super::leaderboard::rating(rating.rating.rating)),
-                    games:published.map_or(0,|rating|rating.games),
-                    rank:published.and_then(|rating|rating.rank),
-                    confidence:published.map_or(Some(super::rank_confidence::Confidence::NEW),|rating|
-                        super::rank_confidence::from_deviation(rating.rating.deviation,rating.games)),
-                }
-            }).collect()
-        })
+    pub(super) fn profile_ratings(&self) -> Vec<super::account_page::Rating> {
+        self.account_profile
+            .as_ref()
+            .map_or_else(Vec::new, |profile| {
+                self.menu_rulesets()
+                    .filter(|mode| mode.rated)
+                    .map(|mode| {
+                        let published = profile
+                            .ratings
+                            .iter()
+                            .find(|(id, _)| *id == mode.id)
+                            .map(|(_, rating)| rating);
+                        super::account_page::Rating {
+                            mode_id: mode.id.0.clone(),
+                            mode: ruleset_name(&self.catalogue, &mode.id),
+                            rating: published.and_then(|rating| {
+                                super::leaderboard::rating(rating.rating.rating)
+                            }),
+                            games: published.map_or(0, |rating| rating.games),
+                            rank: published.and_then(|rating| rating.rank),
+                            confidence: published.map_or(
+                                Some(super::rank_confidence::Confidence::NEW),
+                                |rating| {
+                                    super::rank_confidence::from_deviation(
+                                        rating.rating.deviation,
+                                        rating.games,
+                                    )
+                                },
+                            ),
+                        }
+                    })
+                    .collect()
+            })
     }
 
-    pub(super) fn profile_mode_names(&self)->Vec<(String,String)> {
-        self.menu_rulesets().take(64).map(|mode|(mode.id.0.clone(),text::line(&mode.name,text::NAME))).collect()
+    pub(super) fn profile_mode_names(&self) -> Vec<(String, String)> {
+        self.menu_rulesets()
+            .take(64)
+            .map(|mode| (mode.id.0.clone(), text::line(&mode.name, text::NAME)))
+            .collect()
     }
 
     fn result_view(&self, result: &MatchResult) -> ResultView {

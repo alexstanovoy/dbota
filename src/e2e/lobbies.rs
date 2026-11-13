@@ -1844,9 +1844,11 @@ fn an_unconfirmed_create_is_explained_and_recovered_without_creating_another_lob
         c.world().non_send::<MenuCore>().lobby_sync_settled()
     });
     act(&mut alice, Act::SearchLobbies);
-    alice.within(std::time::Duration::from_secs(10), "existing lobby listed", |c| {
-        named(c, "join unconfirmed room")
-    });
+    alice.within(
+        std::time::Duration::from_secs(10),
+        "existing lobby listed",
+        |c| named(c, "join unconfirmed room"),
+    );
     click(&mut alice, "join unconfirmed room");
     alice.until("owned membership recovered", |c| {
         matches!(

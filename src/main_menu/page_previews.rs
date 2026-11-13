@@ -246,16 +246,16 @@ fn profile_fixture(name: &str) -> PageView {
         } else {
             vec![
                 Rating {
-                    mode_id:"solo_mid".into(),
-                    confidence:super::rank_confidence::from_deviation(80.0,41),
+                    mode_id: "solo_mid".into(),
+                    confidence: super::rank_confidence::from_deviation(80.0, 41),
                     mode: "Solo Mid".to_owned(),
                     rating: Some("1,524".to_owned()),
                     rank: Some(12),
                     games: 41,
                 },
                 Rating {
-                    mode_id:"all_pick".into(),
-                    confidence:super::rank_confidence::from_deviation(120.0,9),
+                    mode_id: "all_pick".into(),
+                    confidence: super::rank_confidence::from_deviation(120.0, 9),
                     mode: "All Pick".to_owned(),
                     rating: Some("1,302".to_owned()),
                     rank: Some(412),
@@ -289,8 +289,10 @@ fn profile_fixture(name: &str) -> PageView {
 fn ladder_fixture(name: &str) -> PageView {
     let mut board = board(name);
     if name == "leaderboard_solo" {
-        board.modes.retain(|mode|mode.id=="solo_mid");
-        for mode in &mut board.modes { mode.name="1x1 Mid Only".into(); }
+        board.modes.retain(|mode| mode.id == "solo_mid");
+        for mode in &mut board.modes {
+            mode.name = "1x1 Mid Only".into();
+        }
     }
     if name == "leaderboard-empty" {
         board.rows.clear();
