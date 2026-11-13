@@ -411,7 +411,11 @@ mod tests {
             .insert_resource(crate::Args::parse_from(["dbota"]))
             .insert_resource(crate::manifest::Manifest {
                 files: vec![("cast".to_owned(), "cast.wav".to_owned())],
-                sound_events: vec![("cast.wav".to_owned(), "Synthetic.Cast".to_owned())],
+                sound_events: vec![(
+                    "cast".to_owned(),
+                    "cast.wav".to_owned(),
+                    "Synthetic.Cast".to_owned(),
+                )],
                 ..Default::default()
             })
             .insert_non_send(crate::main_menu::idle());

@@ -253,6 +253,7 @@ paths = [
     "src/soundscape.rs",
     "src/ambient.rs",
     "src/e2e/announcer.rs",
+    "src/e2e/building_announcement.rs",
     "src/e2e/ambient.rs",
     "src/e2e/captions.rs",
     "src/e2e/sound_limits.rs",
@@ -262,7 +263,7 @@ paths = [
     "src/e2e/game_audio_end.rs",
     "src/e2e/shop_sound.rs",
     "src/e2e/pudge_attack_sounds.rs",
-    "src/e2e/creep_blows.rs",
+    "src/e2e/creep_sounds.rs",
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
@@ -274,6 +275,7 @@ tests = [
         "attenuation::",
         "voice::",
         "e2e::announcer::",
+        "e2e::building_announcement::",
         "e2e::ambient::",
         "e2e::captions::",
         "e2e::sound_limits::",
@@ -283,7 +285,7 @@ tests = [
         "e2e::game_audio_end::",
         "e2e::shop_sound::",
         "e2e::pudge_attack_sounds::",
-        "e2e::creep_blows::",
+        "e2e::creep_sounds::",
     ] },
 ]
 

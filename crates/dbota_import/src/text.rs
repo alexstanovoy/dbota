@@ -972,6 +972,22 @@ enum Entry {
     },
 }
 
+impl Entry {
+    /// Whether the entry plays a sound whose file stem is one of `omit`: left out of the list
+    /// (a random entry only when every one of its waves is).
+    fn is_omitted(&self, omit: &[String]) -> bool {
+        let stem = |wave: &String| {
+            let name = wave.rsplit('/').next().unwrap_or(wave);
+            let name = name.strip_suffix(".vsnd").unwrap_or(name);
+            omit.iter().any(|o| o == name)
+        };
+        match self {
+            Entry::Loop { wave, .. } => stem(wave),
+            Entry::Random { waves, .. } => waves.iter().all(stem),
+        }
+    }
+}
+
 /// The cache file of the sound `vsnd` (`sounds/x.vsnd`): the same path as a WAV, which is what
 /// Valve ships ambient sounds as (the import refuses a wave that converts to anything else).
 pub fn wave_cache_path(vsnd: &str) -> String {
@@ -1165,7 +1181,11 @@ fn roshan_pit(entity: &Value) -> Option<[f64; 3]> {
 /// <wave>` and `random <name> <vol_min>,<vol_max> <pitch_min>,<pitch_max> <time_min>,<time_max>
 /// <x,y,z|-> <db> <wave>...`. `-` plays everywhere; a wave is its cache file (a `.wav`, see
 /// [`wave_cache_path`]).
-pub fn soundscapes_txt(entities: &[Value], scripts: &[&str]) -> (String, Vec<String>) {
+pub fn soundscapes_txt(
+    entities: &[Value],
+    scripts: &[&str],
+    omit: &[String],
+) -> (String, Vec<String>) {
     let files: Vec<Items> = scripts
         .iter()
         .take(MAX_SCRIPTS)
@@ -1196,7 +1216,7 @@ pub fn soundscapes_txt(entities: &[Value], scripts: &[&str]) -> (String, Vec<Str
             work: 0,
         };
         flat.walk(name, 1.0);
-        for entry in &flat.entries {
+        for entry in flat.entries.iter().filter(|entry| !entry.is_omitted(omit)) {
             out += &entry_line(name, entry, &mut waves);
         }
     }
@@ -1464,7 +1484,7 @@ mod tests {
             scape("default_day", false),
             scape("default_night", true)
         ]));
-        let (text, waves) = soundscapes_txt(&placed, &[SCAPES]);
+        let (text, waves) = soundscapes_txt(&placed, &[SCAPES], &[]);
         let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
         let dir = "sounds/ambient/soundscapes";
         assert_eq!(
@@ -1484,6 +1504,17 @@ mod tests {
         let manifest =
             "soundscapes_manifest\n{\n\"file\" \"scripts/a.txt\"\n//\"file\" \"scripts/b.txt\"\n}";
         assert_eq!(soundscape_files(manifest), ["scripts/a.txt"]);
+    }
+
+    /// A sound the manifest omits is neither listed nor imported, whichever soundscape plays it.
+    #[test]
+    fn omitted_soundscape_sounds_are_neither_listed_nor_imported() {
+        let placed = entities(&json!([json!({ "classname": "env_soundscape",
+            "soundscape": "default_day", "origin": [280.0, -144.0, 649.0], "radius": 16000 })]));
+        let (text, waves) = soundscapes_txt(&placed, &[SCAPES], &["spawn_l".to_owned()]);
+        assert!(!text.contains("spawn_l"), "{text}");
+        assert!(!waves.iter().any(|w| w.contains("spawn_l")), "{waves:?}");
+        assert!(text.contains("day_lp.wav"), "the others stay: {text}");
     }
 }
 

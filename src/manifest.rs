@@ -54,6 +54,8 @@ pub struct UnitArt {
     /// The particle its attack's missile wears (its `ProjectileModel`), by
     /// logical name; absent for a unit that throws none.
     pub attack: Option<String>,
+    /// The unit's `SoundSet`, lower case: the sound lines of its attacks are `sound.set.<set>.*`.
+    pub sound_set: Option<String>,
 }
 
 /// Everything the cache was exported with, and which of it is there.
@@ -67,11 +69,9 @@ pub struct Manifest {
     pub model_variants: Vec<dbota_import::catalog::ModelVariant>,
     /// Textures and sounds whose files are present: logical name and path.
     pub files: Vec<(String, String)>,
-    /// The Dota sound event each sound file plays, by its cache path, for those whose files
-    /// are present.
-    pub sound_events: Vec<(String, String)>,
-    /// The logical names of the sounds heard on the player's own hero only (`heard=own_hero`).
-    pub own_hero_sounds: std::collections::HashSet<String>,
+    /// The Dota sound event each sound plays, for those whose files are present: logical name,
+    /// cache path, event. A file several events share is listed once for each.
+    pub sound_events: Vec<(String, String, String)>,
     /// The particle effects whose files are present: logical name and path.
     pub particles: Vec<(String, String)>,
     /// The map file, when present.
@@ -95,6 +95,9 @@ pub struct Manifest {
     /// The Dota name whose text describes an item or an ability where that
     /// is not the one its icon is named after: kind, id, name.
     pub text_keys: Vec<(String, u16, String)>,
+    /// The sound sets the units name (`soundset=`), lower case, sorted: a unit's set is a place
+    /// in this list.
+    pub sound_sets: Vec<String>,
 }
 
 impl Manifest {
@@ -123,6 +126,7 @@ impl Manifest {
                     model: u.model.clone(),
                     scale: u.model_scale,
                     attack: u.attack.clone(),
+                    sound_set: u.sound_set.clone(),
                 }),
                 CatalogLine::Fx(words) => {
                     let words: Vec<&str> = words.iter().map(String::as_str).collect();
@@ -158,10 +162,9 @@ impl Manifest {
                 },
                 CatalogLine::Sound(s) if present(&s.out) => {
                     manifest.files.push((s.logical.clone(), s.out.clone()));
-                    manifest.sound_events.push((s.out.clone(), s.event.clone()));
-                    if s.own_hero_only {
-                        manifest.own_hero_sounds.insert(s.logical.clone());
-                    }
+                    manifest
+                        .sound_events
+                        .push((s.logical.clone(), s.out.clone(), s.event.clone()));
                 }
                 CatalogLine::World(w) if present(&w.out) => {
                     manifest.map = Some(cache_path(&w.out));
@@ -184,6 +187,13 @@ impl Manifest {
                 manifest.files.push((logical, rel));
             }
         }
+        manifest.sound_sets = manifest
+            .units
+            .iter()
+            .filter_map(|unit| unit.sound_set.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
         for id in &catalog.ids {
             match id {
                 Id::Item { id, name } => manifest.ids.push(("item".to_owned(), *id, name.clone())),
@@ -207,6 +217,13 @@ impl Manifest {
             }
         }
         manifest
+    }
+
+    /// The place in [`Manifest::sound_sets`] of the sound set of the Dota unit of a name.
+    pub fn sound_set_of(&self, unit: &str) -> Option<u16> {
+        let set = self.unit_art(unit)?.sound_set.as_ref()?;
+        let at = self.sound_sets.binary_search(set).ok()?;
+        u16::try_from(at).ok()
     }
 
     /// How the unit of a Dota name is drawn, if the manifest says.
@@ -248,15 +265,12 @@ impl Manifest {
 
     /// Every sound of a logical name with the Dota event its file plays, as asset paths.
     pub fn sounds_with_events(&self, name: &str) -> Vec<(String, String)> {
-        self.sound_files_named(|logical| logical == name)
-            .map(|path| {
-                let event = self
-                    .sound_events
-                    .iter()
-                    .find(|(out, _)| out == path)
-                    .map_or_else(String::new, |(_, event)| event.clone());
-                (cache_path(path), event)
+        self.sound_events
+            .iter()
+            .filter(|(logical, out, _)| {
+                logical == name && (out.ends_with(".wav") || out.ends_with(".mp3"))
             })
+            .map(|(_, out, event)| (cache_path(out), event.clone()))
             .collect()
     }
 

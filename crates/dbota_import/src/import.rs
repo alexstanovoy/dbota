@@ -300,6 +300,8 @@ pub enum Item {
         /// The soundscapes (`soundscapes.txt`) and the sounds they play, when the manifest asks
         /// for them.
         soundscapes_out: Option<String>,
+        /// File stems of the soundscape sounds the list leaves out.
+        soundscape_omit: Vec<String>,
     },
     /// The world cut to `band`: its glTF (`out`), geometry and images beside it, and its terrain
     /// layer textures in `layers`.
@@ -576,6 +578,7 @@ impl Plan {
                             lighting_out: w.lighting.clone(),
                             ambient_out: w.ambient.clone(),
                             soundscapes_out: w.soundscapes.clone(),
+                            soundscape_omit: w.soundscape_omit.clone(),
                         });
                     }
                     plan.items.push(Item::World {
@@ -1158,6 +1161,7 @@ fn make(
             lighting_out,
             ambient_out,
             soundscapes_out,
+            soundscape_omit,
             ..
         } => {
             let at = open_map(src, maps, vpk)?;
@@ -1167,6 +1171,7 @@ fn make(
                 lighting: lighting_out.as_deref(),
                 ambient: ambient_out.as_deref(),
                 soundscapes: soundscapes_out.as_deref(),
+                soundscape_omit,
             };
             placements(src, [&maps[at].1, pak], path, &outs, out)
         }
@@ -1684,6 +1689,16 @@ fn face_text(item: &Item, bytes: &[u8]) -> Result<String> {
 /// does not read is still heard (its face stays still); the failure is reported.
 fn sound(bytes: &[u8], dest: &str, out: &mut Out<'_>) -> Result<()> {
     let sound = Sound::parse(bytes, &mut heatel::Budget::default())?;
+    // The cache names a file by what it holds: the client picks a decoder by the extension.
+    if !dest.ends_with(sound.extension()) {
+        return Err(malformed(
+            "sound",
+            format!(
+                "the sound is a {}, not the cache's {dest}",
+                sound.extension()
+            ),
+        ));
+    }
     match Lipsync::parse(bytes, &mut heatel::Budget::default()) {
         Ok(lipsync) if !lipsync.is_empty() => {
             out.put(&lipsync_path(dest), lipsync_txt(&lipsync).as_bytes())?;
@@ -2048,6 +2063,7 @@ struct PlacementOuts<'a> {
     lighting: Option<&'a str>,
     ambient: Option<&'a str>,
     soundscapes: Option<&'a str>,
+    soundscape_omit: &'a [String],
 }
 
 /// `trees.txt`, `buildings.txt`, `lighting.txt`, `ambient.txt` and `soundscapes.txt` from the
@@ -2105,7 +2121,7 @@ fn placements(
         }
     }
     if let Some(path) = outs.soundscapes {
-        soundscapes(src, pak, &lump.entities, path, out)?;
+        soundscapes(src, pak, &lump.entities, path, outs.soundscape_omit, out)?;
     }
     Ok(())
 }
@@ -2117,6 +2133,7 @@ fn soundscapes(
     pak: &Vpk,
     entities: &[Value],
     dest: &str,
+    omit: &[String],
     out: &mut Out<'_>,
 ) -> Result<()> {
     let manifest = read_from(src, &[pak], SOUNDSCAPE_MANIFEST)?;
@@ -2130,7 +2147,7 @@ fn soundscapes(
         .iter()
         .filter_map(|f| keyvalues::text(f).ok())
         .collect();
-    let (file, waves) = soundscapes_txt(entities, &scripts);
+    let (file, waves) = soundscapes_txt(entities, &scripts, omit);
     out.put(dest, file.as_bytes())?;
     for vsnd in waves {
         let name = vsnd.trim_start_matches("sounds/").trim_end_matches(".vsnd");

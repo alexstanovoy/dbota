@@ -3,6 +3,8 @@
 //! click of the interface. What one's hero says is its own rules' (`hero_voice.rs`).
 //! Silent where the cache has no such sound.
 
+use std::time::Duration;
+
 use bevy::{audio::Volume, prelude::*};
 use bevy::{
     picking::{events::PointerPress, pointer::PointerButton},
@@ -88,10 +90,17 @@ impl Lines {
 /// ones are dropped, as a line about something long past would mislead.
 const ANNOUNCER_PATIENCE: f32 = 3.0;
 
+/// How long after a building's fall the announcer calls it. The install holds no such delay (the
+/// response rules and the line's sound event carry none), so this is ours, the owner's "slight
+/// delay after the destruction sound": the fall and its destruction sound come at once, the call
+/// follows. Presentation only: the match does not wait for it.
+pub const BUILDING_CALL_DELAY: Duration = Duration::from_millis(1500);
+
 /// The announcer's lines in the order they were called: one speaks at a time,
 /// and the next starts when it ends, as in Dota.
 #[derive(Resource, Default)]
 pub(crate) struct Announcer {
+    /// Each line with its volume and the time since startup from which it may speak.
     waiting: std::collections::VecDeque<(Handle<AudioSource>, f32, f32)>,
     /// The line being spoken.
     speaking: Option<Entity>,
@@ -107,19 +116,36 @@ impl Announcer {
     }
 
     pub(crate) fn push(&mut self, source: Option<Handle<AudioSource>>, gain: f32, now: f32) {
+        self.push_after(source, gain, now, Duration::ZERO);
+    }
+
+    /// [`Announcer::push`] for a line that speaks `delay` after `now`; the lines behind it wait
+    /// for it, as they wait for one speaking.
+    pub(crate) fn push_after(
+        &mut self,
+        source: Option<Handle<AudioSource>>,
+        gain: f32,
+        now: f32,
+        delay: Duration,
+    ) {
         if let Some(source) = source {
-            self.waiting.push_back((source, gain, now));
+            self.waiting
+                .push_back((source, gain, now + delay.as_secs_f32()));
         }
     }
 
-    /// The line to start now, if none is speaking: the oldest that is not
-    /// stale.
+    /// The line to start now, if none is speaking: the oldest, once its time has come, unless it
+    /// is stale.
     fn next(&mut self, now: f32, speaking: bool) -> Option<(Handle<AudioSource>, f32)> {
         if speaking {
             return None;
         }
-        while let Some((source, gain, queued)) = self.waiting.pop_front() {
-            if now - queued <= ANNOUNCER_PATIENCE {
+        while let Some((_, _, due)) = self.waiting.front() {
+            if *due > now {
+                return None;
+            }
+            let (source, gain, due) = self.waiting.pop_front()?;
+            if now - due <= ANNOUNCER_PATIENCE {
                 return Some((source, gain));
             }
         }
@@ -447,7 +473,7 @@ fn building_fell(
             continue;
         }
         if let Some((_, lines)) = voices.buildings.iter_mut().find(|(n, _)| *n == name) {
-            announcer.push(lines.take(), 0.9, time.elapsed_secs());
+            announcer.push_after(lines.take(), 0.9, time.elapsed_secs(), BUILDING_CALL_DELAY);
         }
     }
 }

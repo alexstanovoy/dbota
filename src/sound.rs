@@ -32,7 +32,6 @@ struct Layer {
 struct Binding {
     name: String,
     layers: Vec<Layer>,
-    own_hero_only: bool,
     last_layered: Option<Duration>,
     next: usize,
 }
@@ -97,9 +96,9 @@ fn row(subject: Subject, event: Event, side: Option<Side>) -> Kind {
 /// What a sound row is of.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Subject {
-    MeleeCreep,
-    RangedCreep,
-    SiegeCreep,
+    /// The units of a Dota sound set (`SoundSet` in `npc_units.txt`), by its place among
+    /// the manifest's sets: lane creeps and neutrals sound their attacks through their set.
+    Set(u16),
     Tower,
     /// A barracks or a filler: Dota gives them one generic event.
     Building,
@@ -145,9 +144,7 @@ impl Row {
     /// The row's logical name, or none for a hero the manifest does not know.
     fn name(self, manifest: &Manifest) -> Option<String> {
         let subject = match self.subject {
-            Subject::MeleeCreep => "creep.melee".to_owned(),
-            Subject::RangedCreep => "creep.ranged".to_owned(),
-            Subject::SiegeCreep => "creep.siege".to_owned(),
+            Subject::Set(set) => format!("set.{}", manifest.sound_sets.get(usize::from(set))?),
             Subject::Tower => "tower".to_owned(),
             Subject::Building => "building".to_owned(),
             Subject::Ancient => "ancient".to_owned(),
@@ -167,16 +164,15 @@ impl Row {
     }
 
     /// Every row the client sounds.
-    fn all() -> Vec<Row> {
-        let mut rows = vec![
-            Row::new(Subject::MeleeCreep, Event::PreAttack, None),
-            Row::new(Subject::MeleeCreep, Event::Attack, None),
-        ];
+    fn all(manifest: &Manifest) -> Vec<Row> {
+        let mut rows = Vec::new();
+        for set in 0..manifest.sound_sets.len() {
+            for event in [Event::PreAttack, Event::Attack, Event::Impact] {
+                rows.push(Row::new(Subject::Set(set as u16), event, None));
+            }
+        }
         for side in Side::BOTH {
             rows.extend([
-                Row::new(Subject::RangedCreep, Event::Attack, Some(side)),
-                Row::new(Subject::RangedCreep, Event::Impact, Some(side)),
-                Row::new(Subject::SiegeCreep, Event::Attack, Some(side)),
                 Row::new(Subject::Tower, Event::Attack, Some(side)),
                 Row::new(Subject::Tower, Event::Destroyed, Some(side)),
                 Row::new(Subject::Ancient, Event::Destroyed, Some(side)),
@@ -482,13 +478,9 @@ fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<Ass
         Kind::ShopAvailable,
         Kind::ShopUnavailable,
     ])
-    .chain(Row::all().into_iter().map(Kind::Row));
+    .chain(Row::all(&manifest).into_iter().map(Kind::Row));
     for kind in kinds {
         let groups = sources_of(kind, &manifest);
-        let own_hero_only = groups
-            .iter()
-            .flatten()
-            .any(|name| manifest.own_hero_sounds.contains(name));
         let name = groups
             .iter()
             .flatten()
@@ -514,7 +506,6 @@ fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<Ass
             Binding {
                 name,
                 layers,
-                own_hero_only,
                 last_layered: None,
                 next: 0,
             },
@@ -543,6 +534,8 @@ struct Sounder<'a, 'w, 's> {
     now: Duration,
     focus: Vec2,
     silent: bool,
+    /// The manifest, for the sound set of a unit.
+    manifest: &'a Manifest,
     /// The hero the player hears the damage taken of.
     ears: Option<EntityId>,
     /// The hero of the player's own seat: none for a spectator or a replay.
@@ -569,10 +562,9 @@ impl Sounder<'_, '_, '_> {
         };
         if let Some(tick) = self.trace {
             println!(
-                "sound tick={tick} name={} on={} heard={} sources={}",
+                "sound tick={tick} name={} on={} sources={}",
                 binding.name,
                 merge.map_or("none".to_owned(), |unit| unit.idx.to_string()),
-                !binding.own_hero_only || (merge.is_some() && merge == self.ears),
                 binding
                     .layers
                     .iter()
@@ -580,7 +572,7 @@ impl Sounder<'_, '_, '_> {
                     .sum::<usize>()
             );
         }
-        if self.silent || (binding.own_hero_only && (merge.is_none() || merge != self.ears)) {
+        if self.silent {
             return;
         }
         let layered = binding.layers.len() > 1;
@@ -720,6 +712,7 @@ fn play(
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
+    manifest: Res<Manifest>,
     mut history: ResMut<History>,
 ) {
     let History {
@@ -737,6 +730,7 @@ fn play(
         now: time.elapsed(),
         focus: Vec2::new(cam.focus.x, -cam.focus.z),
         silent: settings.muted || args.mute,
+        manifest: &manifest,
         ears: core.ears(),
         own: core.my_hero(),
         fog: sight.fog(),
@@ -810,6 +804,7 @@ fn portals(
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
+    manifest: Res<Manifest>,
     mut history: ResMut<History>,
 ) {
     let humming = &mut history.humming;
@@ -836,6 +831,7 @@ fn portals(
             now: time.elapsed(),
             focus,
             silent,
+            manifest: &manifest,
             ears: core.ears(),
             own: core.my_hero(),
             fog: sight.fog(),
@@ -1008,7 +1004,36 @@ fn shop_change(core: &bota_client_core::App, watch: &mut ShopWatch, now: f32) ->
     watch.look(core.view().is_some(), looked, now)
 }
 
-/// The shots of creeps and towers that let a missile go this tick.
+/// The sound set of a creep or neutral, as its Dota unit names it.
+fn creep_set(unit: &bota_proto::UnitView, manifest: &Manifest) -> Option<Subject> {
+    let creep = matches!(
+        unit.kind,
+        UnitKind::CreepMelee
+            | UnitKind::CreepFlagbearer
+            | UnitKind::CreepRanged
+            | UnitKind::CreepSiege
+            | UnitKind::CreepNeutral
+    );
+    let npc = crate::units::npc_unit(unit).filter(|_| creep)?;
+    manifest.sound_set_of(npc).map(Subject::Set)
+}
+
+/// Whether the unit's attack is a missile, as the rules give it: a ranged lane creep, a siege
+/// creep, or a neutral with a missile speed.
+fn throws_missiles(unit: &bota_proto::UnitView) -> bool {
+    match unit.kind {
+        UnitKind::CreepRanged | UnitKind::CreepSiege => true,
+        UnitKind::CreepNeutral => unit
+            .neutral
+            .and_then(bota_core::NeutralKind::of)
+            .is_some_and(|kind| kind.neutral().def.projectile_speed.is_some()),
+        _ => false,
+    }
+}
+
+/// The shots of creeps and towers that let a missile go this tick, and the landing of those of
+/// creeps: a unit's set plays its `Attack` as the missile leaves and its `ProjectileImpact` as
+/// it lands.
 fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut Sounder) {
     let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
@@ -1029,24 +1054,22 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
         let Some(shooter) = p.source.and_then(|id| view.unit(id)) else {
             continue;
         };
-        let Some(side) = Side::of(shooter.team) else {
-            continue;
-        };
-        let subject = match shooter.kind {
-            UnitKind::Tower => Subject::Tower,
-            UnitKind::CreepRanged => Subject::RangedCreep,
-            UnitKind::CreepSiege => Subject::SiegeCreep,
-            _ => continue,
+        let (subject, side) = match (shooter.kind, Side::of(shooter.team)) {
+            (UnitKind::Tower, side @ Some(_)) => (Subject::Tower, side),
+            _ => match creep_set(shooter, sound.manifest) {
+                Some(set) => (set, None),
+                None => continue,
+            },
         };
         sound.sound(
-            row(subject, Event::Attack, Some(side)),
+            row(subject, Event::Attack, side),
             1.0,
             at,
             Some(shooter.id),
             None,
         );
     }
-    // A ranged creep's missile gone since the last tick has landed.
+    // A creep's missile gone since the last tick has landed.
     for p in prev.projectiles.iter().filter(|p| {
         p.inflictor.is_none()
             && !fog.hides(p.seen_by)
@@ -1056,24 +1079,23 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
                 .is_err()
     }) {
         let shooter = p.source.and_then(|id| prev.unit(id));
-        if let Some(u) = shooter.filter(|u| u.kind == UnitKind::CreepRanged)
-            && let Some(side) = Side::of(u.team)
-        {
+        if let Some(subject) = shooter.and_then(|u| creep_set(u, sound.manifest)) {
             let at = Some((p.pos.x.to_f32(), p.pos.y.to_f32()));
             sound.sound(
-                row(Subject::RangedCreep, Event::Impact, Some(side)),
+                row(subject, Event::Impact, None),
                 1.0,
                 at,
-                Some(u.id),
+                shooter.map(|u| u.id),
                 p.target,
             );
         }
     }
 }
 
-/// Windup sounds for visible heroes and melee creeps, plus the creeps' strikes.
-/// Hero impacts already come through their damage cues; sounding them here too
-/// would duplicate a hit and sound canceled or missed blows.
+/// Windup sounds for visible heroes and creeps, plus the strikes of the creeps that swing at
+/// their target. Hero impacts already come through their damage cues; sounding them here too
+/// would duplicate a hit and sound canceled or missed blows. A missile thrower's `Attack` is
+/// its missile leaving ([`shots`]).
 fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut Sounder) {
     let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
@@ -1089,26 +1111,20 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
     };
     let strike_of =
         |of: &bota_proto::WorldView, id| swing_of(of, id).map(|swing| of.tick + swing.strike_in);
-    let melee = view
+    let creeps = view
         .units
         .iter()
-        .filter(|u| {
-            matches!(u.kind, UnitKind::CreepMelee | UnitKind::CreepFlagbearer)
-                && !fog.hides(u.seen_by)
-        })
+        .filter(|u| !fog.hides(u.seen_by))
+        .filter_map(|u| Some((u, creep_set(u, sound.manifest)?)))
         .take(SHOTS_PER_TICK);
     // Hero windups do not consume the existing creep sound budget.
     let heroes = view
         .units
         .iter()
         .filter(|u| u.kind == UnitKind::Hero && !fog.hides(u.seen_by))
+        .filter_map(|u| Some((u, Subject::Hero(u.hero?))))
         .take(SHOTS_PER_TICK);
-    for u in melee.chain(heroes) {
-        let subject = match (u.kind, u.hero) {
-            (UnitKind::Hero, Some(hero)) => Subject::Hero(hero),
-            (UnitKind::CreepMelee | UnitKind::CreepFlagbearer, _) => Subject::MeleeCreep,
-            _ => continue,
-        };
+    for (u, subject) in creeps.chain(heroes) {
         let at = Some((u.pos.x.to_f32(), u.pos.y.to_f32()));
         let (now, before) = (strike_of(view, u.id), strike_of(prev, u.id));
         if now.is_some() && now != before {
@@ -1120,12 +1136,13 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
                 None,
             );
         }
-        if subject == Subject::MeleeCreep
+        if matches!(subject, Subject::Set(_))
+            && !throws_missiles(u)
             && before.is_some_and(|due| now != Some(due) && due <= view.tick)
         {
             let target = swing_of(prev, u.id).map(|swing| swing.target);
             sound.sound(
-                row(Subject::MeleeCreep, Event::Attack, None),
+                row(subject, Event::Attack, None),
                 1.0,
                 at,
                 Some(u.id),
@@ -1189,6 +1206,7 @@ mod tests {
             .init_resource::<crate::main_menu::GameEpoch>()
             .init_resource::<PendingCues>()
             .init_resource::<History>()
+            .insert_resource(Manifest::default())
             .insert_resource(Settings::default())
             .insert_resource(crate::Args::parse_from(["dbota"]))
             .insert_resource(mixer)
@@ -1202,7 +1220,6 @@ mod tests {
                         next: 0,
                     }],
                     last_layered: None,
-                    own_hero_only: false,
                     next: 0,
                 },
             )]))
@@ -1304,7 +1321,6 @@ mod tests {
                     next: 0,
                 }],
                 last_layered: None,
-                own_hero_only: false,
                 next: 0,
             },
         )]);
@@ -1318,6 +1334,7 @@ mod tests {
                 now: Duration::ZERO,
                 focus: Vec2::ZERO,
                 silent: false,
+                manifest: &Manifest::default(),
                 ears: None,
                 own: None,
                 fog: &fog,
@@ -1428,7 +1445,7 @@ mod tests {
             );
         }
         assert!(!sounds_from_the_players_entity(hero(Event::Death), me, me));
-        let creep = row(Subject::MeleeCreep, Event::Attack, None);
+        let creep = row(Subject::Set(0), Event::Attack, None);
         assert!(!sounds_from_the_players_entity(creep, me, me));
     }
 
@@ -1631,63 +1648,100 @@ mod tests {
                 "{event:?}: the install's event name"
             );
         }
+        let set = |name: &str| {
+            Subject::Set(
+                u16::try_from(
+                    manifest
+                        .sound_sets
+                        .iter()
+                        .position(|set| set == name)
+                        .unwrap_or_else(|| panic!("no sound set {name}")),
+                )
+                .expect("a few sets"),
+            )
+        };
         let counts = [
             (
-                Subject::MeleeCreep,
+                set("creep_good_melee"),
                 Event::PreAttack,
                 None,
-                2,
+                8,
                 "shared/whoosh",
             ),
             (
-                Subject::MeleeCreep,
+                set("creep_bad_melee"),
+                Event::PreAttack,
+                None,
+                8,
+                "shared/whoosh",
+            ),
+            (
+                set("creep_good_melee"),
                 Event::Attack,
                 None,
-                3,
+                12,
                 "shared/melee_hit",
             ),
             (
-                Subject::RangedCreep,
+                set("creep_bad_melee"),
                 Event::Attack,
-                Some(Side::Radiant),
-                2,
+                None,
+                12,
+                "shared/melee_hit",
+            ),
+            (
+                set("creep_bad_melee_mega"),
+                Event::Attack,
+                None,
+                10,
+                "creep/",
+            ),
+            (
+                set("creep_good_range"),
+                Event::Attack,
+                None,
+                4,
                 "creep/good/",
             ),
+            (set("creep_bad_range"), Event::Attack, None, 4, "creep/bad/"),
             (
-                Subject::RangedCreep,
-                Event::Attack,
-                Some(Side::Dire),
-                2,
-                "creep/bad/",
-            ),
-            (
-                Subject::RangedCreep,
+                set("creep_good_range"),
                 Event::Impact,
-                Some(Side::Radiant),
-                2,
+                None,
+                4,
                 "creep/good/",
             ),
+            (set("creep_bad_range"), Event::Impact, None, 4, "creep/bad/"),
             (
-                Subject::RangedCreep,
-                Event::Impact,
-                Some(Side::Dire),
-                2,
-                "creep/bad/",
-            ),
-            (
-                Subject::SiegeCreep,
+                set("creep_good_engine"),
                 Event::Attack,
-                Some(Side::Radiant),
+                None,
                 3,
                 "creep/good/engine",
             ),
             (
-                Subject::SiegeCreep,
+                set("creep_bad_engine"),
                 Event::Attack,
-                Some(Side::Dire),
+                None,
                 1,
                 "creep/bad/engine",
             ),
+            (
+                set("creep_good_engine"),
+                Event::Impact,
+                None,
+                1,
+                "tower_projectile",
+            ),
+            (
+                set("n_creep_melee"),
+                Event::Attack,
+                None,
+                8,
+                "shared/melee_hit",
+            ),
+            (set("n_creep_ranged"), Event::Attack, None, 4, "creep/bad/"),
+            (set("n_creep_ranged"), Event::Impact, None, 4, "creep/bad/"),
             (
                 Subject::Tower,
                 Event::Attack,

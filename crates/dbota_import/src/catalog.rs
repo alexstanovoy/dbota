@@ -62,6 +62,8 @@ pub struct Unit {
     pub model_scale: Option<f32>,
     /// The particle (logical name) its attack's missile wears.
     pub attack: Option<String>,
+    /// The unit's `SoundSet`, lower case: the sound lines of its attacks are `sound.set.<set>.*`.
+    pub sound_set: Option<String>,
 }
 
 /// A model selected by a replicated state, with its world elevation.
@@ -105,16 +107,13 @@ pub struct File {
     pub out: String,
 }
 
-/// A sound line (`sound <logical> <vsnd> <out> event=<name> [heard=own_hero]`); variants share
-/// the logical name. `heard=own_hero` marks the sound of a blow taken as damage, which Dota plays
-/// for the hero the player plays alone.
+/// A sound line (`sound <logical> <vsnd> <out> event=<name>`); variants share the logical name.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sound {
     pub logical: String,
     pub src: String,
     pub out: String,
     pub event: String,
-    pub own_hero_only: bool,
 }
 
 /// The world line: the map cut to a band, its terrain layers, trees and lighting, and the
@@ -135,6 +134,8 @@ pub struct World {
     pub ambient: Option<String>,
     /// Where the map's soundscapes are listed (`soundscapes=`).
     pub soundscapes: Option<String>,
+    /// File stems of the soundscapes' sounds left out of the list (`soundscape_omit=`).
+    pub soundscape_omit: Vec<String>,
 }
 
 /// The portrait framings line.
@@ -477,13 +478,14 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
             }))
         }
         "unit" => {
-            let f = Fields::of(rest, &["model_scale", "attack"])?;
+            let f = Fields::of(rest, &["model_scale", "attack", "soundset"])?;
             let [unit, model] = f.exactly::<2>("unit")?;
             Ok(Line::Unit(Unit {
                 unit: own(unit),
                 model: (model != "none").then(|| own(model)),
                 model_scale: f.float("model_scale")?,
                 attack: f.get("attack").map(own),
+                sound_set: f.get("soundset").map(own),
             }))
         }
         "texture" | "particle" | "expression" | "phonemes" | "font" => {
@@ -504,19 +506,13 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
             }))
         }
         "sound" => {
-            let f = Fields::of(rest, &["event", "heard"])?;
+            let f = Fields::of(rest, &["event"])?;
             let [logical, src, out] = f.exactly::<3>("sound")?;
-            let own_hero_only = match f.get("heard") {
-                None => false,
-                Some("own_hero") => true,
-                Some(other) => return Err(format!("no sound audience 'heard={other}'")),
-            };
             Ok(Line::Sound(Sound {
                 logical: own(logical),
                 src: own(src),
                 out: own(out),
                 event: own(f.need("event")?),
-                own_hero_only,
             }))
         }
         "world" => {
@@ -532,6 +528,7 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
                     "lighting",
                     "ambient",
                     "soundscapes",
+                    "soundscape_omit",
                 ],
             )?;
             let [logical, src, out] = f.exactly::<3>("world")?;
@@ -548,6 +545,9 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
                 lighting: f.get("lighting").map(own),
                 ambient: f.get("ambient").map(own),
                 soundscapes: f.get("soundscapes").map(own),
+                soundscape_omit: f
+                    .get("soundscape_omit")
+                    .map_or_else(Vec::new, |v| v.split(',').map(str::to_owned).collect()),
             }))
         }
         "portraits" => {
@@ -864,8 +864,8 @@ mod tests {
             ("model m m.vmdl_c m.glb atach=p\n", "no field 'atach='"),
             ("sound s s.vsnd_c s.wav\n", "no 'event='"),
             (
-                "sound s s.vsnd_c s.wav event=E heard=everyone\n",
-                "no sound audience 'heard=everyone'",
+                "sound s s.vsnd_c s.wav event=E heard=all\n",
+                "no field 'heard='",
             ),
             ("shop s s.txt s.json\n", "no 'strings='"),
             ("clip nobody idle idle 1.0\n", "no model nobody"),

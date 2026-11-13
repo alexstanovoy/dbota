@@ -423,53 +423,29 @@ fn a_broken_off_swing_is_a_cancel_and_clips_fade_and_melee_creeps_sound() {
         }
     }
     assert!(fades > 0, "no clip change was seen to fade from the start");
-    // Sound: melee creeps whoosh as a swing begins; the blow as it lands is heard only on the
-    // hero one plays.
+    // Sound: melee creeps whoosh as a swing begins and clash as it lands, through their sound
+    // sets, whoever is struck.
     let heard = |kind: &str| {
         lines
             .iter()
-            .filter(|l| l.starts_with("sound ") && l.contains(&format!("name={kind} ")))
+            .filter(|l| {
+                l.starts_with("sound ")
+                    && l.split(' ').any(|word| {
+                        word.strip_prefix("name=").is_some_and(|name| {
+                            name.starts_with("sound.set.creep_") && name.contains(kind)
+                        })
+                    })
+            })
             .collect::<Vec<_>>()
     };
-    let kind = "sound.creep.melee.preattack";
-    let said = heard(kind);
-    assert!(!said.is_empty(), "no {kind} was decided");
-    assert!(
-        said.iter().all(|l| !l.ends_with("sources=0")),
-        "{kind} has no sound in the cache"
-    );
-    // The blows landed (they are decided), and Dota hears a creep's blow on the hero one plays
-    // alone: the lane fight has that hero in it, so its blows are heard and every other blow
-    // is not.
-    let blows = heard("sound.creep.melee.attack");
-    assert!(
-        !blows.is_empty(),
-        "no melee blow was decided in the lane fight"
-    );
-    let mut heroes: Vec<u32> = all
-        .iter()
-        .filter(|f| f.kind == "Hero")
-        .map(|f| f.unit)
-        .collect();
-    heroes.sort_unstable();
-    heroes.dedup();
-    assert_eq!(heroes.len(), 1, "the lane fight has the seat's hero alone");
-    let own_hero = heroes[0].to_string();
-    let on_own_hero = |l: &&String| l.contains(&format!(" on={own_hero} "));
-    let (own, others): (Vec<_>, Vec<_>) = blows.into_iter().partition(on_own_hero);
-    assert!(
-        !own.is_empty(),
-        "no melee blow fell on the hero of the seat"
-    );
-    assert!(!others.is_empty(), "no melee blow fell on anyone else");
-    assert!(
-        own.iter().all(|l| l.contains(" heard=true ")),
-        "a blow on the hero one plays was not heard: {own:?}"
-    );
-    assert!(
-        others.iter().all(|l| l.contains(" heard=false ")),
-        "a blow on no hero of the player's was heard: {others:?}"
-    );
+    for kind in ["_melee.preattack", "_melee.attack"] {
+        let said = heard(kind);
+        assert!(!said.is_empty(), "no {kind} was decided");
+        assert!(
+            said.iter().all(|l| !l.ends_with("sources=0")),
+            "{kind} has no sound in the cache"
+        );
+    }
     keep(&replay, "lane", &shots);
     let _ = std::fs::remove_dir_all(&dir);
 }

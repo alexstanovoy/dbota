@@ -115,6 +115,51 @@ fn dotas_soundscapes_play_by_place_and_by_time_of_day() {
     );
 }
 
+/// The Ancients' humming loops are left out (the owner: an unpleasant continuous sound on the
+/// base): with the camera held over either Ancient, by day and by night, no ancient loop sounds
+/// while the base's other loops (the spawn's) still do.
+#[test]
+fn the_ancients_humming_loops_are_not_heard_at_either_base() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    let patience = Duration::from_secs(60);
+    for night in [false, true] {
+        client.cheat(Cheat::TimeOfDay { night });
+        let scape = if night {
+            "default_night"
+        } else {
+            "default_day"
+        };
+        for (ancient, spawn) in [
+            ((-5850.0, -5300.0), "radiant_spawn_loop_02.wav"),
+            ((5250.0, 4700.0), "dire_spawn_loop_01.wav"),
+        ] {
+            look_at(&mut client, ancient);
+            client.within(patience, "the soundscape heard whole", |c| {
+                look_at(c, ancient);
+                heard(c) == Some((scape.to_owned(), 1.0))
+            });
+            client.frames(2);
+            for wave in ["radiant_ancient_lp_01.wav", "dire_ancient_lp_01.wav"] {
+                assert_eq!(
+                    gain(&client, scape, wave, true),
+                    0.0,
+                    "{wave} sounds at {ancient:?} in {scape}"
+                );
+                assert_eq!(
+                    sounds_of(&client, scape, wave, true).count(),
+                    0,
+                    "{wave} is bound in {scape}"
+                );
+            }
+            assert!(
+                sounds_of(&client, scape, spawn, true).count() > 0,
+                "the base's other loops are kept ({spawn} in {scape})"
+            );
+        }
+    }
+}
+
 /// Roshan's pits sound only while Roshan stands in them: with none in the match, the camera held
 /// over either pit hears neither pit's loop, by day and by night, as Dota's map places them in the
 /// soundscape for him alone.
