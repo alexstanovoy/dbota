@@ -34,6 +34,16 @@ held() { echo "$1" | grep -q "^visual check: PASS" && ! echo "$1" | grep -q "FAI
 # An ignored-test run holds when each of its test binaries ran a test and all passed: a filter or
 # a target that matches nothing passes with none run.
 ran() { awk '/^test result:/ { n++; if ($4 + 0 < 1) none = 1 } END { exit !(n > 0 && !none) }' "$1"; }
+# Every world indicator uses this production stroke configuration.
+if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
+    --bin dbota overlay::render_tests::indicator_strokes_are_two_pixels_at_a_fixed_camera \
+    -- --ignored --exact --nocapture > "$out/indicator_strokes.log" 2>&1 \
+    && grep -Fq 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$out/indicator_strokes.log"; then
+    echo "visual check: PASS indicator stroke pixels"
+else
+    echo "visual check: FAIL indicator stroke pixels (see $out/indicator_strokes.log)"
+    exit 1
+fi
 # Full readability is baked into the production material, including with its retired uniform at zero.
 if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
     --bin dbota fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels \

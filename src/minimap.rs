@@ -28,8 +28,10 @@ const MAP_SIZE: f32 = bota_core::rules::MAP_SIZE as f32;
 pub const SIDE: f32 = 250.0;
 /// Pixels of the photograph's side.
 const PHOTO: u32 = 512;
-/// Unit marks shown at most.
+/// Unit marks kept initially; retained nodes grow only to the admitted snapshot size.
 const MARKS: usize = 160;
+/// A remembered Roshan can be absent from the admitted snapshot.
+const MAX_MARKS: usize = bota_proto::MAX_VIEW_UNITS + 1;
 /// Hero marks shown at most: Dota's ten seats.
 const HERO_MARKS: usize = 10;
 /// Interface pixels across a hero's mark, and across it with its icon.
@@ -81,18 +83,25 @@ pub(crate) fn shown_unit_marks(world: &mut World) -> Vec<(Option<String>, Vec2)>
     marks
         .into_iter()
         .filter_map(|mark| {
-            let (node, image, vis) = world
-                .query::<(&Node, &ImageNode, &Visibility)>()
+            let (node, image, vis, inherited, computed) = world
+                .query::<(
+                    &Node,
+                    &ImageNode,
+                    &Visibility,
+                    &InheritedVisibility,
+                    &ComputedNode,
+                )>()
                 .get(world, mark)
                 .ok()?;
             let (Val::Px(left), Val::Px(top), Val::Px(width)) = (node.left, node.top, node.width)
             else {
                 return None;
             };
-            (*vis != Visibility::Hidden).then(|| {
-                let path = server.get_path(image.image.id()).map(|p| p.to_string());
-                (path, Vec2::new(left + width / 2.0, top + width / 2.0))
-            })
+            (*vis != Visibility::Hidden && inherited.get() && computed.size().min_element() > 0.0)
+                .then(|| {
+                    let path = server.get_path(image.image.id()).map(|p| p.to_string());
+                    (path, Vec2::new(left + width / 2.0, top + width / 2.0))
+                })
         })
         .collect()
 }
@@ -129,6 +138,7 @@ struct Minimap {
     photo: Handle<Image>,
     fog: Entity,
     marks: Vec<Entity>,
+    unit_layer: Entity,
     shops: Vec<Entity>,
     /// The layer of the map's objectives' icons, under the units' marks, and
     /// the icons made so far: a match without objectives has none.
@@ -183,7 +193,7 @@ pub fn plugin(app: &mut App) {
             Update,
             (
                 photograph,
-                marks,
+                marks.after(crate::roshan_status::remember),
                 objective_marks,
                 shop_marks,
                 rune_marks.after(crate::runes::remember),
@@ -260,6 +270,9 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
                 .id()
         })
         .collect();
+    let unit_layer = commands
+        .spawn((crate::ui::fill(), Pickable::IGNORE, ChildOf(frame)))
+        .id();
     // A mark is Dota's icon tinted by the side; without the icon, a plain disc.
     let marks = (0..MARKS)
         .map(|_| {
@@ -273,7 +286,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
                     ImageNode::default(),
                     Visibility::Hidden,
                     Pickable::IGNORE,
-                    ChildOf(frame),
+                    ChildOf(unit_layer),
                 ))
                 .id()
         })
@@ -318,7 +331,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
                 .spawn((
                     Node {
                         position_type: PositionType::Absolute,
-                        border: UiRect::all(px(2)),
+                        border: UiRect::all(px(2.0 * crate::overlay::INDICATOR_SCALE)),
                         border_radius: BorderRadius::MAX,
                         ..default()
                     },
@@ -337,7 +350,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                border: UiRect::all(px(1)),
+                border: UiRect::all(px(crate::overlay::INDICATOR_SCALE)),
                 ..default()
             },
             BorderColor::all(Color::WHITE),
@@ -350,6 +363,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         photo,
         fog,
         marks,
+        unit_layer,
         shops,
         objectives: (objectives, Vec::new()),
         runes: (runes, Vec::new()),
@@ -476,8 +490,10 @@ fn shop_marks(
 /// Puts a mark on every unit shown, the fog over the photo, and the camera's
 /// frame.
 fn marks(
+    mut commands: Commands,
+    roshan: Res<crate::roshan_status::Sighting>,
     session: NonSend<Session>,
-    minimap: Res<Minimap>,
+    mut minimap: ResMut<Minimap>,
     grid: Res<FogGrid>,
     veil: Option<Res<crate::fog::VeilImage>>,
     camera: Single<(&Camera, &GlobalTransform), With<RtsCamera>>,
@@ -499,23 +515,23 @@ fn marks(
     {
         image.image = veil.0.clone();
     }
-    let shown = view.units.iter().filter(|u| {
-        u.kind != UnitKind::Hero && objective_icon(u).is_none() && !grid.hides(u.seen_by)
-    });
+    let shown = view
+        .units
+        .iter()
+        .filter(|u| u.kind != UnitKind::Roshan)
+        .chain(roshan.unit.iter())
+        .filter(|u| {
+            u.kind != UnitKind::Hero
+                && objective_icon(u).is_none()
+                && (u.kind == UnitKind::Roshan || !grid.hides(u.seen_by))
+        });
     let mut used = 0;
-    for u in shown.take(MARKS) {
-        let mark = minimap.marks[used];
-        let (Ok((mut node, _, mut vis)), Ok(mut image)) =
-            (nodes.get_mut(mark), images.get_mut(mark))
-        else {
-            break;
-        };
-        used += 1;
+    for u in shown.take(MAX_MARKS) {
         let (icon, size) = unit_icon(u);
         let icon = icon.and_then(|logical| handles.get(logical, &manifest, &server));
         let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
-        // Written only when changed: a changed node is laid out again.
-        node.set_if_neq(Node {
+        let node = Node {
+            position_type: PositionType::Absolute,
             left: px(at.x - size / 2.0),
             top: px(at.y - size / 2.0),
             width: px(size),
@@ -525,19 +541,42 @@ fn marks(
             } else {
                 BorderRadius::MAX
             },
-            ..node.clone()
-        });
-        let handle = icon.unwrap_or_default();
-        // A courier is its owner's, and wears the colour of that seat.
+            ..default()
+        };
+        // One's own courier preserves the original icon artwork.
         let tint = match u.owner.filter(|_| u.kind == UnitKind::Courier) {
+            Some(owner) if Some(owner) == core.my_slot => Color::WHITE,
             Some(owner) => colours.of(view, owner),
+            None if u.kind == UnitKind::Roshan => Color::srgb(1.0, 0.15, 0.12),
             None => crate::overlay::team_color(u.team),
         };
-        if image.image != handle || image.color != tint {
-            image.image = handle;
-            image.color = tint;
+        let handle = icon.unwrap_or_default();
+        if let Some(&mark) = minimap.marks.get(used) {
+            let (mut held, _, mut visible) = nodes.get_mut(mark).expect("a pooled minimap node");
+            let mut image = images.get_mut(mark).expect("a pooled minimap image");
+            held.set_if_neq(node);
+            if image.image != handle || image.color != tint {
+                image.image = handle;
+                image.color = tint;
+            }
+            visible.set_if_neq(Visibility::Inherited);
+        } else {
+            let mark = commands
+                .spawn((
+                    node,
+                    ImageNode {
+                        image: handle,
+                        color: tint,
+                        ..default()
+                    },
+                    Visibility::Inherited,
+                    Pickable::IGNORE,
+                    ChildOf(minimap.unit_layer),
+                ))
+                .id();
+            minimap.marks.push(mark);
         }
-        vis.set_if_neq(Visibility::Inherited);
+        used += 1;
     }
     for mark in &minimap.marks[used..] {
         if let Ok((_, _, mut vis)) = nodes.get_mut(*mark)
@@ -591,6 +630,7 @@ fn unit_icon(u: &UnitView) -> (Option<&'static str>, f32) {
         UnitKind::Ancient => (Some("icon.minimap.ancient"), 15.0),
         UnitKind::CreepSiege => (Some("icon.minimap.siege"), 8.0),
         UnitKind::Courier => (Some("icon.minimap.courier"), 9.0),
+        UnitKind::Roshan => (Some("icon.minimap.roshan"), 14.0),
         // Dota's `MinimapIcon` of the wards (npc_units.txt): the Sentry's detects the invisible.
         UnitKind::Ward if u.true_sight_radius.to_f32() > 0.0 => {
             (Some("icon.minimap.ward_sentry"), 9.0)

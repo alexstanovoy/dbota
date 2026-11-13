@@ -67,11 +67,11 @@ fn the_hover_ring_is_yellow_and_round_the_selection_rings_spot() {
     assert!(walked.x.to_f32() > MID.0 as f32 + 300.0, "the hero walked");
 }
 
-/// The map's lines (every one drawn with the one gizmo setting) are 4 pixels wide at 900 lines, scaled with the window
+/// The map's lines (every one drawn with the one gizmo setting) are 2 pixels wide at 900 lines, scaled with the window
 /// (it was 2.5 at every size).
 #[test]
 fn the_lines_on_the_map_are_one_width_scaled_with_the_window() {
-    for (window, width) in [("1920x1080", 4.8), ("3840x2160", 9.6)] {
+    for (window, width) in [("1920x1080", 2.4), ("3840x2160", 4.8)] {
         let server = Server::start(1, &[]);
         let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--window", window]);
         client.frames(3);

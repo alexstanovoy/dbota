@@ -80,11 +80,14 @@ fn line_width(
     }
 }
 
+/// All world and minimap indicator strokes relative to their original weights.
+pub(crate) const INDICATOR_SCALE: f32 = 0.5;
+
 /// The width of every line drawn on the map (rings, ranges, order marks,
 /// previews, pings: all share Bevy's one gizmo setting, so no indicator has a
 /// weight of its own), in pixels of a window 900 lines high; it grows with the
 /// window, so it weighs the same at 1080 and at 4K.
-const LINE_WIDTH: f32 = 4.0;
+const LINE_WIDTH: f32 = 4.0 * INDICATOR_SCALE;
 /// How much wider than the selection ring the hover ring is, in world units.
 const HOVER_MARGIN: f32 = 9.0;
 
@@ -669,3 +672,6 @@ pub fn team_color(team: Team) -> Color {
         Team::Neutral => Color::srgb(0.8, 0.7, 0.46),
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod render_tests;

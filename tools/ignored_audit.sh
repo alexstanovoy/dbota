@@ -13,15 +13,18 @@ while IFS= read -r file; do
         crates/dbota_import/tests/* | crates/dbota_import/src/*) ;; # gate step install-tests: cargo test -p dbota_import -- --ignored
         src/tip_content.rs) ;;          # gate step tip-content
         src/e2e/memory.rs) ;;           # run in a process of its own by its test clients_one_after_another_leave_no_memory_behind
-        src/fog/clarity_render.rs)
-            test_name=fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels
+        src/fog/clarity_render.rs | src/overlay/render_tests.rs)
+            case "$file" in
+                src/fog/clarity_render.rs) test_name=fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels ;;
+                src/overlay/render_tests.rs) test_name=overlay::render_tests::indicator_strokes_are_two_pixels_at_a_fixed_camera ;;
+            esac
             ignored=$(awk '
                 /^[[:space:]]*#\[ignore/ { count++; pending=1 }
                 pending && /^[[:space:]]*fn / { name=$2; sub(/\(.*/, "", name); print name; pending=0 }
                 END { if (count != 1) print "unexpected ignored count: " count }
             ' "$file")
             if [ "$ignored" != "${test_name##*::}" ] || ! grep -Fq -- "--bin dbota $test_name" tools/visual_check.sh; then
-                echo "ignored_audit: $file must route exactly its named material contract"
+                echo "ignored_audit: $file must route exactly its named render contract"
                 bad=1
             fi
             ;;

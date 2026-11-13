@@ -1003,15 +1003,15 @@ fn public_roshan_message(client: &mut Client, needle: &str) -> bool {
 }
 
 #[test]
-fn the_public_roshan_status_shows_dead_then_possible_then_alive_from_the_public_window() {
+fn public_respawn_windows_do_not_draw_a_roshan_status_message() {
     use bota_client_core::Intent;
     let (_server, mut client) = slain_roshan_with(&["--tick-rate", "1200"]);
     client.cheat(Cheat::CreepSpawning { on: false });
     client.core_mut().act(Intent::Hold);
     client.frames(6);
     assert!(
-        public_roshan_message(&mut client, "Roshan is dead"),
-        "the public death window is drawn near the minimap"
+        !public_roshan_message(&mut client, "Roshan is dead"),
+        "a death does not add text above the minimap"
     );
     let fall = client.view().lairs[0].fell_at.expect("public fall");
     let elapsed =
@@ -1026,9 +1026,25 @@ fn the_public_roshan_status_shows_dead_then_possible_then_alive_from_the_public_
             .iter()
             .any(|u| u.kind == UnitKind::Roshan)
     );
-    assert!(public_roshan_message(&mut client, "Roshan may be alive"));
+    assert!(!public_roshan_message(&mut client, "Roshan may be alive"));
+    assert!(
+        client
+            .world()
+            .resource::<crate::roshan_status::Sighting>()
+            .unit
+            .is_none(),
+        "the possible respawn deadline does not invent a sighting"
+    );
     advance_quietly_to(&mut client, elapsed + 11 * 60 + 1);
-    assert!(public_roshan_message(&mut client, "Roshan is alive"));
+    assert!(!public_roshan_message(&mut client, "Roshan is alive"));
+    assert!(
+        client
+            .world()
+            .resource::<crate::roshan_status::Sighting>()
+            .unit
+            .is_none(),
+        "the guaranteed respawn deadline does not invent a sighting"
+    );
     assert!(
         !client.view().lairs[0].alive_known_by.radiant,
         "the guaranteed deadline is public inference, not a fabricated sighting"

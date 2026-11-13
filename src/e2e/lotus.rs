@@ -254,3 +254,44 @@ fn lotuses_and_cheese_show_their_icons_and_names_and_cheese_eaten_sounds() {
         c.slot_of(ItemId::CHEESE).is_none() && heard(c, "sound.item.cheese") > 0
     });
 }
+
+/// Both visible objectives submit ambient ground-effect geometry, not merely catalogue rows.
+#[test]
+fn lotus_pools_and_wisdom_shrines_draw_their_ground_effects() {
+    let server = Server::start(1, &["--map", "0", "--objectives", "lotus_pools,shrines"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::AllVision { on: true });
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::StartGame);
+    for (kind, logical) in [
+        (UnitKind::LotusPool, "lotus_pool.ambient"),
+        (UnitKind::Shrine, "shrine.ambient"),
+    ] {
+        let unit = client
+            .view()
+            .units
+            .iter()
+            .find(|u| u.kind == kind)
+            .expect("objective")
+            .clone();
+        client.stand_at((unit.pos.x.to_int() + 250, unit.pos.y.to_int()));
+        // Move the camera by the real minimap click, rather than editing its transform.
+        let frame = crate::minimap::frame(client.world());
+        client.hover_ui(frame, SOON);
+        let centre = client.centre_of(frame).expect("minimap laid out");
+        let on_map = crate::minimap::on_map(unit.pos.x.to_f32(), unit.pos.y.to_f32());
+        client.mouse(centre - Vec2::splat((crate::minimap::SIDE - 6.0) / 2.0) + on_map);
+        client.click(MouseButton::Left);
+        client.until(
+            "the objective's ambient effect contributes a rendered frame",
+            |c| {
+                let world = c.world();
+                let library = world.resource::<crate::particles::Library>();
+                let effect = library
+                    .effect(logical)
+                    .expect("the imported ambient effect");
+                world.resource::<crate::particles::Playing>().drawn(effect) > 0
+            },
+        );
+    }
+}

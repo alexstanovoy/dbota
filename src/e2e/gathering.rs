@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bota_client_core::Intent;
 use bota_proto::{Cheat, EffectId, EntityId, HeroId, UnitKind, Vec2 as Spot};
 
-use super::harness::{Client, Server};
+use super::harness::{Client, Patience, Server};
 use crate::particles::{Library, Playing};
 
 /// Patience for what follows at once from what the test did.
@@ -95,12 +95,63 @@ fn playing(client: &Client, effect: &str, cp: usize) -> Vec<Vec3> {
     instances(client, effect, cp, false)
 }
 
+/// Ground-facing, nontransparent geometry submitted for this effect at the objective.
+fn ground_ring(client: &Client, logical: &str, at: Spot) -> bool {
+    let world = client.world();
+    let library = world.resource::<Library>();
+    let effect = library.effect(logical).expect("ring effect imported");
+    let looks: Vec<_> = effect
+        .defs
+        .iter()
+        .flat_map(|def| def.draws.iter().map(|draw| draw.look))
+        .collect();
+    let frame = world.resource::<crate::particles::ParticleFrame>();
+    let ground = world.resource::<crate::map::Ground>();
+    frame
+        .batches
+        .iter()
+        .filter(|batch| !batch.stage && looks.contains(&batch.look))
+        .flat_map(|batch| &frame.quads[batch.range.start as usize..batch.range.end as usize])
+        .any(|card| {
+            let head = Vec3::from(card.head);
+            let tail = Vec3::from(card.tail);
+            let middle = (head + tail) * 0.5;
+            card.head_color[3] > 0.01
+                && card.tail_color[3] > 0.01
+                && Vec2::new(middle.x - at.x.to_f32(), -middle.z - at.y.to_f32()).length() < 450.0
+                && middle.y >= ground.surface_at(middle.x, -middle.z) - 0.5
+                && middle.y - ground.surface_at(middle.x, -middle.z) < 30.0
+                && (head.y - tail.y).abs() < 2.0
+                && Vec3::from(card.head_side).length() + head.distance(tail) > 8.0
+        })
+}
+
+/// Keep the witnessed gameplay state while its real particle simulation produces a frame.
+fn assert_ground_ring(server: &Server, client: &mut Client, logical: &str, at: Spot) {
+    server.frozen(|| {
+        client
+            .world_mut()
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::from_secs_f64(1.0 / 30.0),
+            ));
+        let mut drawn = false;
+        for _ in 0..30 {
+            client.frames(1);
+            drawn |= ground_ring(client, logical, at);
+        }
+        assert!(
+            drawn,
+            "{logical} must submit visible geometry on the drawn ground"
+        );
+    });
+}
+
 /// A Shrine of Wisdom: the mouse picks nothing on it; a hero sent to its middle stands there;
 /// once ready it lights its ring on the ground (`experience_shrine_active`), and the ring fills
 /// (control point 4's y, the share gathered) when the hero comes back to gather it.
 #[test]
 fn a_shrine_is_walked_onto_never_picked_and_shows_its_ring_filling() {
-    let (_server, mut client) = objective_match("shrines", "realtime");
+    let (server, mut client) = objective_match("shrines", "realtime");
     let at = bota_core::DOTA_SHRINES[0];
     client.stand_at((at.x.to_int() - 400, at.y.to_int()));
     let shrine = unit_at(&client, UnitKind::Shrine, at);
@@ -127,6 +178,7 @@ fn a_shrine_is_walked_onto_never_picked_and_shows_its_ring_filling() {
             .is_some_and(|u| u.effects.iter().any(|e| e.id == EffectId::SHRINE_READY))
             && !playing(c, "shrine.active", 4).is_empty()
     });
+    assert_ground_ring(&server, &mut client, "shrine.active", at);
     client
         .core_mut()
         .act(Intent::MoveTo((at.x.to_f32(), at.y.to_f32())));
@@ -143,7 +195,7 @@ fn a_shrine_is_walked_onto_never_picked_and_shows_its_ring_filling() {
 /// runs out from the middle (control point 1's x, its radius, grows with the pluck's countdown).
 #[test]
 fn a_lotus_pool_is_never_picked_and_plays_its_ring_while_a_hero_plucks() {
-    let (_server, mut client) = objective_match("lotus_pools", "lockstep");
+    let (server, mut client) = objective_match("lotus_pools", "lockstep");
     let at = bota_core::DOTA_LOTUS_POOLS[0];
     client.stand_at((at.x.to_int() - 500, at.y.to_int()));
     let pool = unit_at(&client, UnitKind::LotusPool, at);
@@ -153,9 +205,19 @@ fn a_lotus_pool_is_never_picked_and_plays_its_ring_while_a_hero_plucks() {
             .all(|picked| *picked != Some(pool)),
         "the pool is never picked"
     );
-    client.within(LATER, "the pool's first lotus", |c| {
-        c.view().pools.iter().any(|p| p.id == pool && p.lotuses > 0)
-    });
+    // This quiet interval needs server ticks, not thousands of drawn UI frames.
+    let mut waiting = Patience::of(LATER);
+    while !client
+        .view()
+        .pools
+        .iter()
+        .any(|p| p.id == pool && p.lotuses > 0)
+    {
+        waiting.pass("the pool's first lotus");
+        client.core_mut().pump(0.0);
+        std::thread::yield_now();
+    }
+    client.frames(3);
     client.stand_at((at.x.to_int() - 200, at.y.to_int()));
     let mut radii = Vec::new();
     client.within(SOON, "the ring running out from the middle", |c| {
@@ -164,4 +226,5 @@ fn a_lotus_pool_is_never_picked_and_plays_its_ring_while_a_hero_plucks() {
         }
         radii.windows(2).any(|w| w[1] > w[0] && w[0] > 0.0)
     });
+    assert_ground_ring(&server, &mut client, "lotus_pool.gathering", at);
 }
