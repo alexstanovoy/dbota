@@ -8,6 +8,8 @@ use bevy::{picking::hover::Hovered, ui_widgets::Button};
 
 use super::catalog::{Catalog, Tab};
 use super::cell::{self, CELL, Chosen, GAP, Place};
+use bota_proto::ItemId;
+
 use crate::dota_text::Texts;
 use crate::hud::Blocker;
 use crate::input::{Panels, Typing};
@@ -18,8 +20,6 @@ use crate::ui::{self, Extent, Fonts};
 
 /// Icons a category's row holds.
 const COLUMNS: usize = 4;
-/// Icons a row of search results holds.
-const RESULT_COLUMNS: usize = 8;
 /// Space between the two columns of categories.
 const COLUMN_GAP: f32 = 16.0;
 /// The panel's inner width: two categories abreast.
@@ -57,7 +57,7 @@ struct TabPage(Tab);
 #[derive(Component)]
 struct Results;
 #[derive(Component)]
-struct ResultGrid;
+struct ResultList;
 
 /// The search results' title.
 #[derive(Component)]
@@ -424,7 +424,14 @@ fn spawn_results(commands: &mut Commands, fonts: &Fonts, catalog: &Catalog, page
         catalog.word("dota_shop_search_results_title", "SEARCH RESULTS"),
     );
     commands.entity(heading).insert(ResultTitle);
-    commands.spawn((ResultGrid, grid(RESULT_COLUMNS), ChildOf(body)));
+    commands.spawn((
+        ResultList,
+        Node {
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+        ChildOf(body),
+    ));
 }
 
 /// The panel's foot: where to drop an item to sell it.
@@ -571,8 +578,8 @@ fn results(
     manifest: Res<Manifest>,
     fonts: Res<Fonts>,
     server: Res<AssetServer>,
-    grid: Single<Entity, With<ResultGrid>>,
-    mut heading: Single<&mut Text, With<ResultTitle>>,
+    list: Single<Entity, With<ResultList>>,
+    mut heading: Single<(&mut Text, &mut Node), With<ResultTitle>>,
 ) {
     if last.as_deref() == Some(panels.search.as_str()) && !catalog.is_changed() {
         return;
@@ -584,23 +591,40 @@ fn results(
         rates: Default::default(),
     };
     let found = catalog.search(&look, &panels.search);
-    commands.entity(*grid).despawn_children();
+    commands.entity(*list).despawn_children();
     for id in &found {
-        cell::spawn(
+        let name = look
+            .item_name(*id)
+            .unwrap_or_else(|| crate::item_names::plain(ItemId(*id)).to_string());
+        let price = bota_client_core::whole_price(ItemId(*id)).unwrap_or(0);
+        cell::spawn_row(
             &mut commands,
             (&fonts, &manifest, &server),
-            *grid,
+            *list,
             *id,
-            Place::Grid,
-            CELL,
+            &name,
+            price,
         );
     }
+    // Dota's list has no title: the rows are the answer, and only an empty one is told.
     let words = if found.is_empty() {
-        catalog.word("dota_shop_search_no_results", "No matches were found.")
+        catalog
+            .word("dota_shop_search_no_results", "No matches were found.")
+            .to_uppercase()
     } else {
-        catalog.word("dota_shop_search_results_title", "SEARCH RESULTS")
+        String::new()
     };
-    heading.set_if_neq(Text(words.to_uppercase()));
+    let display = if found.is_empty() {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    let (text, node) = &mut *heading;
+    text.set_if_neq(Text(words));
+    node.set_if_neq(Node {
+        display,
+        ..node.clone()
+    });
 }
 
 /// The search box's text: what is typed, with a caret while typing, or the

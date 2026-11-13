@@ -31,6 +31,20 @@ pub struct ShopCell(pub u16);
 #[derive(Component)]
 pub struct ShopAccessShade;
 
+/// A search result's row, and the frame of the icon in it.
+#[derive(Component)]
+pub struct Row;
+#[derive(Component)]
+struct IconFrame;
+
+/// A row's height, its side padding and the space between its parts, in interface pixels; the
+/// reference game's rows are 39 high at a 1080-line window.
+const ROW_HEIGHT: f32 = 39.0;
+const ROW_PAD: f32 = 6.0;
+const ROW_GAP: f32 = 12.0;
+const ROW_INK: Color = Color::srgb(0.69, 0.73, 0.78);
+const ROW_HOVER: Color = Color::srgba(0.56, 0.64, 0.74, 0.35);
+
 /// Where an icon sits.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Place {
@@ -97,7 +111,6 @@ pub fn spawn(
     place: Place,
     (width, height): (f32, f32),
 ) -> Entity {
-    let (fonts, manifest, server) = art;
     let cell = commands
         .spawn((
             ShopCell(id),
@@ -117,6 +130,19 @@ pub fn spawn(
             ChildOf(parent),
         ))
         .id();
+    decorate(commands, art, cell, id);
+    cell
+}
+
+/// The picture of an item in the frame `cell`, with its corner count and the shades of an empty
+/// shelf and of a secret shop out of reach.
+fn decorate(
+    commands: &mut Commands,
+    art: (&Fonts, &Manifest, &AssetServer),
+    cell: Entity,
+    id: u16,
+) {
+    let (fonts, manifest, server) = art;
     if let Some(path) = manifest.item_icon(id) {
         commands.spawn((
             ImageNode::new(server.load(path)),
@@ -138,7 +164,92 @@ pub fn spawn(
             ChildOf(cell),
         ));
     }
-    cell
+}
+
+/// A search result as Dota lists it: a row of the panel's width with the item's icon, its name in
+/// capitals and, at the right, its price over a coin. The row is the item's [`ShopCell`], so the
+/// clicks of an icon are the row's; the frame is the icon's.
+pub fn spawn_row(
+    commands: &mut Commands,
+    art: (&Fonts, &Manifest, &AssetServer),
+    parent: Entity,
+    id: u16,
+    name: &str,
+    price: i32,
+) -> Entity {
+    let (fonts, manifest, server) = art;
+    let row = commands
+        .spawn((
+            ShopCell(id),
+            Place::Grid,
+            Row,
+            Button,
+            Hovered::default(),
+            Node {
+                width: percent(100),
+                height: px(ROW_HEIGHT),
+                padding: UiRect::horizontal(px(ROW_PAD)),
+                column_gap: px(ROW_GAP),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            BorderColor::all(Color::NONE),
+            ChildOf(parent),
+        ))
+        .id();
+    let icon = commands
+        .spawn((
+            IconFrame,
+            Node {
+                width: px(CELL.0),
+                height: px(CELL.1),
+                border: UiRect::all(px(1)),
+                flex_shrink: 0.0,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.06, 0.07, 0.09)),
+            BorderColor::all(EDGE_UNAVAILABLE),
+            Pickable::IGNORE,
+            ChildOf(row),
+        ))
+        .id();
+    decorate(commands, art, icon, id);
+    commands.spawn((
+        ui::text(name.to_uppercase(), &fonts.regular, 15.0, ROW_INK),
+        Pickable::IGNORE,
+        ChildOf(row),
+    ));
+    let cost = commands
+        .spawn((
+            Node {
+                margin: UiRect::left(Val::Auto),
+                column_gap: px(4),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(row),
+        ))
+        .id();
+    commands.spawn((
+        ui::text(price.to_string(), &fonts.bold, 15.0, ui::GOLDEN),
+        Pickable::IGNORE,
+        ChildOf(cost),
+    ));
+    if let Some(path) = manifest.file("hud.gold") {
+        commands.spawn((
+            ImageNode::new(server.load(path)),
+            Node {
+                width: px(16),
+                height: px(16),
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(cost),
+        ));
+    }
+    row
 }
 
 fn shop_access(
@@ -257,9 +368,18 @@ fn edges(
     session: NonSend<Session>,
     chosen: Res<Chosen>,
     mut buyable: Local<Buyable>,
-    mut cells: Query<(&ShopCell, &Place, &Hovered, &mut BorderColor)>,
+    mut cells: Query<(
+        &ShopCell,
+        &Place,
+        &Hovered,
+        &mut BorderColor,
+        Option<&Children>,
+        Option<&Row>,
+        &mut BackgroundColor,
+    )>,
+    mut frames: Query<&mut BorderColor, (With<IconFrame>, Without<ShopCell>)>,
 ) {
-    for (cell, place, interaction, mut border) in &mut cells {
+    for (cell, place, interaction, mut border, children, row, mut ground) in &mut cells {
         let edge = if interaction.get() {
             EDGE_HOVER
         } else if chosen.0 == Some(cell.0) && *place != Place::Tree {
@@ -270,5 +390,17 @@ fn edges(
             EDGE_UNAVAILABLE
         };
         border.set_if_neq(BorderColor::all(edge));
+        if row.is_some() {
+            ground.set_if_neq(BackgroundColor(if interaction.get() {
+                ROW_HOVER
+            } else {
+                Color::NONE
+            }));
+            for child in children.into_iter().flatten() {
+                if let Ok(mut frame) = frames.get_mut(*child) {
+                    frame.set_if_neq(BorderColor::all(edge));
+                }
+            }
+        }
     }
 }

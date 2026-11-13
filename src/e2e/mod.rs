@@ -93,6 +93,7 @@ mod shop_frames;
 mod shop_inventory;
 mod shop_queue;
 mod shop_rebuy;
+mod shop_search;
 mod shop_sound;
 mod shop_tree;
 mod shopkeepers;

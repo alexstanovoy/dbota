@@ -16,6 +16,8 @@ use crate::select::match_or_tactical;
 pub use catalog::Catalog;
 pub(crate) use cell::Chosen;
 #[cfg(test)]
+pub(crate) use cell::Row;
+#[cfg(test)]
 pub(crate) use cell::ShopAccessShade;
 pub use cell::{Place, ShopCell, spawn as spawn_cell};
 #[cfg(test)]
