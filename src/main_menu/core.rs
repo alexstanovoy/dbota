@@ -1378,6 +1378,7 @@ impl MenuCore {
         self.lobby = None;
         self.moving = None;
         self.lobby_ui.deadlines.clear();
+        self.lobby_ui.uncertain_join = None;
         self.lobby_ui.dialog = None;
         self.lobby_ui.editor = None;
         self.lobby_ui.open = None;
@@ -1396,7 +1397,9 @@ impl MenuCore {
         // next request.
         if creation_unconfirmed {
             self.lobby_ui.creation_unconfirmed = false;
-            self.go_form(Page::Lobbies);
+            if matches!(self.page, Page::Lobby | Page::Lobbies) {
+                self.go_form(Page::Lobbies);
+            }
             self.tell(lobby_requests::CREATE_UNCONFIRMED.into(), true);
         }
         if live && self.retry {
@@ -1541,7 +1544,9 @@ impl MenuCore {
             Reply::Rulesets { list } => self.receive_lobby_catalogue(&list),
             Reply::Lobby { state } if matches!(asked, Asked::Join(id) if id == state.id) => {
                 self.join_prompt = None;
-                self.sit(state);
+                if self.sit(state) {
+                    self.status = None;
+                }
             }
             Reply::Queued { .. } | Reply::QueuesJoined { .. } => self.status = None,
             _ => {}
@@ -1653,6 +1658,9 @@ impl MenuCore {
                 self.tell(error_text(error), true);
             }
             (Asked::Meta(id), _) => self.meta_none(id),
+            (Asked::LeaveLobby(lobby), Error::NotInLobby { .. } | Error::UnknownLobby) => {
+                self.lobby_left(lobby);
+            }
             (Asked::Lobby, Error::NotInLobby { .. }) => {
                 self.lobby = None;
                 self.go(Page::Lobbies);
@@ -1941,6 +1949,7 @@ impl MenuCore {
         }
         self.lobby_ui.controls_dirty = true;
         self.lobby_ui.search_due = None;
+        self.lobby_ui.uncertain_join = None;
         if self.lobby_ui.editor.as_ref().is_some_and(|editor| {
             page != Page::Lobby || editor.saving != Some(super::lobby_controls::Saving::Create)
         }) {
@@ -2221,9 +2230,11 @@ impl MenuCore {
             Act::Watch(id) => self.enter(id, true),
             Act::LobbyUi(action) => self.lobby_action(action),
             Act::JoinLobby(lobby) => self.join_lobby(lobby),
-            Act::SearchLobbies => self.search_lobbies(),
+            Act::SearchLobbies => self.refresh_lobbies(),
             Act::LobbyPassword(true) => self.send_lobby_password(),
-            Act::LobbyPassword(false) => self.join_prompt = None,
+            Act::LobbyPassword(false) => {
+                self.cancel_lobby_password();
+            }
             Act::ReadyLobby(ready) => {
                 self.lobby_ask(|lobby| ClientMsg::LobbyReady { lobby, ready })
             }
@@ -2366,7 +2377,7 @@ impl MenuCore {
         }
         if self.confirm.take().is_some()
             || self.plain_host.take().is_some()
-            || self.join_prompt.take().is_some()
+            || self.cancel_lobby_password()
         {
             return;
         }
@@ -2553,6 +2564,7 @@ impl MenuCore {
     /// Joins a listed lobby: an open one at once, a locked one once its password is typed into
     /// the dialog.
     fn join_lobby(&mut self, lobby: LobbyId) {
+        self.lobby_ui.uncertain_join = None;
         self.lobby_ui.selected = Some(lobby);
         match self.lobbies.iter().find(|l| l.id == lobby) {
             Some(listed) if listed.locked && Some(listed.owner) != self.my_id() => {
@@ -2594,6 +2606,31 @@ impl MenuCore {
         let lobby = prompt.lobby;
         let password = Some(Secret(password));
         self.ask(ClientMsg::LobbyJoin { lobby, password }, Asked::Join(lobby));
+    }
+
+    fn cancel_lobby_password(&mut self) -> bool {
+        let closed = self.join_prompt.take().is_some();
+        if closed {
+            self.lobby_ui.uncertain_join = None;
+        }
+        closed
+    }
+
+    fn refresh_lobbies(&mut self) {
+        if let Some(lobby) = self.lobby_ui.uncertain_join.take()
+            && self.page == Page::Lobbies
+            && self.lobby_ui.selected == Some(lobby)
+        {
+            // An existing membership is returned before the server checks a password.
+            self.ask(
+                ClientMsg::LobbyJoin {
+                    lobby,
+                    password: None,
+                },
+                Asked::Join(lobby),
+            );
+        }
+        self.search_lobbies();
     }
 
     /// Lists the open lobbies whose name or owner holds the search typed.

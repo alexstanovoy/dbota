@@ -2079,3 +2079,236 @@ fn a_catalogue_budget_counts_supported_game_modes_not_foreign_games() {
             .is_some_and(|s| s.text.contains("Only the first"))
     );
 }
+
+#[test]
+fn cancelling_a_refused_create_does_not_claim_that_creation_is_unconfirmed() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Taken room", "");
+    let mut bob = signed_up(&service, "bob");
+    act(&mut bob, Act::Go(Page::Lobbies));
+    click(&mut bob, "create lobby");
+    act(&mut bob, Act::Focus(0));
+    act(&mut bob, Act::Type("Taken room".into()));
+    click(&mut bob, "ok");
+    bob.until("Create was definitively refused", |c| {
+        c.world()
+            .non_send::<MenuCore>()
+            .view()
+            .lobby_ui
+            .editor
+            .is_some_and(|e| e.error.as_deref() == Some("A lobby of that name is open already"))
+    });
+    click(&mut bob, "cancel");
+    assert!(
+        !bob.shown_texts()
+            .iter()
+            .any(|text| text.contains("Lobby creation was not confirmed"))
+    );
+}
+
+#[test]
+fn cancelling_an_unexpected_create_answer_does_not_report_a_missing_answer() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    act(&mut alice, Act::Go(Page::Lobbies));
+    click(&mut alice, "create lobby");
+    act(&mut alice, Act::Focus(0));
+    act(&mut alice, Act::Type("Unexpected answer".into()));
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_lobby_requests();
+    click(&mut alice, "ok");
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_answer_held_lobby_request(bota_radovid::proto::Reply::Done);
+    alice.frames(2);
+    assert!(
+        alice
+            .shown_texts()
+            .iter()
+            .any(|text| text == "The service did not confirm the lobby change")
+    );
+    click(&mut alice, "cancel");
+    assert!(
+        !alice
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains("Lobby creation was not confirmed"))
+    );
+}
+
+#[test]
+fn retrying_a_timed_out_leave_clears_the_room_when_the_server_already_removed_the_guest() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Leave retry", "guest secret");
+    let mut bob = signed_up(&service, "bob");
+    join(&mut bob, "Leave retry", "guest secret");
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .act(Act::LeaveLobby);
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_drop_lobby_reply();
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_lobby_elapsed(std::time::Duration::from_secs(60));
+    bob.frames(2);
+    assert!(
+        bob.shown_texts()
+            .iter()
+            .any(|t| t == "The lobby request timed out. Try again.")
+    );
+    click(&mut bob, "leave lobby  ×");
+    act(&mut bob, Act::SearchLobbies);
+    bob.until("retry answered", |c| {
+        c.world().non_send::<MenuCore>().lobby_sync_settled()
+    });
+    assert!(matches!(
+        bob.world().non_send::<MenuCore>().view().body,
+        PageView::Lobbies { .. }
+    ));
+    assert!(!named(&mut bob, "leave lobby  ×"));
+    assert!(!named(&mut bob, "ready"));
+}
+
+#[test]
+fn a_leave_answer_that_the_lobby_is_gone_clears_the_stale_room() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Gone leave", "");
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_lobby_requests();
+    click(&mut alice, "leave lobby  ×");
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_refuse_held_lobby_request(bota_radovid::proto::Error::UnknownLobby);
+    alice.frames(2);
+    assert!(matches!(
+        alice.world().non_send::<MenuCore>().view().body,
+        PageView::Lobbies { .. }
+    ));
+    assert!(!named(&mut alice, "leave lobby  ×"));
+}
+
+fn guest_with_a_timed_out_join(service: &crate::main_menu::tests::Service) -> (Client, Client) {
+    let mut alice = signed_up(service, "alice");
+    create(&mut alice, "Join recovery", "guest secret");
+    let mut bob = signed_up(service, "bob");
+    act(&mut bob, Act::Go(Page::Lobbies));
+    bob.until("listed", |c| named(c, "join join recovery"));
+    click(&mut bob, "join join recovery");
+    act(&mut bob, Act::Type("guest secret".into()));
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .act(Act::LobbyPassword(true));
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_drop_lobby_reply();
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_lobby_elapsed(std::time::Duration::from_secs(60));
+    bob.frames(2);
+    assert!(
+        bob.shown_texts()
+            .iter()
+            .any(|t| t == "The lobby request timed out. Try again.")
+    );
+    (alice, bob)
+}
+
+#[test]
+fn refreshing_after_a_timed_out_join_recovers_existing_membership_without_joining_twice() {
+    let service = crate::main_menu::tests::service();
+    let (_alice, mut bob) = guest_with_a_timed_out_join(&service);
+    act(&mut bob, Act::SearchLobbies);
+    bob.until("refresh answered", |c| {
+        c.world().non_send::<MenuCore>().lobby_sync_settled()
+    });
+    assert!(matches!(
+        bob.world().non_send::<MenuCore>().view().body,
+        PageView::Lobby(_)
+    ));
+    assert!(named(&mut bob, "ready"));
+    assert_eq!(
+        room(&bob)
+            .teams
+            .iter()
+            .flat_map(|t| &t.slots)
+            .filter_map(|s| s.who.as_ref())
+            .filter(|m| m.name == "bob")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn cancelling_a_timed_out_join_does_not_retry_it_when_the_browser_is_refreshed() {
+    let service = crate::main_menu::tests::service();
+    let (_alice, mut bob) = guest_with_a_timed_out_join(&service);
+    click(&mut bob, "cancel");
+    act(&mut bob, Act::SearchLobbies);
+    bob.until("refresh answered", |c| {
+        c.world().non_send::<MenuCore>().lobby_sync_settled()
+    });
+    let view = bob.world().non_send::<MenuCore>().view();
+    assert!(matches!(view.body, PageView::Lobbies { .. }));
+    assert!(view.password.is_none());
+}
+
+#[test]
+fn a_refused_join_retry_is_not_reissued_by_a_later_list_refresh() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Retry answered", "guest secret");
+    let mut bob = signed_up(&service, "bob");
+    act(&mut bob, Act::Go(Page::Lobbies));
+    bob.until("listed", |c| named(c, "join retry answered"));
+    click(&mut bob, "join retry answered");
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_lobby_requests();
+    act(&mut bob, Act::Type("wrong secret".into()));
+    click(&mut bob, "ok");
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_lobby_elapsed(std::time::Duration::from_secs(60));
+    act(&mut bob, Act::Focus(0));
+    act(&mut bob, Act::Type("wrong again".into()));
+    click(&mut bob, "ok");
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_refuse_held_lobby_request(bota_radovid::proto::Error::BadLobbyPassword);
+    bob.frames(2);
+    assert!(
+        bob.shown_texts()
+            .iter()
+            .any(|text| text == "Wrong password.")
+    );
+    let joins = |client: &Client| {
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .test_lobby_requests()
+            .iter()
+            .filter(|request| matches!(request, bota_radovid::proto::ClientMsg::LobbyJoin { .. }))
+            .count()
+    };
+    assert_eq!(
+        joins(&bob),
+        2,
+        "the initial join and explicit retry were posted"
+    );
+    act(&mut bob, Act::SearchLobbies);
+    assert_eq!(
+        joins(&bob),
+        2,
+        "a definitive refusal leaves refresh as a list request"
+    );
+}

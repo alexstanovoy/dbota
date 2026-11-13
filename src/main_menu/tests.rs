@@ -3129,3 +3129,95 @@ fn local_hero_demo_preserves_the_clients_server_lookup_policy() {
         );
     }
 }
+
+fn refuse_taken_lobby(player: &mut Player) {
+    player.menu.act(Act::Go(Page::Lobbies));
+    player.fill(&["Taken room"]);
+    player.menu.act(Act::LobbyUi(super::LobbyAction::Save));
+    settle(&mut [player], |p| {
+        p.menu
+            .view()
+            .lobby_ui
+            .editor
+            .is_some_and(|e| e.error.as_deref() == Some("A lobby of that name is open already"))
+    });
+}
+
+fn running_practice_player(service: &Service) -> (Player, bota_client_core::App) {
+    let mut alice = Player::new(Some(service));
+    alice.register("alice");
+    create_lobby(&mut alice, "Practice", &["Running room"]);
+    alice.menu.act(Act::ReadyLobby(true));
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Game);
+    let mut game = open(launch_of(&mut alice), &alice.trust);
+    let until = Instant::now() + Duration::from_secs(PATIENCE);
+    while game.view().is_none_or(|v| v.tick <= 5) {
+        assert!(Instant::now() < until, "practice began");
+        play_step(&mut game, HeroId::SHADOW_FIEND);
+    }
+    alice.menu.game_started();
+    assert!(alice.menu.in_game());
+    alice.menu.act(Act::Dashboard);
+    (alice, game)
+}
+
+#[test]
+fn a_refused_create_does_not_replace_settings_with_a_creation_warning_on_link_loss() {
+    let service = service();
+    let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
+    alice.register("alice");
+    bob.register("bob");
+    create_lobby(&mut bob, "Full rules", &["Taken room"]);
+    refuse_taken_lobby(&mut alice);
+    alice.menu.act(Act::Go(Page::Settings));
+    alice.menu.test_exhaust_control_retry();
+    lose_menu_control(&mut alice.menu);
+    assert_eq!(alice.menu.page(), Page::Settings);
+    let status = alice.menu.view().status.expect("disconnect explained");
+    assert_eq!(
+        status.text,
+        "Disconnected from the service: the connection ended"
+    );
+}
+
+#[test]
+fn a_refused_create_does_not_pull_a_running_game_into_the_lobby_browser_on_link_loss() {
+    let service = service();
+    let mut bob = Player::new(Some(&service));
+    bob.register("bob");
+    create_lobby(&mut bob, "Full rules", &["Taken room"]);
+    let (mut alice, game) = running_practice_player(&service);
+    refuse_taken_lobby(&mut alice);
+    alice.menu.act(Act::ReturnToGame);
+    alice.menu.test_exhaust_control_retry();
+    lose_menu_control(&mut alice.menu);
+    assert_eq!(alice.menu.page(), Page::Game);
+    assert!(alice.menu.in_game());
+    assert!(game.view().is_some());
+    assert_eq!(
+        alice.menu.view().status.expect("disconnect explained").text,
+        "Disconnected from the service: the connection ended"
+    );
+}
+
+#[test]
+fn an_unanswered_create_warns_without_covering_the_running_game_when_its_link_drops() {
+    let service = service();
+    let (mut alice, game) = running_practice_player(&service);
+    alice.menu.act(Act::Go(Page::Lobbies));
+    alice.fill(&["Unanswered room"]);
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
+    alice.menu.act(Act::ReturnToGame);
+    lose_menu_control(&mut alice.menu);
+    assert_eq!(alice.menu.page(), Page::Game);
+    assert!(game.view().is_some());
+    assert_eq!(
+        alice
+            .menu
+            .view()
+            .status
+            .expect("creation uncertainty explained")
+            .text,
+        "Lobby creation was not confirmed. It may still exist; refresh Lobbies before trying again."
+    );
+}

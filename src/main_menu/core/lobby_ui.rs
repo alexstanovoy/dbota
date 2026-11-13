@@ -119,10 +119,12 @@ impl MenuCore {
         if !self.lobby_save_current(request) {
             return;
         }
+        if request.step == Saving::Create {
+            self.lobby_ui.creation_unconfirmed = false;
+        }
         match (request.step, reply) {
             (Saving::Create, Reply::Lobby { state }) => {
                 if self.sit(state) {
-                    self.lobby_ui.creation_unconfirmed = false;
                     self.lobby_editor_saved(request);
                 } else if let Some(editor) = &mut self.lobby_ui.editor {
                     editor.saving = None;
@@ -145,6 +147,9 @@ impl MenuCore {
         if self.lobby_save_current(request)
             && let Some(editor) = &mut self.lobby_ui.editor
         {
+            if request.step == Saving::Create {
+                self.lobby_ui.creation_unconfirmed = false;
+            }
             editor.saving = None;
             editor.saving_until = None;
             editor.error = Some(error_text(error));
@@ -932,6 +937,48 @@ impl MenuCore {
         for _ in 0..MAX_ASKED {
             self.ask(ClientMsg::MyMatches, Asked::Other);
         }
+    }
+}
+
+#[cfg(test)]
+impl MenuCore {
+    pub(crate) fn test_refuse_held_lobby_request(&mut self, error: Error) {
+        let count = self.lobby_ui.held.as_ref().expect("held transport").len();
+        self.take(Incoming::Reply {
+            seq: u32::MAX - (count - 1) as u32,
+            result: Err(error),
+        });
+    }
+
+    pub(crate) fn test_drop_lobby_reply(&mut self) {
+        let seq = self
+            .asked
+            .iter()
+            .find(|(_, asked)| matches!(asked, Asked::Join(_) | Asked::LeaveLobby(_)))
+            .expect("pending join/leave")
+            .0;
+        let until = Instant::now() + std::time::Duration::from_secs(30);
+        while Instant::now() < until {
+            let incoming = self
+                .client
+                .as_mut()
+                .expect("client")
+                .wait(std::time::Duration::from_millis(50))
+                .expect("control link");
+            match incoming {
+                Some(Incoming::Reply { seq: answered, .. }) if answered == seq => return,
+                Some(incoming) => self.take(incoming),
+                None => {}
+            }
+        }
+        panic!("the join/leave was not answered");
+    }
+}
+
+#[cfg(test)]
+impl MenuCore {
+    pub(crate) fn test_exhaust_control_retry(&mut self) {
+        self.retry = false;
     }
 }
 

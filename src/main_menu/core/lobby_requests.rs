@@ -29,6 +29,9 @@ pub(super) fn is_lobby_request(message: &ClientMsg) -> bool {
 
 impl MenuCore {
     pub(super) fn lobby_request_sent(&mut self, sequence: u32, asked: Asked) {
+        if matches!(asked, Asked::Join(_)) {
+            self.lobby_ui.uncertain_join = None;
+        }
         if matches!(asked, Asked::LobbyUi(request) if request.step == Saving::Create) {
             self.lobby_ui.creation_unconfirmed = true;
         }
@@ -102,6 +105,12 @@ impl MenuCore {
     }
 
     fn lobby_request_timed_out(&mut self, asked: Asked) {
+        if let Asked::Join(lobby) = asked
+            && self.page == Page::Lobbies
+            && self.lobby_ui.selected == Some(lobby)
+        {
+            self.lobby_ui.uncertain_join = Some(lobby);
+        }
         let reason = if self.lobby_ui.creation_unconfirmed
             && matches!(asked, Asked::LobbyUi(request) if request.step == Saving::Create)
         {
@@ -226,7 +235,7 @@ impl MenuCore {
                     return true;
                 }
                 if self.confirm.take().is_none() {
-                    self.join_prompt = None;
+                    self.cancel_lobby_password();
                 }
             }
             Act::Focus(_) | Act::Type(_) | Act::Erase

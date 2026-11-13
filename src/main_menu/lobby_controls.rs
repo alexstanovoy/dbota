@@ -98,6 +98,7 @@ pub struct Controls {
     pub controls_dirty: bool,
     pub state_dirty: bool,
     pub creation_unconfirmed: bool,
+    pub uncertain_join: Option<LobbyId>,
     pub search_due: Option<bevy::platform::time::Instant>,
     #[cfg(test)]
     pub view_builds: std::cell::Cell<usize>,
@@ -133,6 +134,7 @@ impl Default for Controls {
             controls_dirty: true,
             state_dirty: true,
             creation_unconfirmed: false,
+            uncertain_join: None,
             search_due: None,
             deadlines: Vec::new(),
             queued_until: None,
