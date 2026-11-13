@@ -209,6 +209,7 @@ fn instance_layout() -> VertexBufferLayout {
         VertexFormat::Float32x4,
         VertexFormat::Float32x4,
         VertexFormat::Uint32x4,
+        VertexFormat::Float32,
     ];
     let mut offset = 0;
     let attributes = formats

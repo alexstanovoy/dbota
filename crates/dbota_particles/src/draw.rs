@@ -33,6 +33,10 @@ pub struct Quad {
     pub uv2: [f32; 4],
     pub uv2_next: [f32; 4],
     pub layers: [u32; 4],
+    /// World units the card is moved toward the camera when depth-tested: the renderer's depth
+    /// bias, applied by the shader along the line of sight, so the card keeps its place on the
+    /// screen and in the world's geometry.
+    pub depth_bias: f32,
 }
 
 /// The camera in the simulation's frame (Source's: Z up).
@@ -63,6 +67,10 @@ const DECAL_TINT: f32 = -1.0;
 pub fn draw(instance: &Instance, eye: &Eye, ground: Option<HeightAt<'_>>, out: &mut [Vec<Quad>]) {
     for node in &instance.nodes {
         if node.parts.is_empty() {
+            continue;
+        }
+        #[cfg(any(test, feature = "test-support"))]
+        if instance.hidden_defs.contains(&node.def) {
             continue;
         }
         let def = &instance.effect.defs[node.def];
@@ -138,6 +146,8 @@ struct Scales {
     color: Vec3,
     /// Overbright times one plus the added self.
     gain: f32,
+    /// World units the cards are moved toward the camera (the renderer's depth bias).
+    depth_bias: f32,
     /// The share of what is behind a card covers.
     cover: f32,
     /// For a modulating (`MOD2X`) look, the overbright its texture takes: its colour then weighs
@@ -152,6 +162,7 @@ fn scales(look: &Look, blend: Blend, scene: &Scene<'_>, parts: &Particles) -> Sc
         alpha: value(&look.alpha_scale, 2),
         color: vector(&look.color_scale, scene, parts, None, 3),
         gain: value(&look.overbright, 4) * (1.0 + value(&look.add_self, 5)),
+        depth_bias: value(&look.depth_bias, 6).max(0.0),
         modulate: (blend == Blend::Mod2x).then(|| value(&look.overbright, 4).max(0.0)),
         cover: match blend {
             Blend::Add | Blend::Mod2x | Blend::Lighten => 0.0,
@@ -404,6 +415,7 @@ fn quad(
         uv2: f.uv2,
         uv2_next: f.uv2_next,
         layers: layer_mix(look),
+        depth_bias: s.depth_bias,
         extra: [
             f.blend,
             f32::from(u8::from(look.saturate)),

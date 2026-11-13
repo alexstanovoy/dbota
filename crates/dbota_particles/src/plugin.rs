@@ -115,6 +115,24 @@ impl Simulation {
         count_of(&self.stage_started, effect)
     }
 
+    /// Leaves out the cards of the systems of `effect`'s playing instances whose path contains
+    /// `matching` (none when it is empty): presentation only, the simulation runs on.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hide_systems(&mut self, effect: &Arc<Effect>, matching: &str) {
+        let hidden: Vec<usize> = effect
+            .defs
+            .iter()
+            .enumerate()
+            .filter(|(_, def)| !matching.is_empty() && def.path.contains(matching))
+            .map(|(index, _)| index)
+            .collect();
+        for instance in self.slots.iter_mut().filter_map(|(_, i)| i.as_mut()) {
+            if Arc::ptr_eq(&instance.effect, effect) {
+                instance.hidden_defs.clone_from(&hidden);
+            }
+        }
+    }
+
     /// The playing instances of `effect`.
     #[cfg(any(test, feature = "test-support"))]
     pub fn instances_of<'a>(

@@ -54,9 +54,9 @@ else
     echo "visual check: FAIL minimap stroke pixels (see $out/minimap_strokes.log)"
     exit 1
 fi
-# The objective effects contribute visible pixels in each actual recorded state.
+# The objective effects have their authored shapes in each actual recorded state, by day and by night.
 if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
-    --bin dbota e2e::ground_effect_pixels::four_objective_states_have_visible_authored_effects \
+    --bin dbota e2e::ground_effect_pixels::objective_ground_effects_have_their_authored_shapes_by_day_and_by_night \
     -- --ignored --exact --nocapture > "$out/objective_pixels.log" 2>&1 \
     && grep -Fq 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$out/objective_pixels.log"; then
     echo "visual check: PASS objective effect pixels"

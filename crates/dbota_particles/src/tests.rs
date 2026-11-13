@@ -232,41 +232,43 @@ fn bare(
     forces: Vec<Function<Force>>,
     children: Vec<Child>,
 ) -> System {
-    System {
-        behavior_version: 12,
-        snapshot_file: None,
-        snapshot: None,
-        snapshot_control_point: point(0),
-        first_multiple_override: -1,
-        max_particles: 16,
-        initial_particles: 0,
-        max_time_step: 0.1,
-        sleep_after: heatel::particle::SLEEP_AFTER,
-        bounds: heatel::particle::BOUNDS,
-        infinite_bounds: false,
-        constants: Constants {
-            color: [1.0; 4],
-            radius: 5.0,
-            lifetime: 0.5,
-            rotation: 0.0,
-            rotation_speed: 0.0,
-            sequence: 0.0,
-            normal: [0.0, 0.0, 1.0],
-        },
-        group: 0,
-        pre_emission: Vec::new(),
-        emitters: vec![always(Emitter::Instantaneous {
-            count: FloatInput::Literal(count),
-            start_time: FloatInput::Literal(0.0),
-            max_per_frame: -1,
-        })],
-        initializers: initializers.into_iter().map(always).collect(),
-        operators,
-        forces,
-        constraints: Vec::new(),
-        renderers: Vec::new(),
-        children,
-    }
+    // `System` is `#[non_exhaustive]`: start from the schema's defaults and set what the tests use.
+    let mut system = System::from_document(&heatel::kv3::Document {
+        format: [0; 16],
+        root: heatel::kv3::Value::Object(Default::default()),
+    })
+    .expect("an empty definition has the schema defaults");
+    system.behavior_version = 12;
+    system.first_multiple_override = -1;
+    system.max_particles = 16;
+    system.initial_particles = 0;
+    system.max_time_step = 0.1;
+    system.sleep_after = heatel::particle::SLEEP_AFTER;
+    system.bounds = heatel::particle::BOUNDS;
+    system.infinite_bounds = false;
+    system.constants = Constants {
+        color: [1.0; 4],
+        radius: 5.0,
+        lifetime: 0.5,
+        rotation: 0.0,
+        rotation_speed: 0.0,
+        sequence: 0.0,
+        normal: [0.0, 0.0, 1.0],
+    };
+    system.group = 0;
+    system.pre_emission = Vec::new();
+    system.emitters = vec![always(Emitter::Instantaneous {
+        count: FloatInput::Literal(count),
+        start_time: FloatInput::Literal(0.0),
+        max_per_frame: -1,
+    })];
+    system.initializers = initializers.into_iter().map(always).collect();
+    system.operators = operators;
+    system.forces = forces;
+    system.constraints = Vec::new();
+    system.renderers = Vec::new();
+    system.children = children;
+    system
 }
 
 /// A missile: the head, and an impact of five particles where the head is when it ends.
@@ -2029,18 +2031,17 @@ fn review_residual_constraint_random_uses_system_seed() {
 fn imported_control_point_remap_uses_the_input_component_for_smoothing() {
     use heatel::particle::{ControlPointRemap, VectorComponent};
     let mut definition = bare(0.0, vec![], vec![], vec![], vec![]);
-    definition.pre_emission = vec![always(PreEmission::RemapControlPoint(Box::new(
-        ControlPointRemap {
-            input: point(3),
-            output: point(9),
-            input_component: VectorComponent::Z,
-            output_component: VectorComponent::X,
-            input_range: [-4.0, 12.0],
-            output_range: [20.0, 100.0],
-            interpolation: 0.25,
-            derivative: false,
-        },
-    )))];
+    definition.pre_emission = vec![always(PreEmission::RemapControlPoint(Box::new({
+        let mut remap = ControlPointRemap::default();
+        remap.input = point(3);
+        remap.output = point(9);
+        remap.input_component = VectorComponent::Z;
+        remap.output_component = VectorComponent::X;
+        remap.input_range = [-4.0, 12.0];
+        remap.output_range = [20.0, 100.0];
+        remap.interpolation = 0.25;
+        remap
+    })))];
     let mut instance = Instance::new(Arc::new(Effect::new(&[("remap".into(), definition)])), 1);
     instance.set_control_point(3, Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, false);
     instance.set_control_point(9, Vec3::new(0.0, 77.0, 40.0), Vec3::ZERO, false);
@@ -2059,14 +2060,12 @@ fn imported_particle_noise_retains_nonzero_authored_radius_bounds() {
             1.0,
             vec![Initializer::InitFloat {
                 field: Field::RADIUS,
-                value: FloatInput::ParticleNoise(Box::new(ParticleNoise {
-                    field: Field::POSITION,
-                    output,
-                    scale,
-                    offset_rate: [1.0, 1.0, 4.0],
-                    offset: 0.0,
-                    octaves: 1,
-                    mapping: Mapping::Direct,
+                value: FloatInput::ParticleNoise(Box::new({
+                    let mut noise = ParticleNoise::default();
+                    noise.output = output;
+                    noise.scale = scale;
+                    noise.offset_rate = [1.0, 1.0, 4.0];
+                    noise
                 })),
                 set_method: SetMethod::Replace,
                 strength: FloatInput::Literal(1.0),
@@ -2120,4 +2119,238 @@ fn imported_snapshot_positions_use_the_spatial_frame_and_authored_start_index() 
         instance.nodes[0].parts.vectors[store::POSITION],
         vec![Vec3::new(14.0, 25.0, 36.0), Vec3::new(11.0, 22.0, 33.0)]
     );
+}
+
+/// Dota's three basins share one child (`fol_ambient_pool`) that names the first basin's snapshot
+/// as its own default; each of its three parents binds its own basin to the same control point.
+#[test]
+fn a_child_reads_the_snapshot_its_parent_binds_to_the_control_point_not_its_own_default() {
+    use heatel::particle::Snapshot;
+    let points = |at: [f32; 3]| Snapshot::Points {
+        positions: vec![at],
+        normals: None,
+    };
+    let reader = || {
+        let mut child = bare(
+            1.0,
+            vec![Initializer::SkinnedSnapshot {
+                control_point: point(0),
+                snapshot_control_point: point(6),
+                start: 0,
+                random: false,
+                set_normal: false,
+            }],
+            vec![],
+            vec![],
+            vec![],
+        );
+        child.snapshot_control_point = point(6);
+        child.snapshot = Some(points([100.0, 0.0, 0.0]));
+        child
+    };
+    let child_position = |parent_snapshot: Option<([f32; 3], u8)>| {
+        let mut parent = bare(
+            0.0,
+            vec![],
+            vec![],
+            vec![],
+            vec![Child {
+                path: "reader".to_owned(),
+                end_cap: false,
+                delay: 0.0,
+            }],
+        );
+        if let Some((at, cp)) = parent_snapshot {
+            parent.snapshot_control_point = point(cp);
+            parent.snapshot = Some(points(at));
+        }
+        let effect = Effect::new(&[("parent".into(), parent), ("reader".into(), reader())]);
+        let mut instance = Instance::new(Arc::new(effect), 1);
+        instance.advance(0.01, None);
+        instance.nodes[1].parts.vectors[store::POSITION].clone()
+    };
+    assert_eq!(
+        child_position(Some(([0.0, 0.0, 700.0], 6))),
+        vec![Vec3::new(0.0, 0.0, 700.0)],
+        "the parent's basin"
+    );
+    assert_eq!(
+        child_position(None),
+        vec![Vec3::new(100.0, 0.0, 0.0)],
+        "no parent snapshot: the child's own"
+    );
+    assert_eq!(
+        child_position(Some(([0.0, 0.0, 700.0], 5))),
+        vec![Vec3::new(100.0, 0.0, 0.0)],
+        "a parent snapshot on another control point is not the child's"
+    );
+}
+
+/// Every texture a file names is a default image: the look is what is tested, not the pixels.
+struct Textures;
+impl crate::AssetSource for Textures {
+    fn accepts_image(&self, _: &str) -> bool {
+        true
+    }
+    fn accepts_model(&self, _: &str) -> bool {
+        false
+    }
+    fn image(&self, _: &str) -> bevy::asset::Handle<bevy::image::Image> {
+        bevy::asset::Handle::default()
+    }
+    fn model(&self, _: &str) -> bevy::asset::Handle<bevy::gltf::Gltf> {
+        panic!("the fixture has no models")
+    }
+}
+
+/// A sprite renderer of `texture` with the given channel mix, refracting or not.
+fn sprite(
+    texture: &str,
+    channels: heatel::particle::TextureChannels,
+    refract: bool,
+) -> Function<heatel::particle::Renderer> {
+    use heatel::particle::{Blend, Look, Orientation, Renderer, Sprites};
+    let one = || FloatInput::Literal(1.0);
+    always(Renderer::Sprites(Box::new(Sprites {
+        look: Look {
+            texture: Some(texture.to_owned()),
+            texture_transform: [1.0, 0.0, 1.0, 0.0],
+            channels,
+            layers: Vec::new(),
+            blend: Blend::Alpha,
+            overbright: one(),
+            add_self: FloatInput::Literal(0.0),
+            saturate: false,
+            gamma_vertex_colors: false,
+            alpha_scale: one(),
+            radius_scale: one(),
+            color_scale: VectorInput::Literal([1.0; 3]),
+            no_depth_test: false,
+            animation_rate: 0.0,
+            animate_in_fps: false,
+            blend_frames: false,
+            orientation: Orientation::WorldZ,
+            refract,
+            depth_bias: FloatInput::Literal(0.0),
+        },
+        min_size: FloatInput::Literal(0.0),
+        max_size: FloatInput::Literal(1.0),
+        start_fade_size: one(),
+        end_fade_size: one(),
+    })))
+}
+
+/// The pool's water: three renderers of one distortion map (a colour mix, the refracting
+/// sibling, a single channel as a mask) and one of a glow.
+#[test]
+fn a_texture_a_sibling_refracts_is_drawn_only_through_a_single_channel_mask() {
+    use super::library::Library;
+    use bevy::prelude::*;
+    use heatel::particle::TextureChannels as Channels;
+    let mut system = bare(1.0, vec![], vec![], vec![], vec![]);
+    system.renderers = vec![
+        sprite("distortion.vtex", Channels::Rgba, false),
+        sprite("distortion.vtex", Channels::RgbaRgbAlpha, true),
+        sprite("distortion.vtex", Channels::GAlpha, false),
+        sprite("glow.vtex", Channels::Rgba, false),
+    ];
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "version": 3,
+        "systems": [{"path": "pool", "system": system}],
+        "textures": [
+            {"vtex": "distortion.vtex", "file": "distortion.ktx2"},
+            {"vtex": "glow.vtex", "file": "glow.ktx2"},
+        ],
+    }))
+    .expect("particle file");
+    let mut library = Library::default();
+    library.add("pool", &bytes, &Textures).expect("effect");
+    let drawn: Vec<usize> = library.effect("pool").expect("effect").defs[0]
+        .draws
+        .iter()
+        .map(|draw| draw.renderer)
+        .collect();
+    assert_eq!(
+        drawn,
+        vec![2, 3],
+        "the colour mix and the refracting sibling of the distortion map are not drawn"
+    );
+}
+
+/// The radius a particle born at `at` takes from a position noise of range 10 to 50.
+fn noise_radius(at: Vec3) -> f32 {
+    use heatel::particle::ParticleNoise;
+    let definition = bare(
+        1.0,
+        vec![
+            sphere_at(0),
+            Initializer::InitFloat {
+                field: Field::RADIUS,
+                value: FloatInput::ParticleNoise(Box::new({
+                    let mut noise = ParticleNoise::default();
+                    noise.output = [10.0, 50.0];
+                    noise.scale = 0.01;
+                    noise
+                })),
+                set_method: SetMethod::Replace,
+                strength: FloatInput::Literal(1.0),
+            },
+        ],
+        vec![],
+        vec![],
+        vec![],
+    );
+    let mut instance = Instance::new(Arc::new(Effect::new(&[("noise".into(), definition)])), 1);
+    instance.set_control_point(0, at, Vec3::ZERO, false);
+    instance.advance(0.01, None);
+    instance.nodes[0].parts.scalars[store::RADIUS][0]
+}
+
+#[test]
+fn imported_particle_noise_follows_the_position_through_the_noise_function() {
+    let (a, b) = (Vec3::new(1000.0, 0.0, 0.0), Vec3::new(0.0, 1234.0, 55.0));
+    let expected = |at: Vec3| {
+        let fraction = (super::eval::noise(at * 0.01) * 0.5 + 0.5).clamp(0.0, 1.0);
+        10.0 + 40.0 * fraction
+    };
+    assert_eq!(noise_radius(a), expected(a));
+    assert_eq!(noise_radius(b), expected(b));
+    assert_ne!(
+        noise_radius(a),
+        noise_radius(b),
+        "the same radius at two places"
+    );
+}
+
+#[test]
+fn a_renderers_authored_depth_bias_reaches_its_cards() {
+    use super::draw::{Eye, Quad, draw};
+    use super::library::Library;
+    use heatel::particle::{Renderer, TextureChannels};
+    let mut system = bare(1.0, vec![sphere_at(0)], vec![], vec![], vec![]);
+    system.renderers = vec![sprite("glow.vtex", TextureChannels::Rgba, false)];
+    let Renderer::Sprites(sprites) = &mut system.renderers[0].class else {
+        panic!("sprites")
+    };
+    sprites.look.depth_bias = FloatInput::Literal(5.0);
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "version": 3,
+        "systems": [{"path": "glow", "system": system}],
+        "textures": [{"vtex": "glow.vtex", "file": "glow.ktx2"}],
+    }))
+    .expect("particle file");
+    let mut library = Library::default();
+    library.add("glow", &bytes, &Textures).expect("effect");
+    let mut instance = Instance::new(library.effect("glow").expect("effect").clone(), 1);
+    instance.advance(0.01, None);
+    let eye = Eye {
+        position: Vec3::new(0.0, -500.0, 800.0),
+        right: Vec3::X,
+        up: Vec3::Z,
+    };
+    let mut lists = vec![Vec::<Quad>::new(); library.looks.len()];
+    draw(&instance, &eye, None, &mut lists);
+    let quads: Vec<&Quad> = lists.iter().flatten().collect();
+    assert_eq!(quads.len(), 1);
+    assert_eq!(quads[0].depth_bias, 5.0);
 }

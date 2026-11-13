@@ -193,6 +193,11 @@ fn a_shrine_is_walked_onto_never_picked_and_shows_its_ring_filling() {
             .any(|share| share.y > 0.0)
     });
     assert_ground_ring(&server, &mut client, "shrine.active", at);
+    // The ring's outer radius is the one the game feeds the countdown, and stays fixed while its
+    // share grows (a halved radius would still draw a ring, only a smaller one).
+    let ring = instances(&client, "shrine.active", 1, true);
+    assert!(!ring.is_empty(), "the countdown plays");
+    assert!(ring.iter().all(|cp| cp.x == 300.0), "{ring:?}");
 }
 
 /// A Lotus Pool: the mouse picks nothing on it, and a hero standing in it plays the ring that

@@ -17,7 +17,7 @@ while IFS= read -r file; do
             case "$file" in
                 src/fog/clarity_render.rs) test_name=fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels ;;
                 src/overlay/render_tests.rs) test_name=overlay::render_tests::indicator_strokes_are_two_pixels_at_a_fixed_camera ;;
-                src/e2e/ground_effect_pixels.rs) test_name=e2e::ground_effect_pixels::four_objective_states_have_visible_authored_effects ;;
+                src/e2e/ground_effect_pixels.rs) test_name=e2e::ground_effect_pixels::objective_ground_effects_have_their_authored_shapes_by_day_and_by_night ;;
                 src/minimap/render_tests.rs) test_name=minimap::render_tests::minimap_camera_ping_and_teleport_strokes_halve_physical_widths_above_one_pixel ;;
             esac
             ignored=$(awk '

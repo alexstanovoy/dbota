@@ -60,6 +60,12 @@ pub struct Node {
     /// origin, unturned, as Source's: Shadow Raze's embers and fleks take control point 3,
     /// which Dota leaves unplaced, as a velocity (`C_INIT_VelocityFromCP`), and rise in place.
     pub control_points: [ControlPoint; 64],
+    /// The definitions whose snapshots this system can read, nearest ancestor first and its own
+    /// last. A snapshot is bound to a control point and control points pass down to children, so
+    /// an ancestor's snapshot on the control point replaces the child's own default (Dota's
+    /// `fol_ambient_pool` names the first basin's snapshot, and its three parents each hand it
+    /// their own basin).
+    snapshot_defs: Vec<usize>,
     /// Which control points have been placed (bit `cp`): one placed the first time has no
     /// previous place to move from.
     placed: u64,
@@ -101,6 +107,10 @@ struct Frame {
 pub struct Instance {
     pub effect: Arc<Effect>,
     pub nodes: Vec<Node>,
+    /// Definitions (indices into the effect) whose cards are left out of the frame, for a test
+    /// comparing the frame without them.
+    #[cfg(any(test, feature = "test-support"))]
+    pub hidden_defs: Vec<usize>,
     /// Drawn only by the host's separate stage view, without world ground or lights.
     pub portrait: bool,
     /// Presentation opacity, independent of the imported particle simulation.
@@ -166,6 +176,16 @@ impl Instance {
                 stack.push((*child, *end_cap, *delay, Some(index)));
             }
         }
+        for index in 0..nodes.len() {
+            let mut ancestor = nodes[index].parent;
+            let mut defs = Vec::new();
+            while let Some(at) = ancestor {
+                defs.push(nodes[at].def);
+                ancestor = nodes[at].parent;
+            }
+            defs.push(nodes[index].def);
+            nodes[index].snapshot_defs = defs;
+        }
         for index in (0..nodes.len()).rev() {
             let end = nodes[index]
                 .children
@@ -176,6 +196,8 @@ impl Instance {
         Self {
             effect,
             nodes,
+            #[cfg(any(test, feature = "test-support"))]
+            hidden_defs: Vec::new(),
             portrait: false,
             presentation_opacity: 1.0,
             life: 0.0,
@@ -455,6 +477,7 @@ impl Node {
             emitting: true,
             first_frame: true,
             control_points: [ControlPoint::default(); 64],
+            snapshot_defs: vec![def],
             placed: 0,
             emitters: vec![EmitterState::default(); system.emitters.len()],
             pre_done: vec![false; system.pre_emission.len()],
@@ -945,6 +968,16 @@ impl Node {
         };
         let scene = scene_of(&self.control_points, self.clock(), world, dt, frame);
         let (parts, inits) = (&mut self.parts, &mut self.inits);
+        let defs = &self.snapshot_defs;
+        let snapshot = |bound: heatel::particle::ControlPoint| {
+            defs.iter().find_map(|&def| {
+                let system = &effect.defs[def].system;
+                system
+                    .snapshot
+                    .as_ref()
+                    .filter(|_| system.snapshot_control_point == bound)
+            })
+        };
         let mut written = CREATION_WRITTEN;
         for (index, init) in system.initializers.iter().enumerate() {
             let fields = writes(&init.class);
@@ -962,12 +995,8 @@ impl Node {
                 written,
                 salt: 0x1000 + (index as u32) * 64,
                 memory: &mut inits[index],
-                snapshot: system
-                    .snapshot
-                    .as_ref()
-                    .map(|s| (s, system.snapshot_control_point)),
             };
-            initialize(&init.class, &scene, &mut batch);
+            initialize(&init.class, &scene, &mut batch, &snapshot);
             written |= fields;
         }
         self.parts.snapshot(first);

@@ -199,6 +199,13 @@ impl Playing {
         self.hidden_effects = effects;
     }
 
+    /// Masks presentation only: leaves out the systems of `effect` whose path contains
+    /// `matching`, and none when it is empty.
+    #[cfg(test)]
+    pub fn hide_systems(&mut self, effect: &Arc<Effect>, matching: &str) {
+        self.simulation.hide_systems(effect, matching);
+    }
+
     #[cfg(test)]
     pub fn advance(
         &mut self,

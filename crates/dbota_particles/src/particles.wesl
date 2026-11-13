@@ -28,6 +28,8 @@ struct Card {
     @location(10) uv2_next: vec4<f32>,
     // The first layer's channel mix, the second's, how the second combines, the layers (1, 2).
     @location(11) layers: vec4<u32>,
+    // World units the card is moved toward the camera (the renderer's depth bias).
+    @location(12) depth_bias: f32,
 };
 
 struct Fragment {
@@ -51,7 +53,9 @@ fn vertex(card: Card) -> Fragment {
     let side = select(-1.0, 1.0, right);
     let position = select(card.head + side * card.head_side, card.tail + side * card.tail_side, tail);
     var out: Fragment;
-    out.clip = view.clip_from_world * vec4<f32>(position, 1.0);
+    // Along the line of sight, so the card stays where it is on the screen and only its depth moves.
+    let lifted = position + normalize(view.world_position - position) * card.depth_bias;
+    out.clip = view.clip_from_world * vec4<f32>(lifted, 1.0);
     out.color = select(card.head_color, card.tail_color, tail);
     out.uv = vec2<f32>(select(card.uv.x, card.uv.z, right), select(card.uv.y, card.uv.w, tail));
     out.uv_next = vec2<f32>(select(card.uv_next.x, card.uv_next.z, right), select(card.uv_next.y, card.uv_next.w, tail));

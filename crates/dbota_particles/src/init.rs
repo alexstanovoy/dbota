@@ -138,14 +138,20 @@ pub struct Batch<'a> {
     pub written: u64,
     pub salt: u32,
     pub memory: &'a mut InitMemory,
-    pub snapshot: Option<(
-        &'a heatel::particle::Snapshot,
-        heatel::particle::ControlPoint,
-    )>,
 }
 
+/// The snapshot bound to a control point, as the playing system sees it (see
+/// `Node::snapshot_defs`).
+pub type SnapshotAt<'s> =
+    &'s dyn Fn(heatel::particle::ControlPoint) -> Option<&'s heatel::particle::Snapshot>;
+
 /// Runs `init` on the batch.
-pub fn initialize(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>) {
+pub fn initialize(
+    init: &Initializer,
+    scene: &Scene<'_>,
+    batch: &mut Batch<'_>,
+    snapshot: SnapshotAt<'_>,
+) {
     let (first, len) = (batch.first, batch.parts.len());
     match init {
         Initializer::SkinnedSnapshot {
@@ -155,12 +161,12 @@ pub fn initialize(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>) 
             random,
             set_normal,
         } => {
-            let Some((heatel::particle::Snapshot::Points { positions, normals }, bound)) =
-                batch.snapshot
+            let Some(heatel::particle::Snapshot::Points { positions, normals }) =
+                snapshot(*snapshot_control_point)
             else {
                 return;
             };
-            if bound != *snapshot_control_point || positions.is_empty() {
+            if positions.is_empty() {
                 return;
             }
             let frame = scene.control_point_at(control_point.index(), scene.age);

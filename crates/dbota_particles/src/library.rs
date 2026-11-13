@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use bevy::math::Vec3;
 use bevy::prelude::*;
-use heatel::particle::{Blend, Renderer, System};
+use heatel::particle::{Blend, Renderer, System, TextureChannels};
 use serde_json::Value;
 
 use super::store::{self, Defaults};
@@ -86,6 +86,8 @@ pub struct ParticleModel {
 
 /// A system as the simulation runs it.
 pub struct Def {
+    /// Its path in the particle file.
+    pub path: String,
     pub system: System,
     /// Its children's indices in the effect, in the definition's order (a child the file lacks
     /// is left out).
@@ -106,7 +108,8 @@ impl Effect {
     pub fn new(systems: &[(String, System)]) -> Self {
         let defs = systems
             .iter()
-            .map(|(_, system)| Def {
+            .map(|(path, system)| Def {
+                path: path.clone(),
                 children: children(system, systems),
                 draws: Vec::new(),
                 model_draws: Vec::new(),
@@ -176,6 +179,7 @@ impl Library {
             parsed.push((path.to_owned(), system));
         }
         let mut effect = Effect::new(&parsed);
+        let distortion = distortion_textures(&parsed);
         let mut unsupported = Vec::new();
         for def in &mut effect.defs {
             unsupported.extend(
@@ -184,7 +188,7 @@ impl Library {
                     .into_iter()
                     .map(str::to_owned),
             );
-            def.draws = self.draws(&def.system, &textures, &materials);
+            def.draws = self.draws(&def.system, &textures, &materials, &distortion);
             def.model_draws = model_draws(&def.system, &models);
         }
         self.effects.insert(name.to_owned(), Arc::new(effect));
@@ -239,13 +243,20 @@ impl Library {
         system: &System,
         textures: &HashMap<String, Texture>,
         materials: &HashMap<String, Material>,
+        distortion: &HashSet<&str>,
     ) -> Vec<Draw> {
         let mut out = Vec::new();
         for (index, renderer) in system.renderers.iter().enumerate() {
             // A refracting renderer bends the view of what is behind it by its normal map; the
             // client keeps no copy of the frame to bend, and drawn as a colour the map would
-            // cover the ground with a pale disc.
-            let Some(look) = renderer.class.look().filter(|l| !l.refract) else {
+            // cover the ground with a pale disc. The same map under a sibling renderer that is
+            // not marked as refracting is the same data: its channels are directions, so only a
+            // single channel read as a mask (`reads_colour`) is a shape the client can draw.
+            let Some(look) = renderer
+                .class
+                .look()
+                .filter(|l| !l.refract && !colours_from(l, distortion))
+            else {
                 continue;
             };
             if let Renderer::Projected(projected) = &renderer.class {
@@ -534,6 +545,46 @@ fn defaults(system: &System) -> Defaults {
     defaults.vectors[store::COLOR] = Vec3::new(c.color[0], c.color[1], c.color[2]);
     defaults.vectors[store::NORMAL] = Vec3::from(c.normal);
     defaults
+}
+
+/// The textures some refracting renderer of the effect bends the view by: normal maps, whatever
+/// the renderer drawing them says.
+fn distortion_textures(systems: &[(String, System)]) -> HashSet<&str> {
+    systems
+        .iter()
+        .flat_map(|(_, system)| system.renderers.iter())
+        .filter_map(|renderer| renderer.class.look())
+        .filter(|look| look.refract)
+        .flat_map(|look| {
+            look.texture
+                .iter()
+                .chain(look.layers.iter().map(|layer| &layer.texture))
+        })
+        .map(String::as_str)
+        .collect()
+}
+
+/// Whether `look` takes colour from a distortion texture, which holds no colour.
+fn colours_from(look: &heatel::particle::Look, distortion: &HashSet<&str>) -> bool {
+    let first = look
+        .texture
+        .as_deref()
+        .is_some_and(|t| distortion.contains(t) && reads_colour(look.channels));
+    first
+        || look
+            .layers
+            .iter()
+            .any(|l| distortion.contains(l.texture.as_str()) && reads_colour(l.channels))
+}
+
+/// Whether a channel mix takes colour (or a brightness of it) from its texel rather than one
+/// channel as a mask. An unknown mix counts as colour: it is not drawn from a distortion map.
+fn reads_colour(channels: TextureChannels) -> bool {
+    use TextureChannels as C;
+    !matches!(
+        channels,
+        C::R | C::G | C::B | C::RAlpha | C::GAlpha | C::BAlpha
+    )
 }
 
 /// Whether a blend multiplies what is behind.
