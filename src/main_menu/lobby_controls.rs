@@ -1,8 +1,8 @@
 //! Local lobby controls and settings drafts. They never change the service until saved.
 use super::{
     form::{Form, FormKind},
-    prefs::Prefs,
     lobby_chat::Chat,
+    prefs::Prefs,
     view::{FieldView, ModeRow},
 };
 use bota_radovid::proto::{Audience, LobbyId, RulesetId};
@@ -89,7 +89,10 @@ pub struct Editor {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Dialog { Confirm, Offer(bota_radovid::proto::ProposalId, bool) }
+pub enum Dialog {
+    Confirm,
+    Offer(bota_radovid::proto::ProposalId, bool),
+}
 
 pub struct Controls {
     pub controls_dirty: bool,
@@ -98,7 +101,11 @@ pub struct Controls {
     pub search_due: Option<bevy::platform::time::Instant>,
     #[cfg(test)]
     pub view_builds: std::cell::Cell<usize>,
-    pub(super) deadlines: Vec<(u32, bevy::platform::time::Instant, crate::main_menu::core::Asked)>,
+    pub(super) deadlines: Vec<(
+        u32,
+        bevy::platform::time::Instant,
+        crate::main_menu::core::Asked,
+    )>,
     pub queued_until: Option<bevy::platform::time::Instant>,
     pub dialog: Option<Dialog>,
     pub dialog_form: Form,
@@ -123,7 +130,10 @@ impl Default for Controls {
         Self {
             #[cfg(test)]
             view_builds: Default::default(),
-            controls_dirty: true, state_dirty: true, creation_unconfirmed: false, search_due: None,
+            controls_dirty: true,
+            state_dirty: true,
+            creation_unconfirmed: false,
+            search_due: None,
             deadlines: Vec::new(),
             queued_until: None,
             dialog: None,
@@ -315,6 +325,11 @@ pub fn audience_name(audience: Audience) -> &'static str {
 }
 
 /// One filter shared by the drawn rows and their keyboard controls.
-pub fn includes_lobby(filter: Option<&RulesetId>, no_password: bool, mode: &RulesetId, locked: bool) -> bool {
+pub fn includes_lobby(
+    filter: Option<&RulesetId>,
+    no_password: bool,
+    mode: &RulesetId,
+    locked: bool,
+) -> bool {
     (!no_password || !locked) && filter.is_none_or(|id| id == mode)
 }

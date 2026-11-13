@@ -333,7 +333,10 @@ impl Form {
 
 #[cfg(test)]
 impl Form {
-    pub(super) fn test_buttons(&self) -> impl Iterator<Item=&Act> {
-        self.items.iter().filter_map(|item| match item { Item::Button(action) => Some(action), _ => None })
+    pub(super) fn test_buttons(&self) -> impl Iterator<Item = &Act> {
+        self.items.iter().filter_map(|item| match item {
+            Item::Button(action) => Some(action),
+            _ => None,
+        })
     }
 }

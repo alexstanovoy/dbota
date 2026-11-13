@@ -140,30 +140,74 @@ impl Friends {
     pub fn new(service: &super::Service) -> Self {
         let pem = std::fs::read_to_string(&service.pem).expect("certificate");
         let tls = bota_radovid::Tls::trust_pem(&pem).expect("trust");
-        let mut host = Client::open(&service.url, &tls).expect("host control");
-        let seq = host.register("alice", "correct horse battery", AccountKind::Human, None).expect("register host");
-        assert!(matches!(answer(&mut host, seq), Reply::LoggedIn { .. }));
-        let seq = host.request(ClientMsg::LobbyCreate { ruleset: RulesetId("full".into()), name: "Friday Night".into(), audience: bota_radovid::proto::Audience::Everyone, password: Some(Secret("open sesame".into())) }).expect("create");
-        let Reply::Lobby { state } = answer(&mut host, seq) else { panic!("created lobby") };
+        let mut host = registered_friend(service, &tls, "alice");
+        let seq = host
+            .request(ClientMsg::LobbyCreate {
+                ruleset: RulesetId("full".into()),
+                name: "Friday Night".into(),
+                audience: bota_radovid::proto::Audience::Everyone,
+                password: Some(Secret("open sesame".into())),
+            })
+            .expect("create");
+        let Reply::Lobby { state } = answer(&mut host, seq) else {
+            panic!("created lobby")
+        };
         assert_eq!(state.teams, vec![5, 5]);
         let lobby = state.id;
-        let mut guest = Client::open(&service.url, &tls).expect("guest control");
-        let seq = guest.register("bob", "correct horse battery", AccountKind::Human, None).expect("register guest");
-        assert!(matches!(answer(&mut guest, seq), Reply::LoggedIn { .. }));
-        let seq = guest.request(ClientMsg::LobbyJoin { lobby, password: Some(Secret("open sesame".into())) }).expect("join guest");
-        let Reply::Lobby { state } = answer(&mut guest, seq) else { panic!("guest joined") };
+        let mut guest = registered_friend(service, &tls, "bob");
+        let seq = guest
+            .request(ClientMsg::LobbyJoin {
+                lobby,
+                password: Some(Secret("open sesame".into())),
+            })
+            .expect("join guest");
+        let Reply::Lobby { state } = answer(&mut guest, seq) else {
+            panic!("guest joined")
+        };
         assert_eq!(state.members.len(), 2);
-        Self { host, guest, lobby, tls }
+        Self {
+            host,
+            guest,
+            lobby,
+            tls,
+        }
     }
 
     pub fn start(&mut self) -> (App, App) {
         wait_state(&mut self.host, self.lobby, |state| state.members.len() == 3);
-        let seq = self.host.request(ClientMsg::LobbyConfigure { lobby: self.lobby, ruleset: RulesetId("solo_mid".into()), audience: bota_radovid::proto::Audience::Everyone, password: Some(Secret("open sesame".into())) }).expect("mode change");
+        let seq = self
+            .host
+            .request(ClientMsg::LobbyConfigure {
+                lobby: self.lobby,
+                ruleset: RulesetId("solo_mid".into()),
+                audience: bota_radovid::proto::Audience::Everyone,
+                password: Some(Secret("open sesame".into())),
+            })
+            .expect("mode change");
         assert!(matches!(answer(&mut self.host, seq), Reply::Done));
-        let seq = self.guest.request(ClientMsg::LobbyReady { lobby: self.lobby, ready: true }).expect("guest ready");
+        let seq = self
+            .guest
+            .request(ClientMsg::LobbyReady {
+                lobby: self.lobby,
+                ready: true,
+            })
+            .expect("guest ready");
         assert!(matches!(answer(&mut self.guest, seq), Reply::Done));
-        wait_state(&mut self.host, self.lobby, |state| state.ruleset.0 == "solo_mid" && state.members.iter().filter(|m| m.account != state.owner).all(|m| m.ready));
-        let seq = self.host.request(ClientMsg::LobbyReady { lobby: self.lobby, ready: true }).expect("start");
+        wait_state(&mut self.host, self.lobby, |state| {
+            state.ruleset.0 == "solo_mid"
+                && state
+                    .members
+                    .iter()
+                    .filter(|m| m.account != state.owner)
+                    .all(|m| m.ready)
+        });
+        let seq = self
+            .host
+            .request(ClientMsg::LobbyReady {
+                lobby: self.lobby,
+                ready: true,
+            })
+            .expect("start");
         assert!(matches!(answer(&mut self.host, seq), Reply::Done));
         let host = match_handoff(&mut self.host);
         let guest = match_handoff(&mut self.guest);
@@ -171,11 +215,19 @@ impl Friends {
     }
 }
 
-fn wait_state(client: &mut Client, lobby: bota_radovid::proto::LobbyId, ready: impl Fn(&bota_radovid::proto::LobbyState) -> bool) {
+fn wait_state(
+    client: &mut Client,
+    lobby: bota_radovid::proto::LobbyId,
+    ready: impl Fn(&bota_radovid::proto::LobbyState) -> bool,
+) {
     let until = Instant::now() + super::PATIENCE;
     while Instant::now() < until {
-        if let Some(Incoming::Event(Event::LobbyState { state })) = client.wait(Duration::from_millis(50)).expect("control link")
-            && state.id == lobby && ready(&state) {
+        if let Some(Incoming::Event(Event::LobbyState { state })) = client
+            .wait(Duration::from_millis(50))
+            .expect("control link")
+            && state.id == lobby
+            && ready(&state)
+        {
             assert_eq!(state.teams, vec![5, 5]);
             return;
         }
@@ -186,11 +238,26 @@ fn wait_state(client: &mut Client, lobby: bota_radovid::proto::LobbyId, ready: i
 fn match_handoff(client: &mut Client) -> Handoff {
     let until = Instant::now() + super::PATIENCE;
     while Instant::now() < until {
-        if let Some(Incoming::Event(Event::MatchFound { handoff })) = client.wait(Duration::from_millis(50)).expect("control link") {
+        if let Some(Incoming::Event(Event::MatchFound { handoff })) = client
+            .wait(Duration::from_millis(50))
+            .expect("control link")
+        {
             assert_eq!(handoff.ruleset.0, "solo_mid");
             assert_eq!(handoff.seats.len(), 3);
             return handoff;
         }
     }
     panic!("the friends did not receive their game");
+}
+
+fn registered_friend(service: &super::Service, tls: &bota_radovid::Tls, login: &str) -> Client {
+    let mut client = Client::open(&service.url, tls).expect("friend control");
+    let sequence = client
+        .register(login, "correct horse battery", AccountKind::Human, None)
+        .expect("register friend");
+    assert!(matches!(
+        answer(&mut client, sequence),
+        Reply::LoggedIn { .. }
+    ));
+    client
 }

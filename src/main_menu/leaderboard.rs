@@ -335,7 +335,8 @@ impl super::core::MenuCore {
         if !self.ensure_service_link() {
             return;
         }
-        let modes: Vec<_> = self.menu_rulesets()
+        let modes: Vec<_> = self
+            .menu_rulesets()
             .filter(|mode| mode.rated)
             .map(|mode| Mode {
                 id: mode.id.0.clone(),

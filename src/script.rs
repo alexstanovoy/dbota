@@ -216,66 +216,66 @@ fn awaited(arg: &str) -> Result<Awaited, String> {
         "horn" => Awaited::Horn,
         "pending" => Awaited::Pending,
         "settled" => Awaited::Settled,
-        other => {
-            let (what, value) = other.split_once(':').unwrap_or((other, ""));
-            match what {
-                "button" => Awaited::Button(value.to_owned()),
-                "seats" => {
-                    let bad = || format!("'{value}' is no pair of seat counts");
-                    let (r, d) = value.split_once(',').ok_or_else(bad)?;
-                    Awaited::Seats(r.parse().map_err(|_| bad())?, d.parse().map_err(|_| bad())?)
-                }
-                "nobutton" => Awaited::NoButton(value.to_owned()),
-                "text" => Awaited::Text(value.to_owned()),
-                "named-text" => {
-                    let (name, expected) = value.split_once(':').ok_or_else(|| "named-text needs NAME:VALUE".to_owned())?;
-                    Awaited::NamedText(name.into(), expected.into())
-                }
-                "file" => Awaited::File(value.into()),
-                "model" => Awaited::Model(value.to_owned()),
-                "loot" => Awaited::Loot(value.to_owned()),
-                "heard" => Awaited::Heard(value.to_owned()),
-                "started" => Awaited::Started(value.to_owned()),
-                "level" => Awaited::Level(
-                    value
-                        .parse()
-                        .map_err(|_| format!("'{value}' is no level"))?,
-                ),
-                "tick" => {
-                    Awaited::Tick(value.parse().map_err(|_| format!("'{value}' is no tick"))?)
-                }
-                "gold" => {
-                    Awaited::Gold(value.parse().map_err(|_| format!("'{value}' is no gold"))?)
-                }
-                "daylight" => Awaited::Daylight(match value {
-                    "night" => true,
-                    "day" => false,
-                    _ => return Err(format!("'{value}' is neither day nor night")),
-                }),
-                "ping" | "orders" => {
-                    let range = value
-                        .split_once(',')
-                        .and_then(|(low, high)| Some((low.parse().ok()?, high.parse().ok()?)));
-                    let (low, high) = range.ok_or_else(|| format!("'{value}' is not LOW,HIGH"))?;
-                    if what == "ping" {
-                        Awaited::Ping(low, high)
-                    } else {
-                        Awaited::OrderLatency(low, high)
-                    }
-                }
-                "towershots" => Awaited::TowerShots(
-                    value
-                        .parse()
-                        .map_err(|_| format!("'{value}' is no count"))?,
-                ),
-                "items" => Awaited::Items(
-                    value
-                        .parse()
-                        .map_err(|_| format!("'{value}' is no count"))?,
-                ),
-                _ => return Err(format!("cannot await '{other}'")),
+        other => return awaited_value(other),
+    })
+}
+
+fn awaited_value(other: &str) -> Result<Awaited, String> {
+    let (what, value) = other.split_once(':').unwrap_or((other, ""));
+    Ok(match what {
+        "button" => Awaited::Button(value.to_owned()),
+        "seats" => {
+            let bad = || format!("'{value}' is no pair of seat counts");
+            let (r, d) = value.split_once(',').ok_or_else(bad)?;
+            Awaited::Seats(r.parse().map_err(|_| bad())?, d.parse().map_err(|_| bad())?)
+        }
+        "nobutton" => Awaited::NoButton(value.to_owned()),
+        "text" => Awaited::Text(value.to_owned()),
+        "named-text" => {
+            let (name, expected) = value
+                .split_once(':')
+                .ok_or_else(|| "named-text needs NAME:VALUE".to_owned())?;
+            Awaited::NamedText(name.into(), expected.into())
+        }
+        "file" => Awaited::File(value.into()),
+        "model" => Awaited::Model(value.to_owned()),
+        "loot" => Awaited::Loot(value.to_owned()),
+        "heard" => Awaited::Heard(value.to_owned()),
+        "started" => Awaited::Started(value.to_owned()),
+        "level" => Awaited::Level(
+            value
+                .parse()
+                .map_err(|_| format!("'{value}' is no level"))?,
+        ),
+        "tick" => Awaited::Tick(value.parse().map_err(|_| format!("'{value}' is no tick"))?),
+        "gold" => Awaited::Gold(value.parse().map_err(|_| format!("'{value}' is no gold"))?),
+        "daylight" => Awaited::Daylight(match value {
+            "night" => true,
+            "day" => false,
+            _ => return Err(format!("'{value}' is neither day nor night")),
+        }),
+        "ping" | "orders" => {
+            let range = value
+                .split_once(',')
+                .and_then(|(low, high)| Some((low.parse().ok()?, high.parse().ok()?)));
+            let (low, high) = range.ok_or_else(|| format!("'{value}' is not LOW,HIGH"))?;
+            if what == "ping" {
+                Awaited::Ping(low, high)
+            } else {
+                Awaited::OrderLatency(low, high)
             }
         }
+        "towershots" => Awaited::TowerShots(
+            value
+                .parse()
+                .map_err(|_| format!("'{value}' is no count"))?,
+        ),
+        "items" => Awaited::Items(
+            value
+                .parse()
+                .map_err(|_| format!("'{value}' is no count"))?,
+        ),
+        _ => return Err(format!("cannot await '{other}'")),
     })
 }
 
@@ -381,15 +381,14 @@ fn holds(
             .as_ref()
             .is_some_and(|v| v.confirm.is_none() && v.password.is_none()),
         Awaited::Button(name) => screen.buttons.iter().any(|(n, ..)| n.as_str() == name),
-        Awaited::NoButton(name) => !screen.buttons.iter().any(|(n, node, seen)| {
-            n.as_str() == name && node.display != Display::None && seen.get()
-        }),
         Awaited::File(path) => path.exists(),
-        Awaited::NamedText(name, expected) => screen.named_texts.iter().any(|(label, text, visible)| visible.get() && label.as_str() == name && text.0 == *expected),
-        Awaited::Text(text) => screen
-            .texts
-            .iter()
-            .any(|(shown, seen)| seen.get() && shown.0.contains(text.as_str())),
+        Awaited::NoButton(_)
+        | Awaited::NamedText(..)
+        | Awaited::Text(_)
+        | Awaited::Model(_)
+        | Awaited::Loot(_)
+        | Awaited::Heard(_)
+        | Awaited::Started(_) => holds_visual(awaited, screen, drawn),
         Awaited::Seats(radiant, dire) => {
             crate::hud::seats_shown(&screen.columns) == (*radiant, *dire)
         }
@@ -422,6 +421,23 @@ fn holds(
         Awaited::TowerShots(count) => session.0.view().is_some() && drawn.shots.0 == *count,
         Awaited::Daylight(night) => daylight.night == f32::from(u8::from(*night)),
         Awaited::Gold(gold) => own(session).is_some_and(|me| me.gold.is_some_and(|g| g >= *gold)),
+    }
+}
+
+fn holds_visual(awaited: &Awaited, screen: &Screen, drawn: &Drawn) -> bool {
+    match awaited {
+        Awaited::NoButton(name) => !screen.buttons.iter().any(|(n, node, seen)| {
+            n.as_str() == name && node.display != Display::None && seen.get()
+        }),
+        Awaited::NamedText(name, expected) => {
+            screen.named_texts.iter().any(|(label, text, visible)| {
+                visible.get() && label.as_str() == name && text.0 == *expected
+            })
+        }
+        Awaited::Text(text) => screen
+            .texts
+            .iter()
+            .any(|(shown, seen)| seen.get() && shown.0.contains(text.as_str())),
         Awaited::Model(name) => drawn
             .units
             .iter()
@@ -437,6 +453,7 @@ fn holds(
             .as_deref()
             .and_then(|library| library.effect(name))
             .is_some_and(|effect| drawn.playing.started(effect) > 0),
+        _ => false,
     }
 }
 

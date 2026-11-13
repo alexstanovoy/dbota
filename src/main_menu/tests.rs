@@ -2396,13 +2396,17 @@ fn the_owner_changes_the_lobbys_settings_and_the_others_only_read_them() {
         seat_of(&lobby_of(&bob), "bob"),
         Some((5, "DIRE".to_owned()))
     );
+    refused_lobby_edits(&mut alice, &mut bob);
+}
+
+fn refused_lobby_edits(alice: &mut Player, bob: &mut Player) {
     // The audience the owner sits in cannot shut him out; a member cannot change anything.
     alice.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
     alice.menu.act(Act::LobbyUi(super::LobbyAction::Audience(
         bota_radovid::proto::Audience::BotsOnly,
     )));
     alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
-    settle(&mut [&mut alice], |p| {
+    settle(&mut [&mut *alice], |p| {
         p.menu
             .view()
             .lobby_ui
@@ -2424,10 +2428,10 @@ fn the_owner_changes_the_lobbys_settings_and_the_others_only_read_them() {
         },
         super::core::Asked::Lobby,
     );
-    settle(&mut [&mut bob], |p| {
+    settle(&mut [&mut *bob], |p| {
         p.menu.view().status.is_some_and(|s| s.error)
     });
-    assert_eq!(lobby_of(&bob).settings.audience, "Humans and bots");
+    assert_eq!(lobby_of(bob).settings.audience, "Humans and bots");
 }
 
 /// The password dialog keeps nothing it was given once it is gone: Cancel and Escape close it

@@ -8,8 +8,12 @@ use bevy::{
 
 #[derive(Clone, Copy)]
 pub(in crate::main_menu) struct ScrollState {
-    pub page: Page, pub lobby: Option<bota_radovid::proto::LobbyId>, pub open: Option<Choice>,
-    pub start: usize, pub editor: bool, pub blocked: bool,
+    pub page: Page,
+    pub lobby: Option<bota_radovid::proto::LobbyId>,
+    pub open: Option<Choice>,
+    pub start: usize,
+    pub editor: bool,
+    pub blocked: bool,
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -133,15 +137,24 @@ pub fn scroll(
         (Some(preview), _) => {
             let view = &preview.0;
             matches!(view.beneath, Page::Lobbies | Page::Lobby).then_some(ScrollState {
-                page: view.beneath, lobby: None, open: view.lobby_ui.open, start: view.lobby_ui.choice_start,
-                editor: view.lobby_ui.editor.is_some(), blocked: view.offer.is_some() || view.confirm.is_some() || view.password.is_some(),
+                page: view.beneath,
+                lobby: None,
+                open: view.lobby_ui.open,
+                start: view.lobby_ui.choice_start,
+                editor: view.lobby_ui.editor.is_some(),
+                blocked: view.offer.is_some() || view.confirm.is_some() || view.password.is_some(),
             })
         }
         (None, Some(core)) => core.lobby_scroll_state(),
         _ => None,
     };
-    let Some(state) = state else { *positions = Positions::default(); return; };
-    if !positions.prepare(&state) { return; }
+    let Some(state) = state else {
+        *positions = Positions::default();
+        return;
+    };
+    if !positions.prepare(&state) {
+        return;
+    }
     let blocked = settings.open || state.blocked;
     let cursor = windows.single().ok().and_then(|window| {
         window

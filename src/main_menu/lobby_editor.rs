@@ -232,8 +232,13 @@ fn answers(kit: &mut Kit, parent: Entity, ok: Act, cancel: Act, saving: bool) {
     );
     if saving {
         let button = kit.disabled_button(row, "SAVING…", 44.0);
-        kit.commands.entity(button).entry::<Node>().and_modify(|mut node| node.width = px(super::kit::POPUP_ANSWER_WIDTH));
-    } else { kit.popup_button(row, "OK", ok); }
+        kit.commands
+            .entity(button)
+            .entry::<Node>()
+            .and_modify(|mut node| node.width = px(super::kit::POPUP_ANSWER_WIDTH));
+    } else {
+        kit.popup_button(row, "OK", ok);
+    }
     kit.popup_button(row, "CANCEL", cancel);
 }
 

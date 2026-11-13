@@ -44,7 +44,14 @@ fn browser(
     let panel = w::panel(kit, root, "lobby browser");
     let visible: Vec<_> = rows
         .iter()
-        .filter(|row| super::lobby_controls::includes_lobby(controls.filter.as_ref(), controls.no_password, &row.ruleset, row.locked))
+        .filter(|row| {
+            super::lobby_controls::includes_lobby(
+                controls.filter.as_ref(),
+                controls.no_password,
+                &row.ruleset,
+                row.locked,
+            )
+        })
         .collect();
     heading(kit, panel, visible.len(), rows.len());
     table(kit, panel, &visible, controls);

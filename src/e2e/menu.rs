@@ -1679,12 +1679,35 @@ fn the_width_invariant_rejects_an_unrelated_percent_width_button() {
     let mut client = local_menu();
     act(&mut client, Act::Go(Page::LocalLobby));
     let shown = buttons(&mut client);
-    let first = shown.iter().find(|(name, _, height, _)| name.chars().count() > 2 && shown.iter().filter(|(_, _, h, _)| (h - height).abs() < 0.5).count() > 1).expect("ordinary buttons sharing a height").0.clone();
+    let first = shown
+        .iter()
+        .find(|(name, _, height, _)| {
+            name.chars().count() > 2
+                && shown
+                    .iter()
+                    .filter(|(_, _, h, _)| (h - height).abs() < 0.5)
+                    .count()
+                    > 1
+        })
+        .expect("ordinary buttons sharing a height")
+        .0
+        .clone();
     let world = client.world_mut();
-    let entity = world.query::<(Entity, &Name)>().iter(world).find(|(_, name)| name.as_str() == first).expect("button").0;
+    let entity = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == first)
+        .expect("button")
+        .0;
     world.get_mut::<Node>(entity).expect("button node").width = percent(80);
     client.frames(2);
-    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assert_uniform_buttons(&mut client, Page::LocalLobby))).expect_err("the invariant must catch a non-lobby width defect");
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_uniform_buttons(&mut client, Page::LocalLobby)
+    }))
+    .expect_err("the invariant must catch a non-lobby width defect");
     let reason = failure.downcast_ref::<String>().expect("assertion message");
-    assert!(reason.contains("several widths"), "the intended width assertion failed: {reason}");
+    assert!(
+        reason.contains("several widths"),
+        "the intended width assertion failed: {reason}"
+    );
 }

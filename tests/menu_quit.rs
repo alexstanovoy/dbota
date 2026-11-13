@@ -1336,7 +1336,6 @@ fn a_lobby_owner_turns_cheats_on_and_everyone_sees_and_plays_with_them() {
     played("alice", alice.finish(), &alice_script);
 }
 
-
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn a_rendered_second_guest_searches_by_host_and_plays_with_both_existing_friends() {
@@ -1352,7 +1351,9 @@ fn a_rendered_second_guest_searches_by_host_and_plays_with_both_existing_friends
          click:lobby or host name;text:ali;await:nobutton:join decoy room;\
          click:join friday night;await:popup;text:open sesame;click:ok;\
          await:button:leave lobby  ×;await:text:bob;await:text:1X1 MID ONLY;\
-         click:ready;await:game;await:loaded;await:seats:2,1;exit", sign_up("carol"));
+         click:ready;await:game;await:loaded;await:seats:2,1;exit",
+        sign_up("carol")
+    );
     let mut carol = Running::start(&carol_dir, &args, &carol_script, common::client());
     carol.until_played("await:text:bob");
     let _games = friends.start();
@@ -1368,8 +1369,21 @@ fn the_script_rejects_cheats_on_when_only_password_none_is_visible() {
     let args = service.args();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let client_dir = Scratch::new("cheats-off");
-    let script = format!("{}click:lobbies;await:button:create lobby;click:create lobby;click:lobby name;text:No Cheats;click:ok;await:button:leave lobby  ×;await:named-text:lobby setting cheats:OFF;expect:named-text:lobby setting cheats:ON;exit", sign_up("alice"));
+    let script = format!(
+        "{}click:lobbies;await:button:create lobby;click:create lobby;click:lobby name;text:No Cheats;click:ok;await:button:leave lobby  ×;await:named-text:lobby setting cheats:OFF;expect:text:NONE;expect:text:ON;expect:named-text:lobby setting cheats:ON;exit",
+        sign_up("alice")
+    );
     let result = Running::start(&client_dir, &args, &script, common::client()).finish();
-    assert_eq!(result.0, Some(2), "a wrong drawn cheats value must fail the script");
-    assert!(result.1.contains("expect:named-text:lobby setting cheats:ON does not hold"), "the intended cheats assertion rejected OFF: {}", result.1);
+    assert_eq!(
+        result.0,
+        Some(2),
+        "a wrong drawn cheats value must fail the script"
+    );
+    assert!(
+        result
+            .1
+            .contains("expect:named-text:lobby setting cheats:ON does not hold"),
+        "the intended cheats assertion rejected OFF: {}",
+        result.1
+    );
 }

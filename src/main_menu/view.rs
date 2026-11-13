@@ -460,7 +460,9 @@ impl MenuCore {
     /// What the screens draw now.
     pub fn view(&self) -> MenuView {
         #[cfg(test)]
-        self.lobby_ui.view_builds.set(self.lobby_ui.view_builds.get() + 1);
+        self.lobby_ui
+            .view_builds
+            .set(self.lobby_ui.view_builds.get() + 1);
         let client = self.client.as_ref().filter(|_| self.logged_in());
         let account = client
             .and_then(|c| c.me())
@@ -480,7 +482,11 @@ impl MenuCore {
             (Some(_), true) => Connection::Lost(service),
         };
         MenuView {
-            lobby_ui: if matches!(self.page_beneath(), Page::Lobbies | Page::Lobby) { self.lobby_menu_view(&connection) } else { Default::default() },
+            lobby_ui: if matches!(self.page_beneath(), Page::Lobbies | Page::Lobby) {
+                self.lobby_menu_view(&connection)
+            } else {
+                Default::default()
+            },
             page: self.page,
             beneath: self.page_beneath(),
             body: self.body_at(Instant::now()),
@@ -613,11 +619,8 @@ impl MenuCore {
                 fields: self.fields(),
             },
             Page::Lobby => self
-                .lobby
-                .as_ref()
-                .map_or(PageView::Joining, |(state, at)| {
-                    PageView::Lobby(lobby_view(state, *at, self.client.as_ref(), self.moving, &self.catalogue))
-                }),
+                .lobby_projection()
+                .map_or(PageView::Joining, PageView::Lobby),
             Page::Result => self
                 .shown
                 .and_then(|id| self.results.iter().find(|r| r.match_id == id))
@@ -702,7 +705,15 @@ impl MenuCore {
     }
 
     pub(super) fn lobby_projection(&self) -> Option<LobbyView> {
-        self.lobby.as_ref().map(|(state, at)| lobby_view(state, *at, self.client.as_ref(), self.moving, &self.catalogue))
+        self.lobby.as_ref().map(|(state, at)| {
+            lobby_view(
+                state,
+                *at,
+                self.client.as_ref(),
+                self.moving,
+                &self.catalogue,
+            )
+        })
     }
 
     fn home(&self) -> PageView {
@@ -720,7 +731,8 @@ impl MenuCore {
         PageView::Home {
             matches: self.local_history.cards(self.library.records()),
             hero: self.last_played_hero(),
-            rulesets: self.menu_rulesets()
+            rulesets: self
+                .menu_rulesets()
                 // Lobbies and solo starts without a queue have no matchmaking policy.
                 .filter(|r| r.rating_window.is_some())
                 .map(|r| RulesetRow {
@@ -907,7 +919,8 @@ fn search_rows(
             overloaded: s.overloaded,
             games_waiting: s.games_waiting,
             hint: (s.window_capped
-                && catalogue.iter()
+                && catalogue
+                    .iter()
                     .any(|rule| rule.id == s.ruleset && rule.rated)
                 && catalogue.iter().any(|rule| {
                     !rule.rated
@@ -972,7 +985,8 @@ fn project_offer(
         ruleset: format!(
             "{} · {}",
             names(&search.ruleset),
-            if catalogue.iter()
+            if catalogue
+                .iter()
                 .find(|r| r.id == search.ruleset)
                 .is_some_and(|r| r.rated)
             {
@@ -1008,7 +1022,9 @@ fn lobby_row(
         name: text::line(&l.name, text::NAME),
         owner: text::line(&l.owner_nickname, text::NAME),
         ruleset: l.ruleset.clone(),
-        mode: catalogue.iter().find(|rules| rules.id == l.ruleset)
+        mode: catalogue
+            .iter()
+            .find(|rules| rules.id == l.ruleset)
             .map_or_else(
                 || text::line(&l.ruleset.0, text::NAME),
                 |rules| text::line(&rules.name, text::NAME),
@@ -1048,7 +1064,9 @@ fn lobby_view(
         .then(|| {
             lobby_start_block(
                 &seated,
-                catalogue.iter().find(|rules| rules.id == state.ruleset)
+                catalogue
+                    .iter()
+                    .find(|rules| rules.id == state.ruleset)
                     .map(|rules| usize::from(rules.lobby_min_players)),
             )
         })
@@ -1141,7 +1159,19 @@ fn lobby_settings(
         ),
         audience: super::lobby_controls::audience_name(state.audience),
         locked: state.locked,
-        modes: if owner { catalogue.iter().filter(|r| !bota_radovid::is_demo(r)).map(|r| ModeRow { id: r.id.clone(), name: r.name.clone(), chosen: r.id == state.ruleset }).collect() } else { Vec::new() },
+        modes: if owner {
+            catalogue
+                .iter()
+                .filter(|r| !bota_radovid::is_demo(r))
+                .map(|r| ModeRow {
+                    id: r.id.clone(),
+                    name: r.name.clone(),
+                    chosen: r.id == state.ruleset,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
         audiences: if owner {
             [Audience::Everyone, Audience::HumansOnly, Audience::BotsOnly]
                 .into_iter()
