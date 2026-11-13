@@ -1053,3 +1053,60 @@ fn an_acknowledged_accept_stays_accepted_after_the_control_client_is_rebuilt() {
         1
     );
 }
+
+#[test]
+fn gamepad_navigation_reaches_and_activates_the_play_drawer_control() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "pad_viewer");
+    click(&mut client, "play");
+    client
+        .world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .clear();
+    let pad = client
+        .world_mut()
+        .spawn((
+            bevy::input::gamepad::Gamepad::default(),
+            bevy::input::gamepad::GamepadSettings::default(),
+        ))
+        .id();
+    let send = |client: &mut Client, button, value| {
+        client
+            .world_mut()
+            .write_message(bevy::input::gamepad::RawGamepadEvent::Button(
+                bevy::input::gamepad::RawGamepadButtonChangedEvent::new(pad, button, value),
+            ));
+        client.frames(2);
+    };
+    let focused = |client: &Client| {
+        client
+            .world()
+            .resource::<bevy::input_focus::InputFocus>()
+            .get()
+            .and_then(|entity| client.world().get::<Name>(entity))
+            .is_some_and(|name| name.as_str() == "allow matchmaking with bots")
+    };
+    for _ in 0..64 {
+        if focused(&client) {
+            break;
+        }
+        send(
+            &mut client,
+            bevy::input::gamepad::GamepadButton::DPadDown,
+            1.0,
+        );
+        send(
+            &mut client,
+            bevy::input::gamepad::GamepadButton::DPadDown,
+            0.0,
+        );
+    }
+    assert!(
+        focused(&client),
+        "controller navigation reaches an existing menu control"
+    );
+    assert!(!client.world().non_send::<MenuCore>().view().play.bots);
+    send(&mut client, bevy::input::gamepad::GamepadButton::South, 1.0);
+    send(&mut client, bevy::input::gamepad::GamepadButton::South, 0.0);
+    assert!(client.world().non_send::<MenuCore>().view().play.bots);
+}

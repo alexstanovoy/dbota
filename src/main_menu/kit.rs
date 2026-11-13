@@ -435,16 +435,30 @@ impl Kit<'_, '_, '_> {
 /// The edge round the button that has the keyboard (Tab visits the form's buttons).
 pub fn focus_ring(
     core: Option<NonSend<super::MenuCore>>,
-    mut buttons: Query<(&MenuButton, &Shade, &mut BorderColor)>,
+    native: Res<bevy::input_focus::InputFocus>,
+    mut buttons: Query<(
+        Entity,
+        &MenuButton,
+        &Shade,
+        &mut BorderColor,
+        Option<&mut Outline>,
+    )>,
 ) {
     let focus = core.as_ref().and_then(|core| core.button_focus());
     let ring = BorderColor::all(theme::FOCUS);
-    for (button, shade, mut border) in &mut buttons {
-        let want = if focus == Some(&button.0) {
-            &ring
+    for (entity, button, shade, mut border, outline) in &mut buttons {
+        let focused = if let Some(native) = native.get() {
+            native == entity
         } else {
-            &shade.edge
+            focus == Some(&button.0)
         };
+        if let Some(mut outline) = outline {
+            let want = if focused { theme::FOCUS } else { Color::NONE };
+            if outline.color != want {
+                outline.color = want;
+            }
+        }
+        let want = if focused { &ring } else { &shade.edge };
         if *border != *want {
             *border = *want;
         }

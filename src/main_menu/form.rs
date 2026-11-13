@@ -288,6 +288,11 @@ impl Form {
         }
     }
 
+    /// Native navigation left a text field; retain its value without continuing to type into it.
+    pub fn blur(&mut self) {
+        self.focus = self.items.len();
+    }
+
     /// Tab: the next field or button, round again after the last.
     pub fn next(&mut self) {
         if !self.items.is_empty() {

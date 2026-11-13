@@ -92,6 +92,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             PreUpdate,
             super::availability::capture_keys
+                .before(crate::postgame::controls::keyboard)
                 .after(InputSystems)
                 .before(guard),
         )

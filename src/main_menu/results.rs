@@ -199,13 +199,11 @@ impl MenuCore {
 
     pub fn watch_result(&mut self, replay: Replay) -> Result<(), WatchFailure> {
         if self.in_game() && self.game_unsafe {
-            self.tell(WatchFailure::ActiveGame.message().to_owned(), true);
             return Err(WatchFailure::ActiveGame);
         }
         if let Replay::Saved(file) = &replay
             && !self.has_replay(file)
         {
-            self.tell(WatchFailure::MissingFile.message().to_owned(), true);
             return Err(WatchFailure::MissingFile);
         }
         if self.in_game() {
@@ -244,7 +242,9 @@ impl MenuCore {
             return;
         }
         self.pending_result_replay_since = None;
-        let _ = self.watch_result(replay);
+        if let Err(failure) = self.watch_result(replay) {
+            self.tell(failure.message().to_owned(), true);
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

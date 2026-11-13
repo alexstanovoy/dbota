@@ -173,17 +173,26 @@ pub fn remember_focus(
     mut focus: ResMut<bevy::input_focus::InputFocus>,
     mut key: ResMut<FocusKey>,
     press: Res<crate::ui::PrimaryPress>,
-    nodes: Query<(Entity, &Name), With<bevy::input_focus::tab_navigation::TabIndex>>,
+    nodes: Query<
+        (Entity, &Name, Option<&super::kit::MenuButton>),
+        With<bevy::input_focus::tab_navigation::TabIndex>,
+    >,
     groups: Query<Entity, With<bevy::input_focus::tab_navigation::TabGroup>>,
+    mut core: Option<NonSendMut<super::core::MenuCore>>,
 ) {
     if groups.is_empty() {
         return;
     }
-    if let Some((entity, name)) = press.0.and_then(|target| nodes.get(target).ok()) {
+    if let Some((entity, name, button)) = press.0.and_then(|target| nodes.get(target).ok()) {
         focus.set(entity, bevy::input_focus::FocusCause::Pressed);
         key.0 = Some(name.to_string());
+        if !matches!(button, Some(super::kit::MenuButton(Act::Focus(_))))
+            && let Some(core) = core.as_mut()
+        {
+            core.blur_menu_focus();
+        }
     } else if let Some(entity) = focus.get()
-        && let Ok((_, name)) = nodes.get(entity)
+        && let Ok((_, name, _)) = nodes.get(entity)
     {
         key.0 = Some(name.to_string());
     }
@@ -195,6 +204,7 @@ pub struct MenuKeys {
     activate: bool,
     shift: bool,
     was_typing: bool,
+    controller: bool,
 }
 
 pub fn remember_typing(typing: Res<crate::input::Typing>, mut keys: ResMut<MenuKeys>) {
@@ -202,10 +212,27 @@ pub fn remember_typing(typing: Res<crate::input::Typing>, mut keys: ResMut<MenuK
 }
 
 /// Capture before the dashboard suppresses the game's raw keys.
-pub fn capture_keys(input: Res<ButtonInput<KeyCode>>, mut keys: ResMut<MenuKeys>) {
+pub fn capture_keys(
+    input: Res<ButtonInput<KeyCode>>,
+    pads: Query<&bevy::input::gamepad::Gamepad>,
+    mut keys: ResMut<MenuKeys>,
+) {
+    keys.controller = false;
     keys.tab = input.just_pressed(KeyCode::Tab);
     keys.activate = input.just_pressed(KeyCode::Enter) || input.just_pressed(KeyCode::Space);
     keys.shift = input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    use bevy::input::gamepad::GamepadButton;
+    for pad in pads.iter().take(8) {
+        let next =
+            pad.just_pressed(GamepadButton::DPadDown) || pad.just_pressed(GamepadButton::DPadRight);
+        let previous =
+            pad.just_pressed(GamepadButton::DPadUp) || pad.just_pressed(GamepadButton::DPadLeft);
+        keys.tab |= next || previous;
+        keys.shift |= previous;
+        let activate = pad.just_pressed(GamepadButton::South);
+        keys.activate |= activate;
+        keys.controller |= next || previous || activate;
+    }
 }
 
 pub fn navigate(
@@ -218,10 +245,33 @@ pub fn navigate(
         (Entity, &Name, Option<&super::kit::MenuButton>),
         With<bevy::input_focus::tab_navigation::TabIndex>,
     >,
-    groups: Query<Entity, With<bevy::input_focus::tab_navigation::TabGroup>>,
-    core: Option<NonSendMut<super::core::MenuCore>>,
+    groups: Query<(Entity, &bevy::input_focus::tab_navigation::TabGroup)>,
+    parents: Query<&ChildOf>,
+    mut press: ResMut<crate::ui::PrimaryPress>,
+    result_buttons: Query<(), With<crate::postgame::view::Button>>,
+    mut core: Option<NonSendMut<super::core::MenuCore>>,
 ) {
     if groups.is_empty() {
+        // Lobby forms and dialogs keep menu F's existing ownership and focus reducer.
+        if keys.controller
+            && !keys.was_typing
+            && *typing == crate::input::Typing::No
+            && let Some(core) = core.as_mut()
+            && matches!(
+                core.page(),
+                super::core::Page::Lobby | super::core::Page::Lobbies
+            )
+        {
+            if keys.tab {
+                core.act(if keys.shift {
+                    Act::PreviousField
+                } else {
+                    Act::NextField
+                });
+            } else if keys.activate {
+                core.act(Act::Submit);
+            }
+        }
         if key.0.take().is_some() {
             focus.clear();
         }
@@ -235,7 +285,7 @@ pub fn navigate(
     {
         focus.set(entity, bevy::input_focus::FocusCause::Navigated);
     }
-    if keys.was_typing || *typing != crate::input::Typing::No {
+    if !keys.tab && (keys.was_typing || *typing != crate::input::Typing::No) {
         return;
     }
     if keys.tab {
@@ -245,7 +295,24 @@ pub fn navigate(
         } else {
             NavAction::Next
         };
-        let next = match navigation.navigate(&focus, action) {
+        let modal = groups
+            .iter()
+            .filter(|(_, group)| group.modal)
+            .max_by_key(|(_, group)| group.order)
+            .map(|(entity, _)| entity);
+        let initialize = modal.filter(|modal| {
+            !focus.get().is_some_and(|entity| {
+                parents
+                    .iter_ancestors(entity)
+                    .take(64)
+                    .any(|parent| parent == *modal)
+            })
+        });
+        let navigation = match initialize {
+            Some(modal) => navigation.initialize(modal, action),
+            None => navigation.navigate(&focus, action),
+        };
+        let next = match navigation {
             Ok(next)
             | Err(
                 bevy::input_focus::tab_navigation::TabNavigationError::NoTabGroupForCurrentFocus {
@@ -258,13 +325,23 @@ pub fn navigate(
         if let Some(next) = next {
             focus.set(next, bevy::input_focus::FocusCause::Navigated);
             key.0 = nodes.get(next).ok().map(|(_, name, _)| name.to_string());
+            if let Some(core) = core.as_mut() {
+                match nodes.get(next).ok().and_then(|(_, _, button)| button) {
+                    Some(super::kit::MenuButton(Act::Focus(at))) => core.act(Act::Focus(*at)),
+                    _ => core.blur_menu_focus(),
+                }
+            }
         }
     } else if keys.activate
         && let Some(entity) = focus.get()
-        && let Ok((_, _, Some(button))) = nodes.get(entity)
-        && let Some(mut core) = core
     {
-        core.act(button.0.clone());
+        if result_buttons.contains(entity) {
+            press.0 = Some(entity);
+        } else if let Ok((_, _, Some(button))) = nodes.get(entity)
+            && let Some(mut core) = core
+        {
+            core.act(button.0.clone());
+        }
     }
 }
 

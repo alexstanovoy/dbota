@@ -1,6 +1,6 @@
 //! Match results from local recording metadata, shared by post-game and local history.
 
-mod controls;
+pub(crate) mod controls;
 pub mod data;
 pub mod graphs;
 pub(crate) mod preview;
@@ -166,12 +166,14 @@ pub fn plugin(app: &mut App) {
                 controls::redraw,
                 controls::dim,
                 controls::hover,
+                controls::focus_outline,
                 render::chart::hover,
                 controls::scroll,
                 render::hover::items,
                 render::hover::details,
             )
-                .chain(),
+                .chain()
+                .after(crate::main_menu::availability::navigate),
         )
         .add_systems(
             PreUpdate,

@@ -12,7 +12,7 @@ mod accepted;
 mod account_page;
 mod address;
 mod archive_storage;
-mod availability;
+pub(crate) mod availability;
 mod avatar;
 mod avatar_draw;
 mod backdrop;

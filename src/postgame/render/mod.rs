@@ -66,6 +66,7 @@ pub fn spawn(kit: &mut Kit, root: Entity, view: &View) {
         .entity(screen)
         .insert((
             Screen,
+            bevy::input_focus::tab_navigation::TabGroup::modal(),
             crate::hud::Blocker,
             bevy::picking::hover::Hovered::default(),
         ))
@@ -146,6 +147,65 @@ pub fn spawn(kit: &mut Kit, root: Entity, view: &View) {
         }
     }
     footer(kit, window, view);
+    if let Some(notice) = &view.notice {
+        notice_panel(kit, window, notice);
+    }
+}
+
+fn notice_panel(kit: &mut Kit, parent: Entity, notice: &str) {
+    let shade = rect(kit, parent, ui::fill(), Color::BLACK.with_alpha(0.65));
+    kit.commands
+        .entity(shade)
+        .insert((Pickable::default(), crate::hud::Blocker, ZIndex(20)));
+    let panel = rect(
+        kit,
+        shade,
+        Node {
+            border: UiRect::all(px(1)),
+            ..area(70.0, 244.0, 1100.0, 236.0)
+        },
+        PANEL_DARK,
+    );
+    kit.commands.entity(panel).insert((
+        BorderColor::all(EDGE),
+        bevy::input_focus::tab_navigation::TabGroup {
+            order: 1,
+            modal: true,
+        },
+    ));
+    let text = words(
+        kit,
+        panel,
+        notice,
+        area(22.0, 20.0, 1056.0, 160.0),
+        body(13.0),
+        theme::INK_1,
+    );
+    kit.commands.entity(text).insert(TextLayout::new(
+        Justify::Left,
+        bevy::text::LineBreak::AnyCharacter,
+    ));
+    let dismiss = word_button(
+        kit,
+        panel,
+        "DISMISS",
+        area(930.0, 184.0, 148.0, 40.0),
+        Action::Dismiss,
+        false,
+    );
+    kit.commands.entity(dismiss).insert((
+        Name::new("results dismiss"),
+        Outline {
+            width: px(1),
+            offset: px(1),
+            color: Color::NONE,
+        },
+    ));
+    kit.commands.queue(move |world: &mut World| {
+        if let Some(mut focus) = world.get_resource_mut::<bevy::input_focus::InputFocus>() {
+            focus.set(dismiss, bevy::input_focus::FocusCause::Navigated);
+        }
+    });
 }
 
 fn header(kit: &mut Kit, parent: Entity, view: &View) {
@@ -360,16 +420,6 @@ fn footer(kit: &mut Kit, parent: Entity, view: &View) {
             area(16.0, 10.0, 146.0, 44.0),
             Action::Continue,
             true,
-        );
-    }
-    if let Some(notice) = &view.notice {
-        words(
-            kit,
-            foot,
-            notice.clone(),
-            at(190.0, -26.0),
-            body(13.0),
-            theme::DIRE_TEXT,
         );
     }
     if view.context.replay.is_some() {

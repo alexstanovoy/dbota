@@ -30,9 +30,7 @@ pub fn header(kit: &mut Kit, parent: Entity, name: &str, view: &View) {
         theme::downward(theme::AVATAR),
         BorderColor::all(theme::AVATAR_EDGE),
     ));
-    if let Some(pixels) = &view.current
-        && view.available
-    {
+    if let Some(pixels) = &view.current {
         picture(kit, frame, pixels.clone(), 54.0);
     } else {
         kit.bold(
@@ -234,6 +232,10 @@ fn button(kit: &mut Kit, parent: Entity, label: &str, action: Action, enabled: b
     }
 }
 
+#[cfg(test)]
+#[derive(Component)]
+pub(crate) struct AvatarPicture;
+
 fn picture(kit: &mut Kit, parent: Entity, pixels: Arc<Pixels>, size: f32) {
     let picture = kit.node(
         parent,
@@ -243,6 +245,8 @@ fn picture(kit: &mut Kit, parent: Entity, pixels: Arc<Pixels>, size: f32) {
             ..default()
         },
     );
+    #[cfg(test)]
+    kit.commands.entity(picture).insert(AvatarPicture);
     kit.commands.queue(move |world: &mut World| {
         if world.get_entity(picture).is_err() {
             return;

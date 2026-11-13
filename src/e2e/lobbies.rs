@@ -2312,3 +2312,64 @@ fn a_refused_join_retry_is_not_reissued_by_a_later_list_refresh() {
         "a definitive refusal leaves refresh as a list request"
     );
 }
+
+#[test]
+fn a_controller_uses_the_existing_lobby_dropdown_keyboard_route() {
+    use super::menu::{act, signed_up};
+    use crate::main_menu::{Act, LobbyAction, LobbyChoice, MenuCore, Page};
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "lobby_pad");
+    act(&mut client, Act::Go(Page::Lobbies));
+    act(
+        &mut client,
+        Act::LobbyUi(LobbyAction::Open(LobbyChoice::Mode)),
+    );
+    let pad = client
+        .world_mut()
+        .spawn((
+            bevy::input::gamepad::Gamepad::default(),
+            bevy::input::gamepad::GamepadSettings::default(),
+        ))
+        .id();
+    let send = |client: &mut Client, button, value| {
+        client
+            .world_mut()
+            .write_message(bevy::input::gamepad::RawGamepadEvent::Button(
+                bevy::input::gamepad::RawGamepadButtonChangedEvent::new(pad, button, value),
+            ));
+        client.frames(2);
+    };
+    for _ in 0..12 {
+        if matches!(client.world().non_send::<MenuCore>().button_focus(),Some(Act::LobbyUi(LobbyAction::Mode(mode))) if mode.0=="solo_mid")
+        {
+            break;
+        }
+        send(
+            &mut client,
+            bevy::input::gamepad::GamepadButton::DPadDown,
+            1.0,
+        );
+        send(
+            &mut client,
+            bevy::input::gamepad::GamepadButton::DPadDown,
+            0.0,
+        );
+    }
+    assert!(
+        matches!(client.world().non_send::<MenuCore>().button_focus(),Some(Act::LobbyUi(LobbyAction::Mode(mode))) if mode.0=="solo_mid"),
+        "controller uses the lobby form's existing focus order"
+    );
+    send(&mut client, bevy::input::gamepad::GamepadButton::South, 1.0);
+    send(&mut client, bevy::input::gamepad::GamepadButton::South, 0.0);
+    assert_eq!(
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .view()
+            .lobby_ui
+            .mode
+            .expect("mode")
+            .0,
+        "solo_mid"
+    );
+}

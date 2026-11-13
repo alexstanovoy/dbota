@@ -882,6 +882,12 @@ mod tests {
                 .iter()
                 .any(|text| text == "Leave the current game before watching this replay")
         );
+        client.click_named("results dismiss");
+        assert!(client.world().non_send::<PostGame>().visible());
+        assert!(matches!(
+            client.core().source,
+            bota_client_core::Source::Live(_)
+        ));
     }
 
     #[test]
@@ -1024,6 +1030,14 @@ mod tests {
                 .shown_texts()
                 .iter()
                 .any(|text| text == "Leave the current game before watching this replay")
+        );
+        client.click_named("results dismiss");
+        assert!(client.world().non_send::<PostGame>().visible());
+        assert!(
+            !client
+                .shown_texts()
+                .iter()
+                .any(|text| text == "That replay is no longer available")
         );
     }
 }

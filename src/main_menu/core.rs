@@ -2148,8 +2148,10 @@ impl MenuCore {
                     .local_history
                     .find(&key)
                     .and_then(|entry| entry.file.clone())
+                    && let Err(failure) =
+                        self.watch_result(crate::postgame::view::Replay::Saved(file))
                 {
-                    let _ = self.watch_result(crate::postgame::view::Replay::Saved(file));
+                    self.tell(failure.message().to_owned(), true);
                 }
             }
             Act::HistoryMode(mode) => {
@@ -2397,6 +2399,10 @@ impl MenuCore {
     }
 
     /// Enter: presses the button that has the keyboard, else submits the form.
+    pub(super) fn blur_menu_focus(&mut self) {
+        self.form.blur();
+    }
+
     fn press(&mut self) {
         match self.keyboard().focused_button().cloned() {
             Some(Act::Host(_)) if self.hosted_at.is_some() => {}

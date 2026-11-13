@@ -130,7 +130,13 @@ fn apply(post: &mut PostGame, core: Option<&mut MenuCore>, action: Action) {
     let Some(view) = post.overlay.as_mut() else {
         return;
     };
+    if view.notice.is_some()
+        && !matches!(action, Action::Dismiss | Action::Close | Action::Continue)
+    {
+        return;
+    }
     match action {
+        Action::Dismiss => view.notice = None,
         Action::Close | Action::Continue => {
             if !view.context.history {
                 if let Some(core) = core {
@@ -193,17 +199,25 @@ pub fn keyboard(
     let escape = crate::keys::Action::Escape;
     let action = if fired.pressed(escape) {
         fired.pressed.retain(|key| *key != escape);
-        Some(if post.overlay.as_ref().is_some_and(|view| view.picker) {
-            Action::Picker
-        } else if post
-            .overlay
-            .as_ref()
-            .is_some_and(|view| view.player.is_some())
-        {
-            Action::Back
-        } else {
-            Action::Close
-        })
+        Some(
+            if post
+                .overlay
+                .as_ref()
+                .is_some_and(|view| view.notice.is_some())
+            {
+                Action::Dismiss
+            } else if post.overlay.as_ref().is_some_and(|view| view.picker) {
+                Action::Picker
+            } else if post
+                .overlay
+                .as_ref()
+                .is_some_and(|view| view.player.is_some())
+            {
+                Action::Back
+            } else {
+                Action::Close
+            },
+        )
     } else if keys.just_pressed(KeyCode::ArrowLeft) {
         Some(Action::Previous)
     } else if keys.just_pressed(KeyCode::ArrowRight) {
@@ -275,13 +289,29 @@ pub fn redraw(
 }
 pub fn hover(mut buttons: Query<(&Hovered, &Hover, &mut BackgroundColor), Changed<Hovered>>) {
     for (hovered, hover, mut colour) in &mut buttons {
-        colour.0 = if !hovered.get() {
-            hover.rest
-        } else {
+        colour.0 = if hovered.get() {
             hover.over
+        } else {
+            hover.rest
         };
     }
 }
+pub fn focus_outline(
+    focus: Res<bevy::input_focus::InputFocus>,
+    mut buttons: Query<(Entity, &mut Outline), With<super::view::Button>>,
+) {
+    if !focus.is_changed() {
+        return;
+    }
+    for (entity, mut outline) in &mut buttons {
+        outline.color = if focus.get() == Some(entity) {
+            crate::theme::FOCUS
+        } else {
+            Color::NONE
+        };
+    }
+}
+
 pub fn scroll(
     post: NonSend<PostGame>,
     wheel: Res<bevy::input::mouse::AccumulatedMouseScroll>,

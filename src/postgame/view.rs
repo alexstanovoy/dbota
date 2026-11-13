@@ -253,6 +253,7 @@ fn impact(row: &Row) -> i64 {
 #[derive(Clone, Debug)]
 pub enum Action {
     Close,
+    Dismiss,
     Continue,
     Watch,
     Previous,
