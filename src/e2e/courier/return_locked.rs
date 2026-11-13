@@ -5,6 +5,7 @@ use bevy::{input::ButtonState, prelude::*};
 use bota_client_core::{BAG_SLOTS, Intent, Slot};
 use bota_proto::{Cheat, CreepSide, EntityId, HeroId, ItemId, ItemSlot, Order, Target};
 
+use super::super::enemy_base_shop::aim;
 use super::super::harness::{Client, MID, Server};
 use crate::hud::{Part, PartOf};
 
@@ -131,11 +132,10 @@ fn a_locked_courier_item_can_be_dragged_into_the_stash_at_the_shop() {
     let from_box = client.item_box(from).expect("courier slot");
     let start = client.centre_of(from_box).expect("courier slot laid out");
     let stash_box = client.item_box(BAG_SLOTS).expect("stash slot");
-    let target = client.centre_of(stash_box).expect("stash slot laid out");
-    client.mouse(start);
+    aim(&mut client, from_box);
     client.button(MouseButton::Left, ButtonState::Pressed);
     client.mouse(start + Vec2::new(0.0, -60.0));
-    client.mouse(target);
+    aim(&mut client, stash_box);
     client.button(MouseButton::Left, ButtonState::Released);
     client.until(
         "the server acknowledges the locked Boots in the stash",

@@ -80,7 +80,7 @@ impl Choice {
     }
 }
 
-/// The menu open now: where, and the choices.
+/// The menu open now: its top left corner, placed once when it opened, and the choices.
 #[derive(Resource, Default)]
 pub(crate) struct Menu {
     open: Option<(Vec2, Vec<Choice>)>,
@@ -96,7 +96,19 @@ impl Menu {
 
 /// The menu's box.
 #[derive(Component)]
-struct Root;
+pub(crate) struct Root;
+
+/// Where a menu of `size` goes for a click at `at` in a viewport of `room`: its corner at the
+/// pointer, or, where it does not fit between the pointer and an edge, flipped to the other side of
+/// the pointer (the way Dota's context menus open) and then held inside the viewport. The same
+/// answer for the same arguments, so a menu is placed once per opening and never moves again.
+fn fit(at: Vec2, size: Vec2, room: Vec2) -> Vec2 {
+    let flip = |at: f32, size: f32, room: f32| {
+        let corner = if at + size <= room { at } else { at - size };
+        corner.clamp(0.0, (room - size).max(0.0))
+    };
+    Vec2::new(flip(at.x, size.x, room.x), flip(at.y, size.y, room.y))
+}
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Menu>()
@@ -210,7 +222,10 @@ fn open(
         }
         let list = choices(core, &bag, &settling, slot);
         if !list.is_empty() {
-            menu.open = Some((at / ui_scale.0.max(0.1), list));
+            let scale = ui_scale.0.max(0.1);
+            let room = Vec2::new(window.width(), window.height()) / scale;
+            let size = Vec2::new(WIDTH, CHOICE_HEIGHT * list.len() as f32);
+            menu.open = Some((fit(at / scale, size, room), list));
             menu.stale = true;
             return;
         }
@@ -228,8 +243,6 @@ fn draw(
     roots: Query<Entity, With<Root>>,
     fonts: Res<Fonts>,
     texts: Res<Texts>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    ui_scale: Res<UiScale>,
 ) {
     if !menu.stale {
         return;
@@ -238,12 +251,9 @@ fn draw(
     for root in &roots {
         commands.entity(root).despawn();
     }
-    let Some((at, list)) = &menu.open else { return };
-    let scale = ui_scale.0.max(0.1);
-    let room = Vec2::new(window.width(), window.height()) / scale;
-    let height = CHOICE_HEIGHT * list.len() as f32;
-    let left = at.x.min(room.x - WIDTH - 2.0).max(0.0);
-    let top = at.y.min(room.y - height - 2.0).max(0.0);
+    let Some((corner, list)) = &menu.open else {
+        return;
+    };
     let root = commands
         .spawn((
             Root,
@@ -251,8 +261,8 @@ fn draw(
             Hovered::default(),
             Node {
                 position_type: PositionType::Absolute,
-                left: px(left),
-                top: px(top),
+                left: px(corner.x),
+                top: px(corner.y),
                 width: px(WIDTH),
                 flex_direction: FlexDirection::Column,
                 ..default()
@@ -269,7 +279,8 @@ fn draw(
                 Button,
                 Hovered::default(),
                 Node {
-                    min_height: px(CHOICE_HEIGHT),
+                    // Exactly the height `fit` placed the menu by.
+                    height: px(CHOICE_HEIGHT),
                     padding: UiRect::new(
                         px(8.0 * ui::DOTA),
                         px(4.0 * ui::DOTA),
@@ -340,4 +351,65 @@ fn reset(mut menu: ResMut<Menu>) {
         stale: true,
         ..default()
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A click at every pixel of the viewport, the last ones before each edge included, and of
+    /// viewports from a phone's to a wide screen's: the menu lies wholly inside, where it does not fit
+    /// it lies on the other side of the pointer, and the answer is the same every time it is asked.
+    #[test]
+    fn a_menu_fits_the_viewport_for_a_click_at_any_pixel_and_flips_to_the_pointers_other_side() {
+        for (width, height, choices) in [
+            (320.0, 240.0, 5.0),
+            (800.0, 500.0, 5.0),
+            (1920.0, 1080.0, 1.0),
+            (1920.0, 1080.0, 5.0),
+            (3440.0, 1440.0, 5.0),
+        ] {
+            let room = Vec2::new(width, height);
+            let size = Vec2::new(WIDTH, CHOICE_HEIGHT * choices);
+            for x in (0..width as u32).filter(|x| x % 7 == 0 || *x + 40 >= width as u32) {
+                for y in (0..height as u32).filter(|y| y % 7 == 0 || *y + 40 >= height as u32) {
+                    let at = Vec2::new(x as f32, y as f32);
+                    let corner = fit(at, size, room);
+                    assert_eq!(
+                        corner,
+                        fit(at, size, room),
+                        "the same click, the same place"
+                    );
+                    assert!(
+                        corner.x >= 0.0
+                            && corner.y >= 0.0
+                            && corner.x + size.x <= room.x
+                            && corner.y + size.y <= room.y,
+                        "{at} in {room}: the menu at {corner} leaves the viewport"
+                    );
+                    if at.x + size.x <= room.x {
+                        assert_eq!(
+                            corner.x, at.x,
+                            "{at} in {room}: room on the right, so it opens there"
+                        );
+                    } else if at.x >= size.x {
+                        assert_eq!(
+                            corner.x,
+                            at.x - size.x,
+                            "{at} in {room}: no room on the right, so it opens to the left of the pointer"
+                        );
+                    }
+                    if at.y + size.y <= room.y {
+                        assert_eq!(corner.y, at.y);
+                    } else if at.y >= size.y {
+                        assert_eq!(
+                            corner.y,
+                            at.y - size.y,
+                            "{at} in {room}: no room below, so it opens above the pointer"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

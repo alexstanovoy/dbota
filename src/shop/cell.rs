@@ -1,5 +1,5 @@
 //! An item's icon in the shop, as Dota draws one: the picture in a thin
-//! bronze frame, what the side's shop has left of it in the corner, and the
+//! frame that is gold for what the seat can buy now, what the side's shop has left of it in the corner, and the
 //! wait for the next one over a darkened picture when none is left.
 
 use bevy::prelude::*;
@@ -17,8 +17,7 @@ pub const CELL: (f32, f32) = (42.0, 31.0);
 /// Space between icons.
 pub const GAP: f32 = 4.0;
 
-/// The frame of an icon: as it stands, under the cursor, chosen.
-const EDGE: Color = Color::srgb(0.42, 0.34, 0.16);
+/// The frame of an icon: one the seat cannot buy, under the cursor, chosen.
 const EDGE_UNAVAILABLE: Color = Color::srgb(0.18, 0.18, 0.18);
 const EDGE_HOVER: Color = Color::srgb(0.86, 0.72, 0.36);
 const EDGE_CHOSEN: Color = Color::srgb(0.92, 0.93, 0.95);
@@ -114,7 +113,7 @@ pub fn spawn(
                 ..default()
             },
             BackgroundColor(Color::srgb(0.06, 0.07, 0.09)),
-            BorderColor::all(EDGE),
+            BorderColor::all(EDGE_UNAVAILABLE),
             ChildOf(parent),
         ))
         .id();
@@ -221,11 +220,43 @@ fn stock(
     }
 }
 
+/// Which items the seat can buy right now, worked out once for each view and queue the
+/// session shows rather than once for each of the hundreds of icons drawn.
+#[derive(Default)]
+struct Buyable {
+    stamp: Option<(u32, usize, i32, bool)>,
+    items: Vec<(u16, bool)>,
+}
+
+impl Buyable {
+    /// Whether the seat could buy `item` now, by the one prediction the client core makes.
+    fn can_buy(&mut self, core: &bota_client_core::App, item: u16) -> bool {
+        let stamp = (
+            core.view().map_or(0, |view| view.tick),
+            core.queued_buys.len(),
+            core.spendable_gold(),
+            core.in_tactical_phase(),
+        );
+        if self.stamp != Some(stamp) {
+            self.stamp = Some(stamp);
+            self.items.clear();
+        }
+        if let Some((_, buyable)) = self.items.iter().find(|(id, _)| *id == item) {
+            return *buyable;
+        }
+        let buyable = core.purchase_availability(item) == PurchaseAvailability::Available;
+        self.items.push((item, buyable));
+        buyable
+    }
+}
+
 /// The frame of each icon: brighter under the cursor, white for the item
-/// whose tree is shown.
+/// whose tree is shown, and gold only for an item the seat can buy now (Dota's
+/// `CanPurchase` border), plain for the rest.
 fn edges(
     session: NonSend<Session>,
     chosen: Res<Chosen>,
+    mut buyable: Local<Buyable>,
     mut cells: Query<(&ShopCell, &Place, &Hovered, &mut BorderColor)>,
 ) {
     for (cell, place, interaction, mut border) in &mut cells {
@@ -233,14 +264,10 @@ fn edges(
             EDGE_HOVER
         } else if chosen.0 == Some(cell.0) && *place != Place::Tree {
             EDGE_CHOSEN
-        } else if *place == Place::Quick {
-            if session.0.purchase_availability(cell.0) == PurchaseAvailability::Available {
-                ui::GOLDEN
-            } else {
-                EDGE_UNAVAILABLE
-            }
+        } else if buyable.can_buy(&session.0, cell.0) {
+            ui::GOLDEN
         } else {
-            EDGE
+            EDGE_UNAVAILABLE
         };
         border.set_if_neq(BorderColor::all(edge));
     }

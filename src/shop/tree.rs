@@ -11,19 +11,19 @@ use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::ui::Fonts;
 
-/// Space between the tree's rows.
+/// Space between the tree's rows, when it has all three.
 const ROW_GAP: f32 = 7.0;
 /// Space above and below the tree.
 const PAD: f32 = 6.0;
 /// The tree's height: three rows of icons.
-const HEIGHT: f32 = 3.0 * CELL.1 + 2.0 * ROW_GAP + 2.0 * PAD;
+pub(crate) const HEIGHT: f32 = 3.0 * CELL.1 + 2.0 * ROW_GAP + 2.0 * PAD;
 /// The lines' thickness and colour.
 const LINE: f32 = 2.0;
 const LINE_COLOR: Color = Color::srgba(0.74, 0.64, 0.26, 0.85);
 
 /// Where the tree's icons and lines go.
 #[derive(Component)]
-struct Tree;
+pub(crate) struct Tree;
 
 /// The shade over a part of the chosen item: shown while it is in hand. The
 /// part, and how many of it come before it among the parts.
@@ -47,11 +47,24 @@ pub fn spawn(commands: &mut Commands, panel: Entity) {
         Node {
             width: percent(100),
             height: px(HEIGHT),
+            // The icons are placed by their offsets in a band of this height: a band squeezed by a
+            // short panel would leave them hanging below it.
+            flex_shrink: 0.0,
             ..default()
         },
         BackgroundColor(Color::srgba(0.03, 0.035, 0.045, 0.98)),
         ChildOf(panel),
     ));
+}
+
+/// The tops of `n` rows of icons spread over the band, from its top padding to its foot's: one row
+/// alone is in the middle.
+fn rows(n: usize) -> Vec<f32> {
+    if n == 1 {
+        return vec![(HEIGHT - CELL.1) / 2.0];
+    }
+    let step = (HEIGHT - 2.0 * PAD - CELL.1) / (n - 1) as f32;
+    (0..n).map(|k| PAD + k as f32 * step).collect()
 }
 
 /// The left edge of the `i`th of `n` icons spread across a row.
@@ -79,15 +92,24 @@ fn draw(
         return;
     };
     let art = (&*fonts, &*manifest, &*server);
-    let rows = [PAD, PAD + CELL.1 + ROW_GAP, PAD + 2.0 * (CELL.1 + ROW_GAP)];
     let into = builds_into(id, catalog.offered);
     let parts = parts_of(id);
-    let middle = Vec2::new(spread(0, 1), rows[1]);
+    // Only the rows the item has: what it builds into above it, its parts below it, spread over
+    // the band from its top to its foot (as Dota draws a Divine Rapier, which builds into nothing,
+    // at the band's top with its two parts at its foot), and one row alone in the middle.
+    let rows = rows(usize::from(!into.is_empty()) + 1 + usize::from(!parts.is_empty()));
+    let (into_row, item_row, parts_row) = match (into.is_empty(), parts.is_empty()) {
+        (false, false) => (rows[0], rows[1], rows[2]),
+        (false, true) => (rows[0], rows[1], 0.0),
+        (true, false) => (0.0, rows[0], rows[1]),
+        (true, true) => (0.0, rows[0], 0.0),
+    };
+    let middle = Vec2::new(spread(0, 1), item_row);
     let tops: Vec<Vec2> = (0..into.len())
-        .map(|i| Vec2::new(spread(i, into.len()), rows[0]))
+        .map(|i| Vec2::new(spread(i, into.len()), into_row))
         .collect();
     let feet: Vec<Vec2> = (0..parts.len())
-        .map(|i| Vec2::new(spread(i, parts.len()), rows[2]))
+        .map(|i| Vec2::new(spread(i, parts.len()), parts_row))
         .collect();
     let half = Vec2::new(CELL.0, CELL.1) / 2.0;
     for at in tops.iter().chain(&feet) {

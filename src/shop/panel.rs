@@ -202,6 +202,7 @@ fn spawn_search(commands: &mut Commands, fonts: &Fonts, catalog: &Catalog, panel
         .spawn((
             Node {
                 padding: UiRect::new(px(PAD), px(PAD), px(PAD), px(6)),
+                flex_shrink: 0.0,
                 ..default()
             },
             ChildOf(panel),
@@ -281,6 +282,7 @@ fn spawn_tabs(commands: &mut Commands, fonts: &Fonts, catalog: &Catalog, panel: 
                 padding: UiRect::horizontal(px(PAD + 12.0)),
                 column_gap: px(6),
                 border: UiRect::bottom(px(1)),
+                flex_shrink: 0.0,
                 ..default()
             },
             BorderColor::all(PANEL_EDGE),
@@ -436,6 +438,7 @@ fn spawn_foot(commands: &mut Commands, fonts: &Fonts, panel: Entity) {
                 padding: UiRect::axes(px(PAD), px(6)),
                 column_gap: px(6),
                 align_items: AlignItems::Center,
+                flex_shrink: 0.0,
                 ..default()
             },
             ChildOf(panel),

@@ -24,7 +24,11 @@ pub use corner::STICKY;
 #[cfg(test)]
 pub(crate) use corner::{GrabAll, ShopButton, drawn_gold, drawn_gold_style};
 pub(crate) use drag::ShopDrag;
+#[cfg(test)]
+pub(crate) use panel::ShopPanel;
 pub use plugin::plugin;
+#[cfg(test)]
+pub(crate) use tree::{HEIGHT as TREE_HEIGHT, Tree};
 
 /// The item an inventory slot shows, including ordered moves not in the snapshot yet.
 pub(crate) fn displayed_item(

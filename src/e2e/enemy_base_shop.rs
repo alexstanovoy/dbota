@@ -44,11 +44,18 @@ fn marker<T: Component>(client: &mut Client) -> Entity {
         .expect("HUD node")
 }
 
+/// Puts the pointer on a node and waits until the interface says it is over it: a click that comes
+/// before that goes to nobody, as the pointer's hover reaches the interface some frames after it
+/// arrives.
+pub(super) fn aim(client: &mut Client, node: Entity) {
+    client.hover_ui(node, std::time::Duration::from_secs(20));
+}
+
 pub(super) fn click_node(client: &mut Client, node: Entity) {
     client.until("the button laid out", |c| {
         c.centre_of(node).is_some_and(|at| at != Vec2::ZERO)
     });
-    client.mouse(client.centre_of(node).expect("button position"));
+    aim(client, node);
     client.click(MouseButton::Left);
 }
 
@@ -134,7 +141,7 @@ fn enemy_base_lights_the_shop_and_shows_the_same_stash_with_grab_all() {
 fn menu(client: &mut Client, item: ItemId) {
     let slot = client.slot_of(item).expect("owned item");
     let node = client.item_box(slot).expect("drawn slot");
-    client.mouse(client.centre_of(node).expect("slot position"));
+    aim(client, node);
     client.click(MouseButton::Right);
     let info = client
         .world()

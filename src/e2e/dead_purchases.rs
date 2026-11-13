@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bota_client_core::Intent;
 use bota_proto::{Cheat, HeroId, ItemId, RejectReason};
 
-use super::enemy_base_shop::click_node;
+use super::enemy_base_shop::{aim, click_node};
 use super::harness::{Client, MID, Server};
 use super::items::button_saying;
 use super::purchase_destination::{icon_in_slot, stash};
@@ -65,7 +65,7 @@ fn a_shop_purchase_while_dead_draws_in_inventory_and_refunds_through_the_menu() 
     );
     assert!(stash(&client).iter().all(Option::is_none));
     let node = client.item_box(1).expect("new item slot");
-    client.mouse(client.centre_of(node).expect("slot position"));
+    aim(&mut client, node);
     client.click(MouseButton::Right);
     let texts = client.world().resource::<crate::dota_text::Texts>();
     let info = texts
@@ -86,7 +86,7 @@ fn a_shop_purchase_while_dead_draws_in_inventory_and_refunds_through_the_menu() 
         "the refund occurred during the same death"
     );
     let old = client.item_box(0).expect("old item slot");
-    client.mouse(client.centre_of(old).expect("slot position"));
+    aim(&mut client, old);
     client.click(MouseButton::Right);
     client.until("the older item's menu drawn", |c| {
         button_saying(c, &info).is_some()
