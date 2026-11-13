@@ -504,6 +504,7 @@ fn right_column(commands: &mut Commands, kit: &Kit, core: &bota_client_core::App
             Button,
             Lift(1.03),
             Name::new("pick ready"),
+            Spot("pick lock in"),
             button_node(shot.val(r::LOCK_IN[0]), shot.val(r::LOCK_IN[1])),
             BackgroundColor(BUTTON_OFF),
             BorderColor::all(BUTTON_EDGE),
@@ -528,6 +529,7 @@ fn right_column(commands: &mut Commands, kit: &Kit, core: &bota_client_core::App
             Button,
             Lift(1.03),
             Name::new("pick random"),
+            Spot("pick random"),
             Node {
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,

@@ -17,17 +17,21 @@ use crate::theme::{self, Face};
 use crate::tips::{AbilityTile, TalentTile};
 use crate::ui::Cover;
 
-/// A hero's figures as the panel shows them.
+/// A hero's figures as the panel shows them (the install's hero data: Attack Rate is the base
+/// attack time, `BaseAttackSpeed` 100 plus one point per agility is the attack speed, damage is
+/// the average of the minimum and maximum with the primary attribute's points added).
 pub struct Facts {
     pub primary: Option<Attribute>,
     /// Each attribute: its mark, its name, what the hero starts with and what a level adds.
     pub attributes: [(&'static str, &'static str, i32, f32); 3],
-    pub damage: (i32, i32),
+    /// The average of an attack's damage at level one, attribute bonus in.
+    pub damage: i32,
     pub armor: f32,
-    pub magic_resist: i32,
     pub move_speed: i32,
-    /// Seconds between two attacks.
+    /// Seconds between two attacks at the base attack speed (Dota's "attack rate").
     pub attack_time: f32,
+    /// Attack speed: the base and what agility adds.
+    pub attack_speed: i32,
     pub attack_range: i32,
     pub ranged: bool,
     pub health: (i32, f32),
@@ -39,8 +43,7 @@ impl Facts {
         let unit = hero.unit;
         let attributes = unit.attributes;
         let growth = unit.per_level.attributes;
-        let damage = bota_core::base_damage_least(unit, 1);
-        let speed = unit.attack_speed + bota_core::agility_attack_speed(attributes);
+        let least = bota_core::base_damage_least(unit, 1);
         let per_second = |base: bota_proto::Fixed, per_point: bota_proto::Fixed, points| {
             ((base + points * per_point)
                 * bota_proto::Fixed::from_int(bota_core::rules::TICKS_PER_SECOND as i32))
@@ -68,12 +71,11 @@ impl Facts {
                     growth.intelligence.to_f32(),
                 ),
             ],
-            damage: (damage, damage + unit.damage_spread),
+            damage: least + unit.damage_spread / 2,
             armor: unit.armor as f32 + bota_core::agility_armor(attributes).to_f32(),
-            magic_resist: unit.magic_resist_pct
-                + bota_core::intelligence_magic_resist_bp(attributes) / 100,
             move_speed: unit.move_speed,
-            attack_time: bota_core::attack_duration(unit.attack_time, speed) as f32 / 1000.0,
+            attack_time: unit.attack_time as f32 / 1000.0,
+            attack_speed: unit.attack_speed + bota_core::agility_attack_speed(attributes),
             attack_range: unit.attack_range,
             ranged: unit.projectile_speed.is_some(),
             health: (
@@ -273,7 +275,7 @@ pub fn shell(commands: &mut Commands, root: Entity) -> Entity {
                 width: percent(100),
                 flex_direction: FlexDirection::Column,
                 border: UiRect::all(px(1)),
-                padding: UiRect::bottom(shot.val(r::PANEL_BOTTOM)),
+                height: shot.val(r::PANEL_HEIGHT),
                 ..default()
             },
             BackgroundColor(Color::srgba_u8(0x0B, 0x10, 0x16, 0xF2)),
@@ -491,14 +493,15 @@ fn stats(commands: &mut Commands, kit: &Kit, column: Entity, facts: &Facts) {
             ChildOf(column),
         ))
         .id();
-    let (least, most) = facts.damage;
+    // The original's six, in its order: down the first column damage, armor and move speed, down
+    // the second the attack rate, the attack speed and the attack range.
     let figures = [
-        ("hud.damage", format!("{least}-{most}")),
+        ("hud.damage", facts.damage.to_string()),
         ("hud.armor", format!("{:.1}", facts.armor)),
         ("hud.speed", facts.move_speed.to_string()),
-        ("tip.cooldown", format!("{:.1}", facts.attack_time)),
-        ("hud.magic_resist", format!("{}%", facts.magic_resist)),
-        ("tip.range", facts.attack_range.to_string()),
+        ("hud.attack_speed2", format!("{:.1}", facts.attack_time)),
+        ("hud.attack_speed3", facts.attack_speed.to_string()),
+        ("hud.attack_range", facts.attack_range.to_string()),
     ];
     // Two columns of three: the figures go down the first, then down the second.
     for at in [0, 3, 1, 4, 2, 5] {

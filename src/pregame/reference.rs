@@ -67,6 +67,9 @@ pub const CARD_COLUMNS: usize = 6;
 pub const CARD_INSET: f32 = 5.0;
 /// The hero panel at the right.
 pub const PANEL: [f32; 3] = [2012.0, 268.0, 564.0];
+/// The panel's height: the space under the bars is the reference's description and similar
+/// heroes, left empty.
+pub const PANEL_HEIGHT: f32 = 907.0;
 pub const PANEL_TITLE_HEIGHT: f32 = 67.0;
 pub const PANEL_INSET: f32 = 26.0;
 pub const PANEL_PORTRAIT: [f32; 2] = [238.0, 366.0];
@@ -82,7 +85,6 @@ pub const PANEL_SKILLS_GAP: f32 = 14.0;
 pub const PANEL_BAR: [f32; 2] = [512.0, 38.0];
 pub const PANEL_BARS_GAP: f32 = 38.0;
 pub const PANEL_BAR_PITCH: f32 = 42.0;
-pub const PANEL_BOTTOM: f32 = 30.0;
 /// LOCK IN and RANDOM: widths, height and the gap between them and under the panel.
 pub const LOCK_IN: [f32; 2] = [406.0, 98.0];
 pub const RANDOM: [f32; 2] = [140.0, 98.0];
@@ -103,7 +105,7 @@ pub const MARKS_GAP: f32 = 15.0;
 pub const ABILITIES_GAP: f32 = 20.0;
 /// The hero's model: the share of the screen's height it stands tall, where its feet stand, and
 /// the middle of it across, as a share of the screen's width.
-pub const MODEL: [f32; 3] = [0.528, 0.888, 0.237];
+pub const MODEL: [f32; 3] = [0.57, 0.895, 0.237];
 /// STARTING ITEMS: its left and width, and its top (the first block of the right column).
 pub const STARTING_ITEMS: [f32; 3] = [1246.0, 247.0, 1323.0];
 
@@ -162,7 +164,7 @@ pub const ELEMENTS: &[Element] = &[
         name: "pick panel",
         screen: Screen::Pick,
         anchor: Anchor::Left,
-        rect: [PANEL[0], PANEL[1], PANEL[2], 0.0],
+        rect: [PANEL[0], PANEL[1], PANEL[2], PANEL_HEIGHT],
     },
     Element {
         name: "pick panel portrait",
@@ -211,6 +213,28 @@ pub const ELEMENTS: &[Element] = &[
                 + PANEL_BARS_GAP,
             PANEL_BAR[0],
             PANEL_BAR[1],
+        ],
+    },
+    Element {
+        name: "pick lock in",
+        screen: Screen::Pick,
+        anchor: Anchor::Left,
+        rect: [
+            PANEL[0],
+            PANEL[1] + PANEL_HEIGHT + BUTTONS_GAP[1],
+            LOCK_IN[0],
+            LOCK_IN[1],
+        ],
+    },
+    Element {
+        name: "pick random",
+        screen: Screen::Pick,
+        anchor: Anchor::Left,
+        rect: [
+            PANEL[0] + LOCK_IN[0] + BUTTONS_GAP[0],
+            PANEL[1] + PANEL_HEIGHT + BUTTONS_GAP[1],
+            RANDOM[0],
+            RANDOM[1],
         ],
     },
     Element {

@@ -848,6 +848,10 @@ texture hud.gold_small panorama/images/hud/reborn/gold_small_psd.vtex_c hud/gold
 texture hud.armor panorama/images/hud/reborn/icon_armor_psd.vtex_c hud/icon_armor_psd.png
 texture hud.damage panorama/images/hud/reborn/icon_damage_psd.vtex_c hud/icon_damage_psd.png
 texture hud.speed panorama/images/hud/reborn/icon_speed_psd.vtex_c hud/icon_speed_psd.png
+# The pick panel's attack figures (as the original's pick screen draws them): the attack rate's clock (attack_speed2), the attack speed's arcs (attack_speed3) and the attack range's arrows.
+texture hud.attack_speed2 panorama/images/hud/reborn/icon_attack_speed2_psd.vtex_c hud/icon_attack_speed2_psd.png
+texture hud.attack_speed3 panorama/images/hud/reborn/icon_attack_speed3_psd.vtex_c hud/icon_attack_speed3_psd.png
+texture hud.attack_range panorama/images/hud/reborn/icon_attack_range_psd.vtex_c hud/icon_attack_range_psd.png
 texture hud.death panorama/images/hud/reborn/icon_death_psd.vtex_c hud/icon_death_psd.png
 texture hud.day panorama/images/hud/reborn/icon_sun_psd.vtex_c hud/icon_sun_psd.png
 texture hud.night panorama/images/hud/reborn/icon_moon_psd.vtex_c hud/icon_moon_psd.png

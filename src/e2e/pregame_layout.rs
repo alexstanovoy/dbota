@@ -183,10 +183,54 @@ fn the_strategy_screens_measured_rectangles_hold_at_full_hd() {
     strategy_screen_matches_at("1920x1080");
 }
 
-/// The hero's model stands on the strategy screen's stage with its middle where the reference has
-/// it across the screen.
+/// The model's vertices as the stage's camera sees them, in window pixels: the top left and the
+/// bottom right of the figure, and the stage picture's own rectangle.
+fn model_bounds(client: &mut Client) -> (Vec2, Vec2) {
+    let world = client.world_mut();
+    let pivot = world
+        .resource::<crate::main_menu::hero_stage::HeroStage>()
+        .actor
+        .as_ref()
+        .expect("the stage's actor")
+        .pivot;
+    let (node, at) = world
+        .query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::main_menu::hero_stage::HeroImage>>()
+        .single(world)
+        .expect("the stage's picture");
+    // In window pixels, as the layout computes them.
+    let rect = Rect::from_center_size(at.translation, node.size());
+    let (camera, projection) = world
+        .query_filtered::<(&GlobalTransform, &Projection), With<crate::main_menu::hero_stage::HeroCamera>>()
+        .single(world)
+        .expect("the stage camera");
+    let Projection::Perspective(lens) = projection else {
+        panic!("a perspective lens");
+    };
+    let matrix = bevy::math::proj::perspective(lens.fov, lens.aspect_ratio, lens.near, lens.far)
+        * Mat4::from(camera.affine().inverse());
+    let mut geometry =
+        bevy::ecs::system::SystemState::<crate::main_menu::hero_stage::ModelGeometry>::new(world);
+    let points = geometry
+        .get(world)
+        .expect("model geometry queries")
+        .points(pivot)
+        .expect("the rendered vertices");
+    let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for point in points {
+        let projected = matrix.project_point3(point + crate::portrait::STAGE);
+        let at = rect.min
+            + Vec2::new((projected.x + 1.0) / 2.0, (1.0 - projected.y) / 2.0) * rect.size();
+        lo = lo.min(at);
+        hi = hi.max(at);
+    }
+    (lo, hi)
+}
+
+/// The hero stands on the strategy screen's stage as measured: its middle where the reference has
+/// it across, its feet on the ground line low in the picture, 55 to 60 percent of the window tall
+/// (the idle pose moves a little), and its contact shadow right under its feet.
 #[test]
-fn the_strategy_screen_stands_the_picked_heros_model_where_the_reference_has_it() {
+fn the_strategy_screen_stands_the_picked_hero_on_the_ground_where_the_reference_has_it() {
     let (_server, mut client) = ten_seats("1920x1080");
     client.click_named("pick shadow fiend");
     client.click_named("pick ready");
@@ -196,19 +240,125 @@ fn the_strategy_screen_stands_the_picked_heros_model_where_the_reference_has_it(
             .resource::<crate::main_menu::hero_stage::HeroStage>();
         stage.hero == Some(HeroId::SHADOW_FIEND) && stage.ready()
     });
+    // The camera's transform reaches its global one a frame after the stage frames the model.
+    client.frames(5);
     let window = window_of(&mut client);
+    let (lo, hi) = model_bounds(&mut client);
+    let (height, feet, middle) = (
+        (hi.y - lo.y) / window.y,
+        hi.y / window.y,
+        (lo.x + hi.x) / 2.0,
+    );
+    assert!(
+        (0.53..0.62).contains(&height),
+        "the model's height {height} of the window"
+    );
+    assert!(
+        (0.86..0.92).contains(&feet),
+        "the model's feet at {feet} of the window"
+    );
+    let wanted = crate::pregame::reference::MODEL[2] * window.x;
+    assert!(
+        (middle - wanted).abs() < 0.03 * window.y,
+        "the model's middle across: {middle} but measured {wanted}"
+    );
     let world = client.world_mut();
     let (node, at) = world
         .query::<(&Name, &ComputedNode, &bevy::ui::UiGlobalTransform)>()
         .iter(world)
-        .find(|(name, ..)| name.as_str() == "strategy hero")
+        .find(|(name, ..)| name.as_str() == "strategy hero shadow")
         .map(|(_, node, at)| (node.size(), at.translation))
-        .expect("the stage's picture on the screen");
-    let middle = crate::pregame::reference::MODEL[2] * window.x;
+        .expect("the contact shadow on the screen");
+    assert!(node.x > 0.0, "the shadow is laid out");
     assert!(
-        (at.x - middle).abs() < TOLERANCE * window.y,
-        "the model's middle across: {} but measured {middle}",
+        (at.x - middle).abs() < 0.02 * window.y,
+        "the shadow {} is under the model's middle {middle}",
         at.x
     );
-    assert!(node.y > 0.4 * window.y, "the model is tall: {node}");
+    assert!(
+        (at.y - hi.y).abs() < 0.04 * window.y,
+        "the shadow {} is under the model's feet {}",
+        at.y,
+        hi.y
+    );
+}
+
+/// Every text of the pick and the strategy screens is set in the original game's faces
+/// (letter-spaced capitals and all), none in the plain fallback fonts. The item slots and the
+/// shop's cells are the shop's own components and are left out.
+fn plain_texts_under(client: &mut Client, root: Entity) -> Vec<String> {
+    use super::harness::subtree;
+    let world = client.world_mut();
+    let (plain, regular) = {
+        let fonts = world.resource::<crate::ui::Fonts>();
+        (fonts.bold.clone(), fonts.regular.clone())
+    };
+    let shop: std::collections::HashSet<Entity> = subtree(world, root)
+        .into_iter()
+        .filter(|e| {
+            world.get::<crate::shop::ShopCell>(*e).is_some()
+                || world.get::<crate::hud::ItemBox>(*e).is_some()
+        })
+        .flat_map(|e| subtree(world, e))
+        .collect();
+    subtree(world, root)
+        .into_iter()
+        .filter(|e| !shop.contains(e))
+        .filter_map(|e| {
+            let font = world.get::<TextFont>(e)?;
+            let used = font.font == plain.clone().into() || font.font == regular.clone().into();
+            used.then(|| {
+                world
+                    .get::<Text>(e)
+                    .map_or_else(|| format!("{e:?}"), |t| t.0.clone())
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn no_text_of_the_pick_or_the_strategy_screen_is_set_in_a_fallback_font() {
+    let (_server, mut client) = ten_seats("1920x1080");
+    client.within(PATIENCE, "the pick screen", |c| {
+        named_root(c, "pick screen").is_some()
+    });
+    let root = named_root(&mut client, "pick screen").expect("the pick screen");
+    let plain = plain_texts_under(&mut client, root);
+    assert!(
+        plain.is_empty(),
+        "pick screen texts in a fallback font: {plain:?}"
+    );
+    client.click_named("pick shadow fiend");
+    client.click_named("pick ready");
+    client.within(PATIENCE, "the strategy phase", |c| {
+        c.core().in_tactical_phase()
+    });
+    client.within(PATIENCE, "the strategy screen", |c| {
+        c.world_mut()
+            .query_filtered::<Entity, With<crate::strategy::Screen>>()
+            .iter(c.world())
+            .next()
+            .is_some()
+    });
+    let root = {
+        let world = client.world_mut();
+        world
+            .query_filtered::<Entity, With<crate::strategy::Screen>>()
+            .single(world)
+            .expect("the strategy screen")
+    };
+    let plain = plain_texts_under(&mut client, root);
+    assert!(
+        plain.is_empty(),
+        "strategy screen texts in a fallback font: {plain:?}"
+    );
+}
+
+fn named_root(client: &mut Client, name: &str) -> Option<Entity> {
+    let world = client.world_mut();
+    world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, n)| n.as_str() == name)
+        .map(|(e, _)| e)
 }

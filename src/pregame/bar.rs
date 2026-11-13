@@ -40,12 +40,18 @@ impl Style {
     }
 }
 
-/// The picture of a seat's hero.
+/// The picture of a seat's hero: the hero the lobby says it holds, or on the pick screen, for
+/// one's own seat, the hero chosen and not locked in yet, shown dim (as the original game does:
+/// nobody else sees it).
 #[derive(Component)]
 struct SeatPicture {
     slot: SlotId,
-    hero: Option<u16>,
+    style: Style,
+    shown: Option<(u16, bool)>,
 }
+
+/// The tint of a hero that is only chosen.
+const PREVIEW: Color = Color::srgba(0.42, 0.47, 0.54, 0.55);
 
 /// The name of a seat's player.
 #[derive(Component)]
@@ -182,7 +188,11 @@ fn spawn_seat(
         Style::Strategy => (0.0, r::STRATEGY_SEAT_BAR_HEIGHT),
     };
     commands.spawn((
-        SeatPicture { slot, hero: None },
+        SeatPicture {
+            slot,
+            style,
+            shown: None,
+        },
         Cover,
         ImageNode::default().with_color(Color::NONE),
         Node {
@@ -215,6 +225,29 @@ fn spawn_seat(
         Pickable::IGNORE,
         ChildOf(frame),
     ));
+    if local && style == Style::Pick {
+        // The glow the original game puts under one's own name.
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: shot.val(-30.0),
+                right: shot.val(-30.0),
+                top: shot.val(r::SEAT_NAME[0] - 16.0),
+                height: shot.val(110.0),
+                ..default()
+            },
+            BackgroundGradient::from(RadialGradient::new(
+                UiPosition::CENTER,
+                RadialGradientShape::Ellipse(percent(50), percent(50)),
+                vec![
+                    ColorStop::new(Color::srgba(0.45, 0.62, 0.9, 0.38), percent(0)),
+                    ColorStop::new(Color::NONE, percent(100)),
+                ],
+            )),
+            Pickable::IGNORE,
+            ChildOf(column),
+        ));
+    }
     let ink = if local { theme::INK_1 } else { theme::INK_4 };
     commands.spawn((
         SeatName(slot),
@@ -263,6 +296,7 @@ fn ground(style: Style) -> impl Bundle {
 /// Keeps every seat's picture and name what the lobby says.
 fn refresh(
     session: NonSend<Session>,
+    choice: Res<crate::select::Choice>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     mut pictures: Query<(&mut SeatPicture, &mut ImageNode)>,
@@ -270,19 +304,25 @@ fn refresh(
 ) {
     let core = &session.0;
     for (mut seat, mut image) in &mut pictures {
-        let hero = core
+        let locked = core
             .lobby
             .slots
             .iter()
             .find(|s| s.slot == seat.slot)
             .and_then(|s| s.hero)
-            .map(|h| h.0);
-        if seat.hero == hero {
+            .map(|h| (h.0, true));
+        let preview = (seat.style == Style::Pick && core.my_slot == Some(seat.slot))
+            .then_some(choice.chosen)
+            .flatten()
+            .map(|hero| (hero, false));
+        let shown = locked.or(preview);
+        if seat.shown == shown {
             continue;
         }
-        seat.hero = hero;
-        *image = match hero.and_then(|hero| manifest.hero_icon(hero)) {
-            Some(path) => ImageNode::new(server.load(path)),
+        seat.shown = shown;
+        *image = match shown.and_then(|(hero, _)| manifest.hero_icon(hero).map(|p| (p, shown))) {
+            Some((path, Some((_, true)))) => ImageNode::new(server.load(path)),
+            Some((path, _)) => ImageNode::new(server.load(path)).with_color(PREVIEW),
             None => ImageNode::default().with_color(Color::NONE),
         };
     }

@@ -42,6 +42,13 @@ pub(crate) struct HeroImage(bota_proto::HeroId);
 pub(crate) struct Front;
 #[derive(Component)]
 pub(crate) struct ContactShadow;
+/// Where a contact shadow stands when it is not the Home page's: the stage's picture scaled by
+/// `scale`, the shadow's middle `centre` pixels from the middle of its place across.
+#[derive(Component)]
+pub(crate) struct StageShadow {
+    pub scale: f32,
+    pub centre: f32,
+}
 #[derive(Component)]
 pub(crate) struct HeroCamera;
 #[derive(Component)]
@@ -63,6 +70,8 @@ pub(crate) struct HeroStage {
     reference: Vec<Vec3>,
     warmup: u8,
     render: bool,
+    /// Whether the stage was made for a screen of its own (lit stronger).
+    lit: bool,
 }
 
 impl HeroStage {
@@ -162,7 +171,8 @@ fn select(
         .find(|(.., front)| *front)
         .or_else(|| nodes.iter().next())
         .map(|(hero, ..)| hero.0);
-    if hero != stage.hero || hero.is_none() {
+    let front = nodes.iter().any(|(.., front)| front);
+    if hero != stage.hero || hero.is_none() || front != stage.lit {
         if let Some(actor) = stage.actor.take() {
             commands.entity(actor.pivot).despawn();
         }
@@ -177,6 +187,7 @@ fn select(
         stage.reference = Vec::new();
         stage.warmup = 0;
         stage.hero = hero;
+        stage.lit = front;
         stage.model = hero.and_then(|hero| {
             let name = manifest.dota_name("hero", hero.0)?;
             bank.request(&format!("hero.{name}.model"), &server, &manifest)
@@ -210,11 +221,13 @@ fn select(
             None,
             LAYER,
         ));
-        spawn_camera(&mut commands, stage.image.clone());
+        spawn_camera(&mut commands, stage.image.clone(), front);
     }
 }
 
-fn spawn_camera(commands: &mut Commands, image: Handle<Image>) {
+fn spawn_camera(commands: &mut Commands, image: Handle<Image>, lit: bool) {
+    // A screen's own stage (the strategy screen's room) is lit stronger, and from above too.
+    let gain = if lit { 1.7 } else { 1.0 };
     commands.spawn((
         StageEntity,
         HeroCamera,
@@ -238,7 +251,7 @@ fn spawn_camera(commands: &mut Commands, image: Handle<Image>) {
         }),
         AmbientLight {
             color: Color::srgb(0.65, 0.75, 0.9),
-            brightness: 450.0,
+            brightness: 450.0 * gain,
             ..default()
         },
         RenderLayers::layer(LAYER),
@@ -246,18 +259,26 @@ fn spawn_camera(commands: &mut Commands, image: Handle<Image>) {
         Msaa::Sample4,
         bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface,
     ));
+    let top = [(
+        Vec3::new(0.05, -1.0, 0.15),
+        Color::srgb(0.95, 0.95, 1.0),
+        6000.0,
+    )];
     for (direction, color, illuminance) in [
         (
             Vec3::new(0.6, -1.0, 0.8),
             Color::srgb(0.75, 0.85, 1.0),
-            7000.0,
+            7000.0 * gain,
         ),
         (
             Vec3::new(-0.5, -0.7, -1.0),
             Color::srgb(0.65, 0.8, 1.0),
-            3500.0,
+            3500.0 * gain,
         ),
-    ] {
+    ]
+    .into_iter()
+    .chain(top.into_iter().filter(|_| lit))
+    {
         commands.spawn((
             StageEntity,
             HeroLight,
@@ -319,7 +340,7 @@ fn frame(
     time: Res<Time<bevy::time::Real>>,
     geometry: ModelGeometry,
     mut cameras: Query<(&mut Camera, &mut Transform, &mut Projection), With<HeroCamera>>,
-    mut shadows: Query<&mut Node, With<ContactShadow>>,
+    mut shadows: Query<(&mut Node, Option<&StageShadow>), With<ContactShadow>>,
     faces: Res<Faces>,
     mut weights: Query<&mut MorphWeights>,
     mut commands: Commands,
@@ -342,9 +363,10 @@ fn frame(
             if let Projection::Perspective(p) = &mut *projection {
                 p.far = prepared.far;
             }
-            for mut shadow in &mut shadows {
-                shadow.width = px(prepared.shadow);
-                shadow.margin.left = px(-200.0 - prepared.shadow / 2.0);
+            for (mut shadow, placed) in &mut shadows {
+                let (scale, centre) = placed.map_or((1.0, -200.0), |p| (p.scale, p.centre));
+                shadow.width = px(prepared.shadow * scale);
+                shadow.margin.left = px(centre - prepared.shadow * scale / 2.0);
             }
             stage.framed = true;
             if let Some((player, node, _)) = prepared.idle
@@ -409,9 +431,10 @@ fn prepare(
     let reference = std::mem::take(&mut stage.reference);
     let (center, half) = point_bounds(&points);
     debug!(hero = ?stage.hero, vertices = reference.len(), sampled_vertices = points.len(), "Home idle framing ready");
+    // A hero on a screen's own stage stands on its floor; Home's hover above the shadow's line.
     let hover = HOVER
         .iter()
-        .find(|(hero, _)| Some(*hero) == stage.hero)
+        .find(|(hero, _)| Some(*hero) == stage.hero && !stage.lit)
         .map_or(0.0, |(_, hover)| *hover);
     let camera = framing(center, half, &reference, &points, hover);
     Ok(Some(Prepared {
@@ -689,11 +712,7 @@ pub(crate) fn stand(
     stand: &Stand,
 ) {
     let scale = stand.height / HEIGHT;
-    let hover = HOVER
-        .iter()
-        .find(|(h, _)| *h == hero)
-        .map_or(0.0, |(_, hover)| *hover);
-    let top = stand.feet - (GROUND - TOP - hover) * scale;
+    let top = stand.feet - (GROUND - TOP) * scale;
     let (width, height) = (SIZE.0 as f32 * scale, SIZE.1 as f32 * scale);
     let left = |across: f32| Node {
         position_type: PositionType::Absolute,
@@ -703,8 +722,9 @@ pub(crate) fn stand(
     };
     commands.spawn((
         ContactShadow,
+        StageShadow { scale, centre: 0.0 },
         Node {
-            top: px(top + (GROUND - 24.0 - TOP - hover) * scale),
+            top: px(top + (GROUND - 24.0 - TOP) * scale),
             width: px(220.0 * scale),
             height: px(48.0 * scale),
             ..left(220.0 * scale)

@@ -217,6 +217,7 @@ fn details(commands: &mut Commands, kit: &Kit, hero: u16, root: Entity) {
         return;
     };
     let shot = STRATEGY;
+    stage_light(commands, root, r::MODEL);
     let column = commands
         .spawn((
             Node {
@@ -327,10 +328,10 @@ fn starting_items(commands: &mut Commands, kit: &Kit, catalog: &Catalog, root: E
         },
         BackgroundColor(Color::BLACK),
         ChildOf(panel),
-        children![ui::text(
+        children![STRATEGY.text(
+            kit,
             kit.word("DOTA_Item_Build_Starting_Items", "Starting Items"),
-            &kit.fonts.bold,
-            16.0 * ui::DOTA,
+            (Face::Semibold, 24.0, 4.0),
             Color::WHITE,
         )],
     ));
@@ -381,7 +382,7 @@ fn left_column(commands: &mut Commands, kit: &Kit, contents: Entity) {
         .id();
     commands.spawn((
         Gold,
-        ui::text("", &kit.fonts.bold, 24.0 * ui::DOTA, GOLD_INK),
+        STRATEGY.text(kit, "", (Face::Bold, 40.0, 0.0), GOLD_INK),
         ChildOf(gold),
     ));
     commands.spawn((
@@ -491,11 +492,10 @@ fn item_lists(commands: &mut Commands, kit: &Kit, catalog: &Catalog, contents: E
             ))
             .id();
         commands.spawn((
-            ui::text(
-                kit.word(&format!("dota_pregame_shop_{key}"), plain)
-                    .to_uppercase(),
-                &kit.fonts.regular,
-                16.0 * ui::DOTA,
+            STRATEGY.text(
+                kit,
+                kit.word(&format!("dota_pregame_shop_{key}"), plain),
+                (Face::Regular, 24.0, 3.0),
                 TITLE_INK,
             ),
             ChildOf(column),
@@ -523,10 +523,10 @@ fn item_lists(commands: &mut Commands, kit: &Kit, catalog: &Catalog, contents: E
 /// A control's title (Dota's `.StrategyControlTitle`).
 fn title(commands: &mut Commands, kit: &Kit, parent: Entity, key: &str, plain: &str) {
     commands.spawn((
-        ui::text(
+        STRATEGY.text(
+            kit,
             kit.word(key, plain),
-            &kit.fonts.regular,
-            16.0 * ui::DOTA,
+            (Face::Regular, 24.0, 3.0),
             TITLE_INK,
         ),
         ChildOf(parent),
@@ -559,5 +559,55 @@ fn clock_text(
     let gold = session.0.gold_after_queue().to_string();
     for mut text in &mut golds {
         text.set_if_neq(Text(gold.clone()));
+    }
+}
+
+/// The light of the hero's room, geometry only: a pool on the floor under the hero and a soft
+/// beam from above, both about the model's middle, as the original game's stage has them.
+fn stage_light(commands: &mut Commands, root: Entity, [height, feet, middle]: [f32; 3]) {
+    let shot = STRATEGY;
+    let tall = height * r::STRATEGY_HEIGHT;
+    let ground = feet * r::STRATEGY_HEIGHT;
+    let glow = |alpha: f32| {
+        BackgroundGradient::from(RadialGradient::new(
+            UiPosition::CENTER,
+            RadialGradientShape::Ellipse(percent(50), percent(50)),
+            vec![
+                ColorStop::new(Color::srgba(0.75, 0.82, 0.95, alpha), percent(0)),
+                ColorStop::new(Color::NONE, percent(100)),
+            ],
+        ))
+    };
+    for (name, across, high, centre, alpha) in [
+        (
+            "strategy floor light",
+            1.5 * tall,
+            0.36 * tall,
+            ground - 0.08 * tall,
+            0.20,
+        ),
+        (
+            "strategy beam",
+            0.9 * tall,
+            1.15 * tall,
+            ground - 0.62 * tall,
+            0.16,
+        ),
+    ] {
+        commands.spawn((
+            Name::new(name),
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(middle * 100.0),
+                margin: UiRect::left(shot.val(-across / 2.0)),
+                top: shot.val(centre - high / 2.0),
+                width: shot.val(across),
+                height: shot.val(high),
+                ..default()
+            },
+            glow(alpha),
+            Pickable::IGNORE,
+            ChildOf(root),
+        ));
     }
 }
