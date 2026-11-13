@@ -27,6 +27,9 @@ pub fn dim(css: f32) -> f32 {
     1.0 - (1.0 - css).powf(2.2)
 }
 
+/// The original 40% sRGB foreground opacity, expressed in linear blending.
+pub const DISABLED_FOREGROUND_ALPHA: f32 = 0.133_208_51;
+
 /// The top bar, top to bottom, and its lower edge.
 pub const BAR: (Color, Color) = (hex(0x000000), hex(0x0D1218));
 pub const BAR_EDGE: Color = hex(0x1F2A33);
@@ -489,7 +492,6 @@ pub mod lobby {
         ..super::NUMBER
     };
     pub const CHAT_SPEAKER: Type = role(Face::Bold, 14.0, 0.0);
-    pub const CHECK_MARK: Type = role(Face::Bold, 18.0, 0.0);
     pub const ROOM_ACTION: Type = role(Face::Bold, 22.0, 3.0);
     pub const DIRECT_ACTION: Type = role(Face::Bold, 14.0, 1.0);
     pub const MEMBER: Type = role(Face::Semibold, 13.0, 0.0);
@@ -545,6 +547,5 @@ pub mod lobby {
     pub const CHAT: Color = hex(0x05080B);
     pub const CHAT_EDGE: Color = hex(0x24303A);
     pub const CHOICES: Color = hex(0x12171C);
-    pub const CHECKED: Color = hex(0x4E9256);
     pub const CLOCK: Color = hex(0x6B747D);
 }

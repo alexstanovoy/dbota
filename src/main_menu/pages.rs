@@ -1069,19 +1069,16 @@ fn checkbox(kit: &mut Kit, card: Entity, label: &'static str, action: Act, on: b
             ChildOf(card),
         ))
         .id();
-    kit.commands.spawn((
-        Node {
-            width: px(18),
-            height: px(18),
-            border: UiRect::all(px(2)),
-            border_radius: BorderRadius::all(px(3)),
-            ..default()
+    crate::ui::checkbox::draw(
+        &mut kit.visual(),
+        row,
+        18.0,
+        3.0,
+        crate::ui::checkbox::State {
+            checked: on,
+            enabled: true,
         },
-        BorderColor::all(if on { theme::GOLD } else { theme::INK_4 }),
-        BackgroundColor(if on { theme::GOLD } else { Color::NONE }),
-        Pickable::IGNORE,
-        ChildOf(row),
-    ));
+    );
     kit.text(row, label, 16.0, theme::INK_1);
 }
 

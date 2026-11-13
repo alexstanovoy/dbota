@@ -105,8 +105,6 @@ pub struct LabelPart(pub Row, pub bool);
 pub struct ToggleRow(pub Toggle);
 #[derive(Component)]
 pub struct ToggleBox(pub Toggle);
-#[derive(Component)]
-pub struct ToggleMark(pub Toggle);
 
 /// A slider's track, its filled part, its thumb and its value.
 #[derive(Component)]
@@ -1220,31 +1218,22 @@ fn name_field(kit: &mut Kit, root: Entity, setting: TextSetting) {
 
 /// A checkbox: a click anywhere on the row turns it.
 fn tick_box(kit: &mut Kit, root: Entity, toggle: Toggle) {
-    let tick = kit
-        .commands
-        .spawn((
-            ToggleBox(toggle),
-            // Named, as the keyboard knows the control it stands on by its name.
-            Name::new(format!("{} box", toggle.label().to_lowercase())),
-            Outline::new(px(2), px(3), Color::NONE),
-            Node {
-                width: px(24),
-                height: px(24),
-                flex_shrink: 0.0,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border: UiRect::all(px(2)),
-                ..default()
-            },
-            BorderColor::all(theme::TICK_EDGE_OFF),
-            BackgroundColor(Color::NONE),
-            Pickable::IGNORE,
-            ChildOf(root),
-        ))
-        .id();
-    if let Some(mark) = kit.icon(tick, "menu.check", 16.0, theme::INK_1) {
-        kit.commands.entity(mark).insert(ToggleMark(toggle));
-    }
+    let tick = ui::checkbox::draw(
+        &mut kit.visual(),
+        root,
+        24.0,
+        0.0,
+        ui::checkbox::State {
+            checked: false,
+            enabled: true,
+        },
+    );
+    kit.commands.entity(tick).insert((
+        ToggleBox(toggle),
+        // Named, as the keyboard knows the control it stands on by its name.
+        Name::new(format!("{} box", toggle.label().to_lowercase())),
+        Outline::new(px(2), px(3), Color::NONE),
+    ));
 }
 
 /// A slider: its rail, filled to the value, the thumb on it, the value beside it.

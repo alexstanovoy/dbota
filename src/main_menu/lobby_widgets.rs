@@ -162,27 +162,16 @@ pub fn check(kit: &mut Kit, parent: Entity, label: &str, checked: bool, act: Act
         MenuButton(act),
         Name::new(label.to_lowercase()),
     ));
-    let square = kit.node(
+    crate::ui::checkbox::draw(
+        &mut kit.visual(),
         row,
-        Node {
-            width: px(20),
-            height: px(20),
-            flex_shrink: 0.0,
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..default()
+        20.0,
+        0.0,
+        crate::ui::checkbox::State {
+            checked,
+            enabled: true,
         },
     );
-    kit.commands
-        .entity(square)
-        .insert(BackgroundColor(if checked {
-            theme::lobby::CHECKED
-        } else {
-            Color::WHITE
-        }));
-    if checked {
-        kit.typed(square, "✓", theme::lobby::CHECK_MARK, Color::WHITE);
-    }
     kit.typed(row, label, theme::BODY, theme::INK_2);
     row
 }

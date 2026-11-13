@@ -96,6 +96,7 @@ paths = [
     "src/ui/help.rs",
     "src/ui/help/**",
     "src/ui/draw.rs",
+    "src/ui/checkbox.rs",
     "src/ui/effects.rs",
     "src/replays/**",
     "src/postgame/**",

@@ -10,19 +10,18 @@ use super::draw::{
     CAP, CAP_HELD, ChoiceButton, ChoiceOption, ChoiceValue, ClashBar, ClashText, KeyField, KeyText,
     LabelPart, MuteBox, NameCaret, NameCount, NameField, NameText, NavLink, NavText, OptionsList,
     RowBar, RowKey, RowReset, SliderFill, SliderThumb, SliderTrack, SliderValue, SlotBadge,
-    SlotKey, THUMB, THUMB_HELD, ToggleBox, ToggleMark, Vertical,
+    SlotKey, THUMB, THUMB_HELD, ToggleBox, Vertical,
 };
-use super::model::{Row, Tab, Toggle};
+use super::model::{Row, Tab};
 use super::screen::{Focus, InView, Screen};
 use crate::config::Settings;
 use crate::keys;
 use crate::theme;
 use crate::window::Displays;
 
-/// What dims a control that cannot be used now: the mockups' 40 % opacity, as the same dimming
-/// looks in Bevy's linear blending (see `theme::dim`: a browser blends in sRGB).
+/// Inactive controls share a foreground alpha, distinct from black-scrim darkening.
 fn off_alpha() -> f32 {
-    0.4_f32.powf(2.2)
+    theme::DISABLED_FOREGROUND_ALPHA
 }
 /// The ink on the setting key's badge, over the blue.
 const BADGE_SETTING_INK: Color = Color::srgb(0.043, 0.055, 0.067);
@@ -116,43 +115,20 @@ pub fn rows(
     }
 }
 
-/// Checkboxes: ticked green, unticked an edge, dimmed when disabled.
+/// Settings supplies values; the shared widget owns the checkbox's appearance.
 pub fn toggles(
     screen: Res<Screen>,
     settings: Res<Settings>,
-    mut boxes: Query<(&ToggleBox, &mut BackgroundColor, &mut BorderColor)>,
-    mut marks: Query<(&ToggleMark, &mut ImageNode)>,
+    mut boxes: Query<(&ToggleBox, &mut crate::ui::checkbox::State)>,
 ) {
     if !screen.open {
         return;
     }
-    let state = |toggle: Toggle| {
-        (
-            toggle.get(&settings),
-            Row::Toggle(toggle).enabled(&settings),
-        )
-    };
-    for (tick, mut fill, mut edge) in &mut boxes {
-        let (on, enabled) = state(tick.0);
-        let (ground, line) = if on {
-            (theme::TICK.0, theme::TICK.1)
-        } else {
-            (Color::NONE, theme::TICK_EDGE_OFF)
-        };
-        fill.set_if_neq(BackgroundColor(dimmed(ground, enabled)));
-        edge.set_if_neq(BorderColor::all(dimmed(line, enabled)));
-    }
-    for (mark, mut image) in &mut marks {
-        let (on, enabled) = state(mark.0);
-        let alpha = match (on, enabled) {
-            (false, _) => 0.0,
-            (true, true) => 1.0,
-            (true, false) => off_alpha(),
-        };
-        let color = theme::INK_1.with_alpha(alpha);
-        if image.color != color {
-            image.color = color;
-        }
+    for (tick, mut state) in &mut boxes {
+        state.set_if_neq(crate::ui::checkbox::State {
+            checked: tick.0.get(&settings),
+            enabled: Row::Toggle(tick.0).enabled(&settings),
+        });
     }
 }
 

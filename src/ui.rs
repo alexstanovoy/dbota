@@ -1,6 +1,7 @@
 //! What every part of the interface shares: the fonts, the palette, the
 //! interface scale, and small builders for text and boxes.
 
+pub(crate) mod checkbox;
 mod draw;
 pub(crate) mod effects;
 pub(crate) mod help;
@@ -137,6 +138,7 @@ fn primary_press(
 
 pub fn plugin(app: &mut App) {
     help::plugin(app);
+    checkbox::plugin(app);
     effects::plugin(app);
     app.init_resource::<HudShown>()
         .init_resource::<PrimaryPress>()
