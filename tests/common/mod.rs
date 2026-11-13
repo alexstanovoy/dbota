@@ -2,6 +2,7 @@
 
 #![allow(dead_code)] // each test binary uses a part of this shared module
 
+pub mod port_lease;
 pub mod prepared;
 // The client's own probe, so that harness and client ask a server for its wire the same way.
 pub mod source_scan;

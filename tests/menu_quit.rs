@@ -16,6 +16,7 @@ mod common;
 #[path = "common/lobby_friend.rs"]
 mod lobby_friend;
 
+use common::port_lease::PortLease;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -644,10 +645,8 @@ fn leave_after_hosting_keeps_the_server_running_for_the_others() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
     let scratch = Scratch::new("leave-hosted");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .expect("a free port")
-        .port();
+    let lease = PortLease::new();
+    let port = lease.port();
     let address = format!("127.0.0.1:{port}");
     let ticking = scratch.0.join("mate-ticking");
     // The host readies only once both have sat: a lobby starts with whoever is seated and ready.
@@ -707,10 +706,8 @@ fn quitting_after_a_disconnect_says_it_ends_the_hosted_game() {
     use bota_client_core::{Link, play};
     use bota_proto::HeroId;
     let scratch = Scratch::new("quit-hosted");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .expect("a free port")
-        .port();
+    let lease = PortLease::new();
+    let port = lease.port();
     let address = format!("127.0.0.1:{port}");
     let admitted = scratch.0.join("foe_admitted");
     let script = format!(
@@ -903,6 +900,8 @@ struct Service {
     url: String,
     /// The service's certificate, on disk for the client's `--trust-cert`.
     pem: PathBuf,
+    /// The game port, leased until the service is stopped.
+    _ports: PortLease,
 }
 
 /// Dota's Demo Hero, as a service's `[[ruleset]]` ([`Service::start`] fills in the binary and
@@ -933,10 +932,8 @@ impl Service {
     /// The service with `settings` (top-level keys) and `rulesets`, `[[ruleset]]` tables whose
     /// `{binary}` is the game server and `{fingerprint}` the wire this client speaks.
     fn start(scratch: &Scratch, settings: &str, rulesets: &str) -> Service {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .and_then(|l| l.local_addr())
-            .expect("a free port")
-            .port();
+        let ports = PortLease::new();
+        let port = ports.port();
         let rulesets = rulesets
             .replace("{binary}", &common::server_binary().display().to_string())
             .replace(
@@ -980,6 +977,7 @@ lobby_games_max = 1
             runtime,
             service: Some(service),
             pem,
+            _ports: ports,
         }
     }
 

@@ -141,6 +141,7 @@ paths = [
     "src/settings/**",
     "tests/connect.rs",
     "tests/menu_quit.rs",
+    "tests/port_lease.rs",
     "tests/common/lobby_friend.rs",
     "tests/ping.rs",
     "tests/refused_replays.rs",
@@ -182,6 +183,7 @@ tests = [
     ] },
     { package = "dbota", target = "test:connect" },
     { package = "dbota", target = "test:menu_quit" },
+    { package = "dbota", target = "test:port_lease" },
     { package = "dbota", target = "test:ping" },
     { package = "dbota", target = "test:refused_replays" },
 ]

@@ -6,8 +6,8 @@
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use bota_client_core::{App as Core, Phase, Source};
@@ -30,8 +30,14 @@ static NEXT: AtomicU32 = AtomicU32::new(0);
 /// it is long enough for a machine running many other jobs.
 const PATIENCE: u64 = 300;
 
-/// A scratch folder under the target folder, emptied when dropped.
-struct Scratch(PathBuf);
+// Shared by path with the integration tests, which cannot see this crate's modules.
+#[allow(dead_code, reason = "this crate uses a part of the shared helper")]
+#[path = "../../tests/common/port_lease.rs"]
+mod port_lease;
+
+/// A scratch folder under the target folder, emptied when dropped, and the loopback ports leased
+/// for the test that owns it.
+struct Scratch(PathBuf, Mutex<Vec<port_lease::PortLease>>);
 
 impl Scratch {
     fn new(what: &str) -> Scratch {
@@ -41,7 +47,15 @@ impl Scratch {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&dir).expect("scratch folder");
-        Scratch(dir)
+        Scratch(dir, Mutex::default())
+    }
+
+    /// A port nobody else takes for as long as this folder lives.
+    fn lease_port(&self) -> u16 {
+        let lease = port_lease::PortLease::new();
+        let port = lease.port();
+        self.1.lock().expect("the leases").push(lease);
+        port
     }
 }
 
@@ -148,9 +162,10 @@ impl Drop for Service {
     }
 }
 
-fn config(dir: &Path, binary: &Path, save_replays: bool) -> String {
-    // One game at a time: the one port the system hands out now.
-    let port = free_port();
+fn config(scratch: &Scratch, binary: &Path, save_replays: bool) -> String {
+    let dir = &scratch.0;
+    // One game at a time: the one port leased now.
+    let port = scratch.lease_port();
     format!(
         r#"
 listen = "127.0.0.1:0"
@@ -341,7 +356,7 @@ fn start_service(save_replays: bool, change: impl FnOnce(String) -> String) -> S
     let binary = server_binary().to_owned();
     let dir = Scratch::new("service");
     let path = dir.0.join("radovid.toml");
-    std::fs::write(&path, change(config(&dir.0, &binary, save_replays))).expect("config");
+    std::fs::write(&path, change(config(&dir, &binary, save_replays))).expect("config");
     let config = radovid::config::Config::load(&path).expect("a valid configuration");
     let public_identity = config.public_identity.clone();
     let names = vec!["127.0.0.1".to_owned(), "localhost".to_owned()];
@@ -856,14 +871,6 @@ fn type_address(menu: &mut MenuCore, address: &str) {
     menu.act(Act::Type(address.to_owned()));
 }
 
-/// A free loopback port.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .expect("a free port")
-        .port()
-}
-
 /// A running game server. Its output stays open: a server whose pipe is closed fails on its next
 /// line.
 struct Server {
@@ -1096,7 +1103,7 @@ fn pump_until(what: &str, cores: &mut [&mut Core], done: impl Fn(&Core) -> bool)
 fn offline(name: &str, dir: &Scratch) -> (MenuCore, Trust) {
     let store = SettingsStore::new(Some(dir.0.join(name).join(crate::config::FILE_NAME)));
     let trust = Trust::new(None).expect("trust");
-    let nowhere = format!("wss://127.0.0.1:{}", free_port());
+    let nowhere = format!("wss://127.0.0.1:{}", dir.lease_port());
     let mut menu = MenuCore::new(store, trust.radovid.clone(), Some(nowhere), kept_in(dir));
     menu.server_binary = Some(server_binary().to_owned());
     menu.set_profile_name(name);
@@ -1127,7 +1134,7 @@ fn every_local_path_works_with_no_account_and_no_service() {
     // A local lobby, hosted here.
     alice.act(Act::Go(Page::LocalLobby));
     assert_eq!(alice.page(), Page::LocalLobby);
-    let port = free_port();
+    let port = dir.lease_port();
     let lobby_fields = [port.to_string()];
     alice.act(Act::Focus(0));
     while !alice.form.value(0).is_empty() {
@@ -1265,12 +1272,12 @@ fn every_local_path_works_with_no_account_and_no_service() {
 
 /// Opens the local lobby page, chooses `rules` if any, and returns the launch of hosting it on
 /// a free port.
-fn host_launch(menu: &mut MenuCore, rules: Option<LocalRules>) -> Launch {
+fn host_launch(dir: &Scratch, menu: &mut MenuCore, rules: Option<LocalRules>) -> Launch {
     menu.act(Act::Go(Page::LocalLobby));
     if let Some(rules) = rules {
         menu.act(Act::Rules(rules));
     }
-    let port = free_port();
+    let port = dir.lease_port();
     menu.act(Act::Focus(0));
     while !menu.form.value(0).is_empty() {
         menu.act(Act::Erase);
@@ -1292,7 +1299,7 @@ fn a_local_lobby_has_ten_seats_under_any_rules_and_starts_with_the_seated() {
         (Some(LocalRules::Full), LocalRules::Full, MapId(0)),
     ] {
         let (mut alice, trust) = offline("alice", &dir);
-        let launch = host_launch(&mut alice, chosen);
+        let launch = host_launch(&dir, &mut alice, chosen);
         assert!(
             matches!(&launch, Launch::Host { rules: got, .. } if *got == rules),
             "{launch:?}"
@@ -1425,7 +1432,7 @@ fn a_local_game_left_for_good_leaves_its_replay() {
     let dir = Scratch::new("local-replay");
     let (mut menu, trust) = offline("alice", &dir);
     menu.act(Act::Go(Page::LocalLobby));
-    let port = free_port();
+    let port = dir.lease_port();
     for (at, value) in [(0, port.to_string()), (1, "1".to_owned())] {
         menu.act(Act::Focus(at));
         while !menu.form.value(at).is_empty() {
@@ -1556,7 +1563,7 @@ fn a_local_lobby_with_cheats_enabled_is_a_cheat_match() {
     while !menu.form.value(0).is_empty() {
         menu.act(Act::Erase);
     }
-    menu.act(Act::Type(free_port().to_string()));
+    menu.act(Act::Type(dir.lease_port().to_string()));
     menu.act(Act::Host(false));
     let launch = menu.take_launch().expect("the lobby to open");
     assert!(matches!(&launch, Launch::Host { cheats: true, .. }));
@@ -2544,7 +2551,7 @@ fn leave_after_a_local_lobby_tells_its_server_which_ends_by_itself() {
     assert!(!menu.view().reconnect, "an unreachable game is forgotten");
     assert_eq!(menu.page(), Page::LocalLobby, "the menu stays where it was");
 
-    let launch = host_launch(&mut menu, None);
+    let launch = host_launch(&dir, &mut menu, None);
     let Launch::Host { port, .. } = &launch else {
         panic!("a local lobby: {launch:?}");
     };
@@ -2605,7 +2612,7 @@ fn leave_after_a_local_lobby_says_what_becomes_of_its_match() {
         ),
         (true, "You left the game: the match is cancelled"),
     ] {
-        host_launch(&mut menu, None);
+        host_launch(&dir, &mut menu, None);
         menu.game_started();
         menu.set_game_in_picks(in_picks);
         menu.left_game(None, false);
@@ -2624,20 +2631,20 @@ fn a_new_local_lobby_stops_the_leave_of_the_old_one() {
     use super::leave::Outcome;
     let dir = Scratch::new("leave-host-new");
     let (mut menu, _trust) = offline("host", &dir);
-    host_launch(&mut menu, None);
+    host_launch(&dir, &mut menu, None);
     menu.game_started();
     menu.left_game(None, false);
     menu.act(Act::LeaveSeat);
     menu.act(Act::Answer(true));
     let (old, _, _) = menu.take_leave_order().expect("LEAVE tells the game");
-    host_launch(&mut menu, None);
+    host_launch(&dir, &mut menu, None);
     assert!(menu.take_cancel_leave(), "the old lobby's leave is stopped");
     // A leave not yet started when the new lobby comes in the same frame never starts.
     menu.game_started();
     menu.left_game(None, false);
     menu.act(Act::LeaveSeat);
     menu.act(Act::Answer(true));
-    host_launch(&mut menu, None);
+    host_launch(&dir, &mut menu, None);
     assert!(
         menu.take_leave_order().is_none(),
         "the unstarted leave is dropped"
@@ -2743,7 +2750,7 @@ fn a_leave_given_up_at_its_deadline_is_never_taken_back() {
 fn quitting_or_hosting_again_says_it_ends_the_hosted_game() {
     let dir = Scratch::new("rehost");
     let (mut menu, _trust) = offline("host", &dir);
-    host_launch(&mut menu, None);
+    host_launch(&dir, &mut menu, None);
     menu.game_started();
     menu.left_game(None, false);
     menu.set_hosting(true);
@@ -3058,7 +3065,7 @@ fn local_history_without_replay(during_play: bool) {
         });
     }
     menu.act(Act::Go(Page::LocalLobby));
-    for (at, value) in [(0, free_port().to_string()), (1, "1".to_owned())] {
+    for (at, value) in [(0, dir.lease_port().to_string()), (1, "1".to_owned())] {
         menu.act(Act::Focus(at));
         while !menu.form.value(at).is_empty() {
             menu.act(Act::Erase);
