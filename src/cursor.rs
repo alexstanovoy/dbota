@@ -94,6 +94,14 @@ pub struct Cursors {
     shown: Option<(Shape, bool)>,
 }
 
+impl Cursors {
+    /// The manifest name of the cursor worn now.
+    #[cfg(test)]
+    pub(crate) fn worn(&self) -> Option<&'static str> {
+        self.shown.map(|(shape, _)| shape.logical())
+    }
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Cursors>()
         .add_systems(Startup, load)
@@ -124,7 +132,10 @@ fn shape(core: &bota_client_core::App, hover: &Hover, over_hud: bool) -> Shape {
     if over_hud {
         return Shape::Default;
     }
-    let relation = hover.left().and_then(|(id, _)| enemy_of(core, id));
+    // What a right click would not attack shows no attack cursor: a spell aimed at it still does.
+    let relation = hover.left().and_then(|(id, _)| {
+        enemy_of(core, id).filter(|_| hover.left == Left::Aim || !core.attack_closed(id))
+    });
     let live = core.my_slot.is_some() && matches!(core.source, Source::Live(_));
     match (hover.left, relation) {
         (Left::Aim, Some(true)) => Shape::SpellEnemy,

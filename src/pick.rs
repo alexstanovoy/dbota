@@ -358,17 +358,27 @@ pub fn update(
     let (select, attack, aim, left) = wants(core);
     let all: Vec<(Candidate, Vec2)> =
         stands(view, &index, &units, &ground, core.my_team()).collect();
-    let find = |want: &Want| {
-        pick(ray, lens, all.iter().map(|(c, _)| *c), want).and_then(|id| {
+    let find = |want: &Want, among: &dyn Fn(&Candidate) -> bool| {
+        pick(
+            ray,
+            lens,
+            all.iter().map(|(c, _)| *c).filter(|c| among(c)),
+            want,
+        )
+        .and_then(|id| {
             all.iter()
                 .find(|(c, _)| c.id == id)
                 .map(|(c, at)| (c.id, *at))
         })
     };
+    // A unit the commanded one cannot attack from where it stands (Roshan, outside his pits) is
+    // nothing a right click or an attack-move takes; a spell or a selection still may.
+    let any = |_: &Candidate| true;
+    let attackable = |c: &Candidate| !core.attack_closed(c.id);
     *hover = Hover {
-        select: find(&select),
-        attack: find(&attack),
-        aim: find(&aim),
+        select: find(&select, &any),
+        attack: find(&attack, &attackable),
+        aim: find(&aim, &any),
         left,
     };
 }

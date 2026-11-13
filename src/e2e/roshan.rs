@@ -1274,3 +1274,88 @@ fn an_illusion_cannot_drop_a_copied_banner_as_real_ground_loot() {
             .any(|l| l.item == ItemId::ROSHANS_BANNER)
     });
 }
+
+/// A right click on Roshan on his way between the pits, from outside them: the game attacks
+/// nothing there (a swing at him would begin and land nowhere), so the client sends no attack and
+/// wears no enemy cursor over him: the hero walks to the ground under the click.
+#[test]
+fn a_right_click_on_roshan_walking_between_pits_is_a_walk_and_wears_no_attack_cursor() {
+    use bevy::input::mouse::MouseButton;
+    use bota_proto::{Order, Target};
+    let server = Server::start(
+        1,
+        &[
+            "--objectives",
+            "roshan",
+            "--immortal-heroes",
+            "--tick-rate",
+            "1200",
+        ],
+    );
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::StartGame);
+    client.cheat(Cheat::Invulnerable { on: true });
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    // Just outside his pit, a little off the way he takes to the other one.
+    client.stand_at((pit.x.to_int() + 879, pit.y.to_int() - 357));
+    client.until("the model loaded", |c| {
+        c.body(c.me().id)
+            .and_then(|e| c.world().get::<Unit>(e))
+            .is_some_and(|u| u.model.is_some())
+    });
+    // Once the day has turned to night he is on his way: look for him as he passes the hero.
+    let map = client.core().session().expect("a match").map();
+    let mut seconds = 15 * 60 + 1;
+    let boss = loop {
+        advance_quietly_to(&mut client, seconds);
+        let seen = client
+            .view()
+            .units
+            .iter()
+            .find(|unit| unit.kind == UnitKind::Roshan)
+            .cloned();
+        if let Some(boss) = seen
+            && !map.boss_zones.iter().any(|zone| zone.contains(boss.pos))
+            && boss.pos.distance_squared(pit) > bota_core::rules::units(450).squared_raw()
+        {
+            break boss;
+        }
+        seconds += 1;
+        assert!(seconds < 15 * 60 + 40, "he never passed the hero in sight");
+    };
+
+    assert!(
+        !bota_core::attackable_from(map, UnitKind::Roshan, client.me().pos),
+        "the hero stands outside the pits"
+    );
+    assert!(
+        boss.pos.distance_squared(pit) > 0,
+        "he has left his pit and is walking"
+    );
+    let screen = client
+        .screen_of((boss.pos.x.to_f32(), boss.pos.y.to_f32()))
+        .expect("Roshan on screen");
+    client.mouse(screen);
+    assert_eq!(
+        client.world().resource::<crate::cursor::Cursors>().worn(),
+        Some("cursor.default"),
+        "no enemy cursor over him from here"
+    );
+    client.click(MouseButton::Right);
+    let order = client
+        .core()
+        .shown_orders
+        .last()
+        .map(|shown| shown.order)
+        .expect("the click gave an order");
+    assert!(
+        matches!(
+            order,
+            Order::Move {
+                target: Target::Pos(_)
+            }
+        ),
+        "a walk, not an attack: {order:?}"
+    );
+}
