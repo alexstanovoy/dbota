@@ -1,7 +1,7 @@
 //! The hero pick screen end to end against a real server: hovering and choosing a hero, LOCK IN and
-//! RANDOM sending the real orders, the countdown of the server's clock, the seats filling as the
-//! others lock in, the time running out, the pool of one hero, and the "choose your hero" line
-//! starting with the selection and not before it.
+//! RANDOM sending the real orders, the seats filling as the others lock in, the pool of one
+//! hero, and the "choose your hero" line starting with the selection and not before it. The
+//! countdown, the late phase and what is sent are in `pregame_phases`.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -149,19 +149,6 @@ fn random_locks_in_the_hero_the_die_draws_among_those_on_offer() {
     });
 }
 
-/// The big countdown is the server's selection clock, as it was told.
-#[test]
-fn the_countdown_is_the_servers_selection_clock() {
-    let (_server, mut client) = on_the_pick_screen("90", &[]);
-    client.within(PATIENCE, "a clock under a minute and a half", |c| {
-        c.shown_texts().iter().any(|t| {
-            t.strip_prefix("1:")
-                .and_then(|s| s.parse::<u32>().ok())
-                .is_some_and(|secs| secs <= 30)
-        })
-    });
-}
-
 /// The top bar's seat holds the hero a player locked in: the bot's Pudge shows in its seat the
 /// moment the client's pick screen is up, and one's own seat fills at LOCK IN.
 #[test]
@@ -258,28 +245,6 @@ fn a_pool_of_one_hero_is_shown_without_lock_in_or_random() {
     assert!(named(&mut client, "pick pudge").is_none(), "no other hero");
     assert!(named(&mut client, "pick ready").is_none(), "no LOCK IN");
     assert!(named(&mut client, "pick random").is_none(), "no RANDOM");
-}
-
-/// Past the time a seat without a pick is told it loses gold every second, and when the penalty
-/// is over the server gives it a hero and the tactical phase begins with it. (The server's 30 s
-/// penalty is what makes this test last that long.)
-#[test]
-fn a_seat_that_never_picks_is_warned_and_then_given_a_hero() {
-    let (_server, mut client) = on_the_pick_screen("1", &[]);
-    client.within(PATIENCE, "the time out", |c| {
-        matches!(c.core().lobby.pick, PickPhase::Late { .. })
-    });
-    client.within(PATIENCE, "the warning", |c| {
-        c.shown_texts()
-            .iter()
-            .any(|t| t.starts_with("Losing 2 gold every second"))
-            && said(c, "PICK NOW")
-    });
-    client.within(
-        Duration::from_secs(90),
-        "a hero given and the tactical phase",
-        |c| c.core().in_tactical_phase() && picked(c, true).is_some(),
-    );
 }
 
 /// The announcer's "choose your hero" does not sound while the seats are still being taken (the

@@ -620,11 +620,14 @@ fn tactical(session: NonSend<Session>, mut phase: ResMut<TacticalPhase>) {
     phase.set_if_neq(TacticalPhase(session.0.in_tactical_phase()));
 }
 
-/// Whether this client may choose, lock in or draw a hero now: it holds a seat, has not locked in
-/// and the server offers more than one hero.
+/// Whether this client may choose, lock in or draw a hero now: it holds a seat, the picks are not
+/// final, it has not locked in and the server offers more than one hero.
 fn may_pick(core: &bota_client_core::App) -> bool {
     core.phase == Phase::Lobby
         && core.my_slot.is_some()
+        // Once the picks are final a click that was on its way is not a pick any more (the
+        // server finalizes a picked, unready hero when the selection time runs out).
+        && !matches!(core.lobby.pick, PickPhase::Tactical { .. })
         && !locked(core)
         && core.lobby.heroes.len() != 1
 }

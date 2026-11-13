@@ -1,7 +1,13 @@
-//! The pick and the strategy screens laid out as reference screenshots of the original game measure them:
-//! the rectangles the layout really computes for the measured elements
-//! ([`crate::pregame::reference::ELEMENTS`]) against the measurements, at the reference's own
-//! size and at 1920 by 1080, within one percent of the window's height.
+//! The pick and the strategy screens laid out as reference screenshots of the original game measure
+//! them: the rectangles the layout really computes for the measured elements against
+//! [`MEASURED`], at the reference's own size and at 1920 by 1080, within one percent of the
+//! window's height.
+//!
+//! `MEASURED` is this test's own copy of the measurements, in the screenshots' pixels, read by
+//! hand off the two reference screenshots (the pick one 2868 by 1618, the strategy one 2872 by
+//! 1611: the elements' edges and the sizes of their boxes). It is deliberately not the table
+//! the screens are drawn from (`pregame::reference`): a measurement changed there must be caught
+//! here, not followed.
 
 use std::time::Duration;
 
@@ -10,11 +16,127 @@ use bota_proto::HeroId;
 
 use super::harness::{Client, Server, quiet_seat};
 use crate::pregame::Spot;
-use crate::pregame::reference::{Anchor, ELEMENTS, Screen};
+
+/// Which side of the screen a measured left edge is counted from.
+#[derive(Clone, Copy)]
+enum Anchor {
+    Left,
+    Centre,
+    Right,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    Pick,
+    Strategy,
+}
+
+impl Screen {
+    /// The reference screenshot's width and height.
+    fn size(self) -> [f32; 2] {
+        match self {
+            Screen::Pick => [2868.0, 1618.0],
+            Screen::Strategy => [2872.0, 1611.0],
+        }
+    }
+}
+
+/// One measured element: its name, screen, anchor and `[left, top, width, height]` (a zero height
+/// is not compared). The strategy panel's top is the first block of the right column, where the
+/// reference has the strategy map (a deliberate difference); the pick panel's lower part (the
+/// description and similar heroes) is left empty, so its height is the reference's.
+const MEASURED: &[(&str, Screen, Anchor, [f32; 4])] = &[
+    (
+        "pick seat radiant 0",
+        Screen::Pick,
+        Anchor::Centre,
+        [-1122.0, 0.0, 176.0, 104.0],
+    ),
+    (
+        "pick seat dire 0",
+        Screen::Pick,
+        Anchor::Centre,
+        [206.0, 0.0, 176.0, 104.0],
+    ),
+    (
+        "pick card 0",
+        Screen::Pick,
+        Anchor::Left,
+        [197.0, 310.0, 64.0, 112.0],
+    ),
+    (
+        "pick panel",
+        Screen::Pick,
+        Anchor::Left,
+        [2012.0, 268.0, 564.0, 907.0],
+    ),
+    (
+        "pick panel portrait",
+        Screen::Pick,
+        Anchor::Left,
+        [2038.0, 335.0, 238.0, 366.0],
+    ),
+    (
+        "pick panel attributes",
+        Screen::Pick,
+        Anchor::Left,
+        [2276.0, 335.0, 274.0, 190.0],
+    ),
+    (
+        "pick panel skill 0",
+        Screen::Pick,
+        Anchor::Left,
+        [2152.0, 715.0, 54.0, 54.0],
+    ),
+    (
+        "pick panel health bar",
+        Screen::Pick,
+        Anchor::Left,
+        [2038.0, 806.0, 512.0, 38.0],
+    ),
+    (
+        "pick lock in",
+        Screen::Pick,
+        Anchor::Left,
+        [2012.0, 1187.0, 406.0, 98.0],
+    ),
+    (
+        "pick random",
+        Screen::Pick,
+        Anchor::Left,
+        [2436.0, 1187.0, 140.0, 98.0],
+    ),
+    (
+        "strategy seat radiant 0",
+        Screen::Strategy,
+        Anchor::Centre,
+        [-1131.0, 0.0, 176.0, 110.0],
+    ),
+    (
+        "strategy seat dire 0",
+        Screen::Strategy,
+        Anchor::Centre,
+        [207.0, 0.0, 176.0, 110.0],
+    ),
+    (
+        "strategy ability 0",
+        Screen::Strategy,
+        Anchor::Left,
+        [413.0, 315.0, 66.0, 66.0],
+    ),
+    (
+        "strategy starting items",
+        Screen::Strategy,
+        Anchor::Right,
+        [1246.0, 247.0, 1323.0, 0.0],
+    ),
+];
 
 const PATIENCE: Duration = Duration::from_secs(30);
 /// How far a rectangle may be from its measurement, as a share of the window's height.
 const TOLERANCE: f32 = 0.01;
+/// The measured middle of the strategy model across the screen, as a share of its width.
+const MODEL_MIDDLE: f32 = 0.237;
 
 /// A lobby of ten seats, nine held and locked in by bots (Pudge and Shadow Fiend alternately),
 /// and the client on the last one in a window of `window`.
@@ -97,29 +219,29 @@ fn faults(client: &mut Client, screen: Screen, report: bool) -> Vec<String> {
     let scale = window.y / reference_height;
     let laid = laid_out(client);
     let mut faults = Vec::new();
-    for element in ELEMENTS.iter().filter(|e| e.screen == screen) {
-        let Some((_, have)) = laid.iter().find(|(name, _)| *name == element.name) else {
-            faults.push(format!("{}: not laid out", element.name));
+    for (name, on, anchor, rect) in MEASURED.iter().filter(|(_, on, ..)| *on == screen) {
+        let _ = on;
+        let Some((_, have)) = laid.iter().find(|(laid_name, _)| laid_name == name) else {
+            faults.push(format!("{name}: not laid out"));
             continue;
         };
-        let [left, top, width, height] = element.rect;
-        let left = match element.anchor {
+        let [left, top, width, height] = *rect;
+        let left = match anchor {
             Anchor::Left => left * scale,
             Anchor::Centre => window.x / 2.0 + left * scale,
             Anchor::Right => window.x - (reference_width - left) * scale,
         };
         let want = [left, top * scale, width * scale, height * scale];
-        let tolerance = TOLERANCE * window.y + 1.0;
+        let tolerance = TOLERANCE * window.y;
         for (index, what) in ["left", "top", "width", "height"].into_iter().enumerate() {
-            if index == 3 && element.rect[3] == 0.0 {
+            if index == 3 && rect[3] == 0.0 {
                 continue;
             }
             let delta = have[index] - want[index];
             // The table the comparison page is made from: run with --nocapture.
             if report {
                 println!(
-                    "pregame-delta | {window_y:.0} | {} | {what} | {:.1} | {:.1} | {:.2}%",
-                    element.name,
+                    "pregame-delta | {window_y:.0} | {name} | {what} | {:.1} | {:.1} | {:.2}%",
                     have[index],
                     want[index],
                     100.0 * delta / window.y
@@ -127,8 +249,8 @@ fn faults(client: &mut Client, screen: Screen, report: bool) -> Vec<String> {
             }
             if delta.abs() > tolerance {
                 faults.push(format!(
-                    "{}: {what} {:.1} but measured {:.1} ({delta:+.1} px of {:.0})",
-                    element.name, have[index], want[index], window.y
+                    "{name}: {what} {:.1} but measured {:.1} ({delta:+.1} px of {:.0})",
+                    have[index], want[index], window.y
                 ));
             }
         }
@@ -257,7 +379,7 @@ fn the_strategy_screen_stands_the_picked_hero_on_the_ground_where_the_reference_
         (0.86..0.92).contains(&feet),
         "the model's feet at {feet} of the window"
     );
-    let wanted = crate::pregame::reference::MODEL[2] * window.x;
+    let wanted = MODEL_MIDDLE * window.x;
     assert!(
         (middle - wanted).abs() < 0.03 * window.y,
         "the model's middle across: {middle} but measured {wanted}"
@@ -283,16 +405,11 @@ fn the_strategy_screen_stands_the_picked_hero_on_the_ground_where_the_reference_
     );
 }
 
-/// Every text of the pick and the strategy screens is set in the original game's faces
-/// (letter-spaced capitals and all), none in the plain fallback fonts. The item slots and the
-/// shop's cells are the shop's own components and are left out.
-fn plain_texts_under(client: &mut Client, root: Entity) -> Vec<String> {
+/// What the texts under a screen's root are set in: every text but those of the shop's own
+/// components (the storefront's cells and the item slots), with its string and its font.
+fn texts_under(client: &mut Client, root: Entity) -> Vec<(String, TextFont)> {
     use super::harness::subtree;
     let world = client.world_mut();
-    let (plain, regular) = {
-        let fonts = world.resource::<crate::ui::Fonts>();
-        (fonts.bold.clone(), fonts.regular.clone())
-    };
     let shop: std::collections::HashSet<Entity> = subtree(world, root)
         .into_iter()
         .filter(|e| {
@@ -305,30 +422,83 @@ fn plain_texts_under(client: &mut Client, root: Entity) -> Vec<String> {
         .into_iter()
         .filter(|e| !shop.contains(e))
         .filter_map(|e| {
-            let font = world.get::<TextFont>(e)?;
-            let used = font.font == plain.clone().into() || font.font == regular.clone().into();
-            used.then(|| {
-                world
-                    .get::<Text>(e)
-                    .map_or_else(|| format!("{e:?}"), |t| t.0.clone())
-            })
+            let font = world.get::<TextFont>(e)?.clone();
+            let text = world
+                .get::<Text>(e)
+                .map(|t| t.0.clone())
+                .or_else(|| world.get::<TextSpan>(e).map(|t| t.0.clone()))?;
+            Some((text, font))
         })
         .collect()
 }
 
+/// Every text of the screen is set in one of the four faces of the interface (the original
+/// game's own from the install, which a test cache holds), each resolved to a loaded font: not
+/// in the plain fallback fonts, not in the default handle, not in any third font. The texts
+/// that must be among those inspected are named, so a screen drawn without them fails too.
+fn assert_in_the_games_faces(client: &mut Client, root: Entity, expected: &[&str], what: &str) {
+    use crate::theme::Face;
+    let texts = texts_under(client, root);
+    let world = client.world();
+    let fonts = world.resource::<crate::ui::Fonts>();
+    let faces: Vec<Handle<Font>> = [Face::Display, Face::Bold, Face::Semibold, Face::Regular]
+        .map(|face| fonts.face(face).clone())
+        .into();
+    for fallback in [&fonts.bold, &fonts.regular] {
+        assert!(
+            !faces.contains(fallback),
+            "the cache's faces are not the plain fonts (the test cache lacks the install's faces)"
+        );
+    }
+    let loaded = world.resource::<Assets<Font>>();
+    for face in &faces {
+        assert!(
+            loaded.get(face).is_some(),
+            "face {face:?} resolves to a loaded font"
+        );
+    }
+    let allowed: Vec<bevy::text::FontSource> = faces.iter().cloned().map(Into::into).collect();
+    let stray: Vec<&str> = texts
+        .iter()
+        .filter(|(_, font)| !allowed.contains(&font.font))
+        .map(|(text, _)| text.as_str())
+        .collect();
+    assert!(
+        stray.is_empty(),
+        "{what}: texts outside the faces: {stray:?}"
+    );
+    for want in expected {
+        assert!(
+            texts.iter().any(|(text, _)| text == want),
+            "{what}: {want:?} was among the texts inspected ({} inspected)",
+            texts.len()
+        );
+    }
+}
+
 #[test]
-fn no_text_of_the_pick_or_the_strategy_screen_is_set_in_a_fallback_font() {
+fn every_text_of_the_pick_and_the_strategy_screen_is_set_in_the_games_faces() {
     let (_server, mut client) = ten_seats("1920x1080");
     client.within(PATIENCE, "the pick screen", |c| {
         named_root(c, "pick screen").is_some()
     });
-    let root = named_root(&mut client, "pick screen").expect("the pick screen");
-    let plain = plain_texts_under(&mut client, root);
-    assert!(
-        plain.is_empty(),
-        "pick screen texts in a fallback font: {plain:?}"
-    );
     client.click_named("pick shadow fiend");
+    let root = named_root(&mut client, "pick screen").expect("the pick screen");
+    client.within(PATIENCE, "the panel's texts", |c| {
+        c.shown_texts().iter().any(|t| t == "SHADOW FIEND")
+    });
+    assert_in_the_games_faces(
+        &mut client,
+        root,
+        &[
+            "CHOOSE YOUR HERO",
+            "SHADOW FIEND",
+            "STRENGTH",
+            "RANDOM",
+            "LOCK IN",
+        ],
+        "the pick screen",
+    );
     client.click_named("pick ready");
     client.within(PATIENCE, "the strategy phase", |c| {
         c.core().in_tactical_phase()
@@ -347,10 +517,17 @@ fn no_text_of_the_pick_or_the_strategy_screen_is_set_in_a_fallback_font() {
             .single(world)
             .expect("the strategy screen")
     };
-    let plain = plain_texts_under(&mut client, root);
-    assert!(
-        plain.is_empty(),
-        "strategy screen texts in a fallback font: {plain:?}"
+    assert_in_the_games_faces(
+        &mut client,
+        root,
+        &[
+            "STARTING ITEMS",
+            "REMAINING GOLD",
+            "INVENTORY",
+            "ENTERING BATTLE AS",
+            "SHADOW FIEND",
+        ],
+        "the strategy screen",
     );
 }
 

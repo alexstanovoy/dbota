@@ -64,6 +64,7 @@ mod portraits;
 mod pregame;
 mod pregame_choose;
 mod pregame_layout;
+mod pregame_phases;
 mod preparation_shop;
 mod pudge_attack_sounds;
 mod purchase_destination;

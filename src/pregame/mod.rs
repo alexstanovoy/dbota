@@ -100,7 +100,7 @@ impl Kit<'_> {
     }
 }
 
-/// Marks a node whose rectangle the render tests compare with [`reference::ELEMENTS`], by the
+/// Marks a node whose rectangle the render tests compare with the measurements the test holds, by the
 /// element's name.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Spot(pub &'static str);

@@ -415,17 +415,19 @@ tests = [
 
 [[group]]
 name = "client_pregame"
-about = "the hero pick and strategy screens: the layout measured from the reference screenshots, hovering, choosing, LOCK IN and RANDOM against a real server, the countdown, the seats, the forced pick and the announcer's line"
+about = "the hero pick and strategy screens: the layout measured from the reference screenshots, hovering, choosing, LOCK IN and RANDOM against a real server, the countdown and the phases (the server's messages scripted), what is sent, the seats, the forced pick and the announcer's line"
 paths = [
     "src/select.rs",
     "src/pregame/**",
     "src/e2e/pregame_choose.rs",
     "src/e2e/pregame_layout.rs",
+    "src/e2e/pregame_phases.rs",
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
         "e2e::pregame_choose::",
         "e2e::pregame_layout::",
+        "e2e::pregame_phases::",
     ] },
 ]
 
