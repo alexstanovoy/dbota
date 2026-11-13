@@ -27,6 +27,7 @@ if ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import playwrig
 fi
 python3 -m playwright install chromium firefox > "$work/playwright-install.log" 2>&1 \
     || { tail -n 20 "$work/playwright-install.log"; echo "browser_check: the browsers cannot be installed" >&2; exit 1; }
+in_private_environment python3 -m unittest discover -s web/test -p test_replay_actions.py -v
 
 # The servers: bota's (a match with a replay) and radovid's (the replays page).
 server_target=$here/target/browser-servers/bota

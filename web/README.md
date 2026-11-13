@@ -88,7 +88,7 @@ PYTHONPATH=temp/pwlib python3 -m playwright install chromium`); its docstring ha
 - `--prepared-page`: bad zips (another build, a path that climbs out, a wrong index) are refused with their reasons;
   the real zip and cache folder are copied, kept over a reload and played.
 - `--replays-page`: a match through a real radovid that serves the page and keeps replays; the next visit fetches the
-  replay, lists, plays, downloads and reopens it.
+  replay, lists it, plays it with Watch and deletes it. File import and download controls are absent.
 - `--busy-page`: a server that answers 503 with Retry-After once gets the page's own script, the served cache's index and
   the game's download on the second try, with the wait said on the page; a download refused twice is a failure.
 - `--replay-page`: a build with a packed replay plays it with chat and the CJK font fallback.

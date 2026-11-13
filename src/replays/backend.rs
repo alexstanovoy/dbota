@@ -34,14 +34,6 @@ pub enum Op {
     Index {
         text: String,
     },
-    /// Hands a kept replay to the player as a file download.
-    #[cfg(target_arch = "wasm32")]
-    Export {
-        name: String,
-    },
-    /// Asks the player for a replay file.
-    #[cfg(target_arch = "wasm32")]
-    PickFile,
 }
 
 /// What a store answers.
@@ -62,11 +54,6 @@ pub enum Done {
         name: String,
         result: Result<Vec<u8>, String>,
     },
-    /// A replay file the player picked.
-    #[cfg(target_arch = "wasm32")]
-    Picked { name: String, bytes: Vec<u8> },
-    #[cfg(target_arch = "wasm32")]
-    PickFailed(String),
     /// A removal or an index that failed (the library goes on with the index it has).
     Failed(String),
     /// The store cannot be used at all.

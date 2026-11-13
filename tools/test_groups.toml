@@ -28,6 +28,10 @@ path = "web/test/test_voice_worker.py"
 step = "browser (tools/browser_check.sh builds the page first)"
 
 [[outside]]
+path = "web/test/test_replay_actions.py"
+step = "browser (tools/browser_check.sh runs the served storage contract)"
+
+[[outside]]
 path = "tools/test_groups.py"
 step = "none: the script, not a test (test_test_groups.py tests it)"
 

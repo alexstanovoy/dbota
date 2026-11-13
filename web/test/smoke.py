@@ -1551,9 +1551,8 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
     """A match through a real radovid is kept in the browser's private storage: the page enters a
     practice match alone and is closed (the player gone, the game server ends and the service
     records it); the next visit signs in with the kept session, fetches the replay it was away
-    for and stores it in OPFS. The REPLAYS tab lists it and plays it; DOWNLOAD .BRP hands over the
-    same bytes, OPEN A .BRP FILE plays that file, a new visit plays the stored one with WATCH and DELETE
-    removes it."""
+    for and stores it in OPFS. The REPLAYS tab lists it and WATCH plays it; DELETE removes it.
+    File import and replay download are deliberately absent from the interface."""
     check_replay_probe(directory)
     work = HERE.parent.parent / "temp/smoke-replays"
     work.mkdir(parents=True, exist_ok=True)
@@ -1652,32 +1651,8 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
             wait_console(page, console, r"replays: 1 kept", 300, "the replay listed")
             print(f"stored: {name} ({size} bytes) in OPFS")
 
-            # The REPLAYS tab lists it. DOWNLOAD .BRP hands over the stored bytes.
-            page.mouse.click(*CLICK_REPLAYS)
-            step()
-            shot("7-replays")
-            page.keyboard.press("Tab")  # the keyboard starts on OPEN A .BRP FILE: WATCH,
-            page.keyboard.press("Tab")  # then DOWNLOAD .BRP
-            with page.expect_download(timeout=120000) as download:
-                page.keyboard.press("Enter")
-            saved = work / "downloaded.brp"
-            download.value.save_as(str(saved))
-            assert download.value.suggested_filename == name, download.value.suggested_filename
-            assert saved.read_bytes() == files[0].read_bytes(), "the download is the replay the service kept"
-            assert saved.read_bytes()[:4] == b"\x28\xb5\x2f\xfd", "and a Zstandard stream, as a desktop reads"
-            print(f"download: {saved.stat().st_size} bytes, the same as the service's file")
-
-            # OPEN A .BRP FILE plays a file from the player's disk (one from a desktop would do).
-            page.keyboard.press("Tab")  # DELETE
-            page.keyboard.press("Tab")  # OPEN A .BRP FILE
-            with page.expect_file_chooser(timeout=120000) as chooser:
-                page.keyboard.press("Enter")
-            chooser.value.set_files(str(saved))
-            wait_console(page, console, r"match known: tick \d+", 600, "the opened file to play")
-            print("open from file: the downloaded replay plays")
-            page.close()
-
             # A new visit: WATCH plays the stored replay, DELETE removes it.
+            page.close()
             page = context.new_page()
             console.clear()
             page.on("console", lambda m: console.append(m.text))
@@ -1687,8 +1662,7 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
             step(10000)
             page.mouse.click(*CLICK_REPLAYS)
             step()
-            page.keyboard.press("Tab")
-            page.keyboard.press("Enter")
+            page.keyboard.press("Enter")  # first row starts on WATCH
             step(20000)
             shot("8-watch")
             wait_console(page, console, r"match known: tick \d+", 600, "the stored replay to play")
@@ -1701,8 +1675,7 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
             step(15000)
             page.mouse.click(*CLICK_REPLAYS)
             step()
-            for _ in range(3):  # WATCH, DOWNLOAD .BRP, DELETE
-                page.keyboard.press("Tab")
+            page.keyboard.press("Tab")  # WATCH -> DELETE
             page.keyboard.press("Enter")
             deadline = time.time() + 120
             left = page.evaluate(OPFS_REPLAYS)

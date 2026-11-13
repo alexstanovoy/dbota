@@ -2,13 +2,10 @@
 // storage, apart from the copy of the Dota assets (so deleting that copy keeps the replays).
 // The Origin Private File System where it can write from a page, else IndexedDB; neither (a
 // private window of some browsers) and the client keeps none. The client decides what is kept
-// and for how long (src/replays); this file only stores, lists, reads, removes, hands a replay
-// to the player as a download, and takes one in from a file the player picks.
+// and for how long (src/replays); this file only stores, lists, reads and removes replays.
 // Published as `globalThis.dbota_replays`, which the client reads (src/replays/browser.rs).
 
 export const FOLDER = "dbota-replays";
-// The longest replay read from a picked file, as the client's own limit.
-const MAX_BYTES = 64 * 2 ** 20;
 const INDEX = "index.txt";
 
 // A store over the Origin Private File System: one folder of files.
@@ -103,45 +100,6 @@ async function open() {
 
 const text = (bytes) => new TextDecoder().decode(bytes);
 
-// Hands bytes to the player as a file download.
-function save(name, bytes) {
-  const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
-  const link = Object.assign(document.createElement("a"), { href: url, download: name });
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
-}
-
-// Asks the player for a replay file; its name and bytes, or null when none was chosen.
-function pick() {
-  return new Promise((resolve, reject) => {
-    const input = Object.assign(document.createElement("input"), { type: "file", accept: ".brp" });
-    input.style.display = "none";
-    const done = (value) => {
-      input.remove();
-      resolve(value);
-    };
-    input.addEventListener("cancel", () => done(null));
-    input.addEventListener("change", async () => {
-      const file = input.files && input.files[0];
-      if (!file) return done(null);
-      if (file.size > MAX_BYTES) {
-        input.remove();
-        return reject(new Error("it is longer than a replay may be"));
-      }
-      try {
-        done({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
-      } catch (e) {
-        input.remove();
-        reject(e);
-      }
-    });
-    document.body.append(input);
-    input.click();
-  });
-}
-
 // The store, if there is one, as the client uses it. Every call waits for the ones before it,
 // so the client's order (a replay, then the index that names it) is the order they happen in.
 export async function publish() {
@@ -165,12 +123,5 @@ export async function publish() {
     get: (name) => queued(() => store.read(name)),
     remove: (names) => queued(async () => void (await Promise.all(names.map((n) => store.remove(n))))),
     index: (body) => queued(() => store.write(INDEX, new TextEncoder().encode(body))),
-    download: (name) =>
-      queued(async () => {
-        const bytes = await store.read(name);
-        if (!bytes) throw new Error("that replay is not kept any more");
-        save(name, bytes);
-      }),
-    pick,
   };
 }

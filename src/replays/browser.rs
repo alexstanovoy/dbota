@@ -89,8 +89,6 @@ impl Backend for Browser {
                 &[names.iter().map(JsValue::from).collect::<Array>().into()],
             ),
             Op::Index { text } => self.call("index", &[text.into()]),
-            Op::Export { name } => self.call("download", &[name.into()]),
-            Op::PickFile => self.call("pick", &[]),
         };
         let kind = self.kind();
         spawn_local(async move {
@@ -145,22 +143,7 @@ fn finish(op: Op, result: Result<JsValue, JsValue>, kind: &str) -> Done {
                 .ok_or_else(|| "that replay is not kept any more".to_owned()),
             name,
         },
-        Op::PickFile => match Reflect::get(&value, &"bytes".into())
-            .ok()
-            .as_ref()
-            .and_then(bytes_of)
-        {
-            Some(bytes) => Done::Picked {
-                name: Reflect::get(&value, &"name".into())
-                    .ok()
-                    .and_then(|n| n.as_string())
-                    .unwrap_or_default(),
-                bytes,
-            },
-            // Nothing chosen.
-            None => Done::PickFailed(String::new()),
-        },
-        Op::Remove { .. } | Op::Index { .. } | Op::Export { .. } => Done::Failed(String::new()),
+        Op::Remove { .. } | Op::Index { .. } => Done::Failed(String::new()),
     }
 }
 
@@ -175,8 +158,6 @@ fn failed(op: Op, why: String) -> Done {
             name,
             result: Err(why),
         },
-        Op::PickFile => Done::PickFailed(why),
-        Op::Export { name } => Done::Failed(format!("cannot download {name}: {why}")),
         Op::Remove { .. } | Op::Index { .. } => Done::Failed(why),
     }
 }

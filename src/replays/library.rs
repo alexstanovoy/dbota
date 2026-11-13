@@ -21,11 +21,6 @@ pub enum Notice {
     Loaded { name: String, bytes: Vec<u8> },
     #[cfg(target_arch = "wasm32")]
     LoadFailed { name: String, why: String },
-    /// A replay file the player picked.
-    #[cfg(target_arch = "wasm32")]
-    Picked { name: String, bytes: Vec<u8> },
-    #[cfg(target_arch = "wasm32")]
-    PickFailed(String),
 }
 
 /// Where the library stands with its store.
@@ -272,23 +267,6 @@ impl Library {
         );
     }
 
-    /// Hands a kept replay to the player as a file download.
-    #[cfg(target_arch = "wasm32")]
-    pub fn export(&mut self, name: &str) {
-        self.backend.run(
-            Op::Export {
-                name: name.to_owned(),
-            },
-            self.reply.clone(),
-        );
-    }
-
-    /// Asks the player for a replay file; it comes as [`Notice::Picked`].
-    #[cfg(target_arch = "wasm32")]
-    pub fn pick_file(&mut self) {
-        self.backend.run(Op::PickFile, self.reply.clone());
-    }
-
     pub fn delete(&mut self, name: &str) {
         if self.index.remove(name) {
             self.backend.run(
@@ -370,10 +348,6 @@ impl Library {
                 Ok(bytes) => Notice::Loaded { name, bytes },
                 Err(why) => Notice::LoadFailed { name, why },
             }),
-            #[cfg(target_arch = "wasm32")]
-            Done::Picked { name, bytes } => self.notices.push(Notice::Picked { name, bytes }),
-            #[cfg(target_arch = "wasm32")]
-            Done::PickFailed(why) => self.notices.push(Notice::PickFailed(why)),
             Done::Failed(why) => bevy::log::warn!("replays: {why}"),
             Done::Unavailable(why) => {
                 bevy::log::warn!("replays are not kept: {why}");

@@ -336,20 +336,6 @@ impl MenuCore {
                 }
             }
             #[cfg(target_arch = "wasm32")]
-            Notice::Picked { name, bytes } => {
-                if bytes.len() as u64 > MAX_BYTES {
-                    self.tell(format!("{name} is longer than a replay may be"), true);
-                } else {
-                    self.start(Launch::Blob(Blob(Arc::from(bytes))));
-                }
-            }
-            #[cfg(target_arch = "wasm32")]
-            Notice::PickFailed(why) => {
-                if !why.is_empty() {
-                    self.tell(format!("The file cannot be opened: {why}"), true);
-                }
-            }
-            #[cfg(target_arch = "wasm32")]
             Notice::LoadFailed { name, why } => {
                 if self.keeper.open_name.take_if(|n| *n == name).is_some() {
                     self.tell(format!("The replay cannot be opened: {why}"), true);

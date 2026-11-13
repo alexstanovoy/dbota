@@ -212,12 +212,8 @@ impl Form {
             .iter()
             .flat_map(|name| {
                 let watch = Item::Button(Act::OpenReplay(name.clone()));
-                #[cfg(target_arch = "wasm32")]
-                let download = Some(Item::Button(Act::DownloadReplay(name.clone())));
-                #[cfg(not(target_arch = "wasm32"))]
-                let download = None;
                 let delete = Item::Button(Act::DeleteReplay(name.clone()));
-                [Some(watch), download, Some(delete)].into_iter().flatten()
+                [watch, delete]
             })
             .collect();
         items.extend(items_of(self.kind, self.fields.len()));

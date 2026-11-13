@@ -975,19 +975,6 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
             .entity(watch)
             .insert(Name::new(format!("watch {name}")));
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let download = kit.button(
-            row,
-            "DOWNLOAD .BRP",
-            Act::DownloadReplay(name.clone()),
-            Tone::Secondary,
-            34.0,
-        );
-        kit.commands
-            .entity(download)
-            .insert(Name::new(format!("download {name}")));
-    }
     let delete = kit.button(
         row,
         "DELETE",

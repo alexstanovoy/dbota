@@ -156,12 +156,6 @@ pub enum Act {
     OpenReplay(String),
     /// Deletes a kept replay.
     DeleteReplay(String),
-    /// Saves a kept replay to a file of the player's own (a browser's download).
-    #[cfg(target_arch = "wasm32")]
-    DownloadReplay(String),
-    /// Opens a replay file the player picks (a browser's file chooser).
-    #[cfg(target_arch = "wasm32")]
-    OpenReplayFile,
     /// Watches the replay of a finished match of the account's: fetched from the service once.
     WatchReplay(MatchId),
     /// Goes on with plain TCP to a host after the notice.
@@ -2179,10 +2173,6 @@ impl MenuCore {
             #[cfg(test)]
             Act::Find(_) => self.act_lobby(act),
             Act::Demo(_) => self.act_library(act),
-            #[cfg(target_arch = "wasm32")]
-            Act::DownloadReplay(_) => self.act_library(act),
-            #[cfg(target_arch = "wasm32")]
-            Act::OpenReplayFile => self.act_library(act),
         }
     }
 
@@ -2338,10 +2328,6 @@ impl MenuCore {
             Act::Demo(hero) => self.start_demo(bota_proto::HeroId(hero)),
             Act::OpenReplay(name) => self.open_listed(&name),
             Act::DeleteReplay(name) => self.library.delete(&name),
-            #[cfg(target_arch = "wasm32")]
-            Act::DownloadReplay(name) => self.library.export(&name),
-            #[cfg(target_arch = "wasm32")]
-            Act::OpenReplayFile => self.library.pick_file(),
             Act::WatchReplay(match_id) => self.watch_replay(match_id),
             Act::PlainAnyway => self.direct(false, true),
             Act::Dismiss => {
