@@ -568,7 +568,14 @@ pub fn preview() -> View {
         (9, 5, 13),
     ];
     View {
-        ratings:Vec::new(),
+        ratings:vec![super::account_page::Rating {
+            mode_id:"solo_mid".into(),
+            mode:"Solo Mid".into(),
+            rating:Some("1,524".into()),
+            games:41,
+            rank:Some(12),
+            confidence:super::rank_confidence::from_deviation(80.0,41),
+        }],
         matches: std::sync::Arc::new(
             (0..10)
                 .map(|index| Match {
