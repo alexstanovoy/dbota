@@ -3259,6 +3259,11 @@ pub(crate) fn registered_public_profile(service: &Service) -> (u64, String) {
         .me()
         .expect("account");
     let identity = (me.id.0, format!("{}#{}", me.nickname, me.id.0));
+    upload_profile_avatar(&mut player.menu);
+    identity
+}
+
+fn upload_profile_avatar(menu:&mut MenuCore) {
     // A solid PNG is protocol input for a user-uploaded avatar.
     let png = vec![
         137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 32, 0, 0, 0, 32, 8,
@@ -3267,7 +3272,7 @@ pub(crate) fn registered_public_profile(service: &Service) -> (u64, String) {
         16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 72, 7, 30, 115, 205, 60, 151, 190, 23, 53,
         16, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
-    let client = player.menu.client.as_mut().expect("client");
+    let client = menu.client.as_mut().expect("client");
     let seq = client
         .request(bota_radovid::proto::ClientMsg::SetAvatar { png })
         .expect("upload request");
@@ -3298,21 +3303,16 @@ pub(crate) fn registered_public_profile(service: &Service) -> (u64, String) {
         uploaded,
         "the avatar upload completed within the bounded reply stream"
     );
-    identity
 }
 
-pub(crate) fn pin_profile_leaderboard_row(core: &mut MenuCore, account: u64) {
-    core.board.rows = vec![super::leaderboard::Row {
-        account,
-        players: super::leaderboard::Players::Humans,
-        rank: 1,
-        nickname: "Stale board label".into(),
-        version: None,
-        games: 7,
-        rating: "1750".into(),
-    }];
-    core.board.status = super::leaderboard::Status::Ready;
-    core.board.total = 1;
+pub(crate) fn served_leaderboard_profile(service:&Service)->(u64,String) {
+    for name in ["unranked_one","unranked_two"] {
+        let mut player=Player::new(Some(service));player.register(name);
+    }
+    let mut played=served_postmatch(service);
+    upload_profile_avatar(&mut played.menu);
+    let me=played.menu.client.as_ref().expect("client").me().expect("account");
+    (me.id.0,format!("{}#{}",me.nickname,me.id.0))
 }
 
 pub(crate) fn own_cached_profile_id(core: &MenuCore) -> Option<u64> {
@@ -3425,6 +3425,9 @@ pub(crate) struct ServedPostmatch {
 
 /// Real registration, proposal, launcher, game sockets, permanent departure and served outcome.
 pub(crate) fn served_postmatch(service: &Service) -> ServedPostmatch {
+    served_postmatch_visibility(service,false)
+}
+pub(crate) fn served_postmatch_visibility(service:&Service, hidden_opponent:bool)->ServedPostmatch {
     let (mut left, mut right) = (Player::new(Some(service)), Player::new(Some(service)));
     left.register("live_viewer");
     right.register("served_opponent");
@@ -3437,6 +3440,13 @@ pub(crate) fn served_postmatch(service: &Service) -> ServedPostmatch {
         .expect("account");
     let other = me.id.0;
     let other_name = format!("{}#{}", me.nickname, other);
+    if hidden_opponent {
+        let script="import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"INSERT INTO ratings(account,ruleset,rating,deviation,volatility,games,wins,draws,losses,last_played,kind,hidden) VALUES(?,'solo_mid',1500,350,0.06,1,0,0,1,1,0,1) ON CONFLICT(account,ruleset) DO UPDATE SET hidden=1\",(int(sys.argv[2]),)); c.execute(\"UPDATE ratings SET hidden=1 WHERE account=?\",(int(sys.argv[2]),)); assert c.execute(\"SELECT COUNT(*) FROM ratings WHERE account=? AND hidden=1 AND games>0\",(int(sys.argv[2]),)).fetchone()[0]==1; c.commit()";
+        let status=std::process::Command::new("python3").args(["-c",script])
+            .arg(service._dir.0.join("radovid.db")).arg(other.to_string()).status().expect("fixture visibility");
+        assert!(status.success());
+        use_declared_public_fixture_identity(&mut left.menu,service);
+    }
     left.menu.act(Act::Find(solo()));
     right.menu.act(Act::Find(solo()));
     settle(&mut [&mut left, &mut right], |player| {
@@ -3544,4 +3554,8 @@ pub(crate) fn profile_target(service: &Service, account: u64) -> super::player_p
         service: service.url.clone(),
         account,
     }
+}
+
+pub(crate) fn rank_in_served_board(menu:&MenuCore,account:u64)->u64 {
+    u64::from(menu.board.rows.iter().find(|row|row.account==account).expect("served row").rank)
 }

@@ -641,7 +641,7 @@ mod profile_capture_tests {
     #[test]
     fn authenticated_replay_delivery_records_its_matchmaker_and_public_slot_accounts() {
         let (replay, _) = crate::postgame::recorded_match_for_menu();
-        let bytes = std::fs::read(replay).expect("real recording");
+        let mut bytes = std::fs::read(replay).expect("real recording");
         let meta = bota_client_core::meta_in_replay(&mut std::io::Cursor::new(&bytes))
             .expect("read")
             .expect("metadata");
@@ -652,6 +652,11 @@ mod profile_capture_tests {
                 .match_id,
         );
         let source = "wss://match.example/control";
+        let mut snapshot=meta.clone();
+        snapshot.extend(bota_proto::encode_frame_to_vec(&(13_u8,Some(source),vec![(0_u8,Some(42_u64))])).expect("publisher snapshot"));
+        bytes.truncate(bytes.len()-meta.len()-bota_replay::trailer::OVERHEAD);
+        bytes.extend(bota_replay::trailer::frame(&snapshot).expect("publisher trailer"));
+
         let mut player = super::super::tests::Player::new(None);
         player.menu.prefs.service = source.into();
         let result = MatchResult {
@@ -711,7 +716,7 @@ mod profile_capture_tests {
         assert_eq!(
             profiles.account(0),
             Some(42),
-            "slot identity comes from the authenticated result, not a name guess"
+            "the private result preserves the publisher snapshot, never a name guess"
         );
     }
 }

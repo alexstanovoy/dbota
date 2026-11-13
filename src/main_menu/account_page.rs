@@ -115,7 +115,8 @@ pub fn profile(kit: &mut Kit, root: Entity, data: Profile<'_>, clock: super::pag
         data.read_only,
     );
     if let Some(notice) = data.notice {
-        kit.text(page, notice, 14.0, theme::INK_3);
+        let text=kit.text(page, notice, 14.0, theme::INK_3);
+        kit.commands.entity(text).entry::<Node>().and_modify(|mut node|node.margin=UiRect::top(px(12)));
     }
     let body = kit.node(
         page,

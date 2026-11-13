@@ -2178,6 +2178,7 @@ version = "0.1.0"
 dependencies = [
  "bota_core",
  "bota_proto",
+ "radovid_proto",
  "serde",
 ]
 

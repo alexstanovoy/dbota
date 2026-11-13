@@ -216,13 +216,14 @@ mod profile_tests {
     #[test]
     fn metadata_profile_capture_refuses_chunks_after_the_configured_matchmaker_changes() {
         let (_, file) = crate::postgame::recorded_match_for_menu();
-        let bytes = std::fs::read(file).expect("real metadata");
+        let mut bytes = std::fs::read(file).expect("real metadata");
         let match_id = MatchId(
             bota_replay::meta::decode(&bytes)
                 .expect("metadata")
                 .header
                 .match_id,
         );
+        bytes.extend(bota_proto::encode_frame_to_vec(&(13_u8,Some("wss://match.example/control"),vec![(0_u8,Some(42_u64))])).expect("publisher snapshot"));
         for changed in [false, true] {
             let mut player = super::super::tests::Player::new(None);
             player.menu.prefs.service = "wss://match.example/control".into();
