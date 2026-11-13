@@ -9,16 +9,15 @@ use bevy::prelude::*;
 use bevy::ui_widgets::Button;
 use bota_proto::HeroId;
 
-pub fn draw(
-    kit: &mut Kit,
-    root: Entity,
-    hero: Option<HeroId>,
-    matches: &[Match],
-    clock: super::page_time::Clock,
-) {
+/// The hero standing in the scene: it stays when Play's panel opens.
+pub fn stage(kit: &mut Kit, root: Entity, hero: Option<HeroId>) {
     if let Some(hero) = hero {
         super::hero_stage::draw(kit, root, hero, super::hero_stage::Anchor::Home);
     }
+}
+
+/// The last and the recent matches, down the right edge where Play's panel opens over them.
+pub fn cards(kit: &mut Kit, root: Entity, matches: &[Match], clock: super::page_time::Clock) {
     let cards = kit.node(
         root,
         Node {

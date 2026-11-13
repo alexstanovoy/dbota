@@ -287,7 +287,11 @@ fn draw_body(kit: &mut Kit, body: Entity, view: &MenuView) {
 
 fn page_corners(kit: &mut Kit, root: Entity, view: &MenuView, clock: super::page_time::Clock) {
     if let PageView::Home { hero, matches, .. } = &view.body {
-        super::home_cards::draw(kit, root, *hero, matches, clock);
+        super::home_cards::stage(kit, root, *hero);
+        // Play's panel covers the right edge, where the cards would show only as clipped strips.
+        if !view.play.open {
+            super::home_cards::cards(kit, root, matches, clock);
+        }
     }
     if !matches!(view.body, PageView::Profile { .. }) {
         player_card(kit, root, view);

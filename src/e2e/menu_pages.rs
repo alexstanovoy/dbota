@@ -728,6 +728,27 @@ fn home_without_a_played_game_draws_no_hero_and_keeps_its_empty_cards() {
     );
 }
 
+#[test]
+fn an_open_play_panel_leaves_no_strip_of_the_home_cards_beside_it() {
+    let mut client = super::harness::Client::run(&["--menu-preview", "play"]);
+    client.within(
+        std::time::Duration::from_secs(30),
+        "Play's panel drawn",
+        |client| {
+            crate::main_menu::tests::page_words(client.world_mut())
+                .iter()
+                .any(|word| word == "CUSTOM LOBBIES")
+        },
+    );
+    let words = crate::main_menu::tests::page_words(client.world_mut());
+    assert!(
+        !words
+            .iter()
+            .any(|word| word == "LAST MATCH" || word == "RECENT"),
+        "Home's cards sit under Play's panel and show only as clipped strips: {words:?}"
+    );
+}
+
 fn fresh_library(name: &str) -> std::path::PathBuf {
     let directory = crate::test_support::scratch_path(&format!("menu_pages/{name}"));
     if directory.exists() {
