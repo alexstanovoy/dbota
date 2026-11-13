@@ -402,7 +402,7 @@ fn demo_panel_follows_reference_at(width: u32, height: u32) {
     let demo = world
         .query_filtered::<(Entity, &Name), With<NativeButton>>()
         .iter(world)
-        .find(|(_, name)| name.as_str() == "demo")
+        .find(|(_, name)| name.as_str() == "demo hero")
         .map(|(entity, _)| entity)
         .expect("the hero page's demo button");
     let at = client.centre_of(demo).expect("the demo button laid out");
