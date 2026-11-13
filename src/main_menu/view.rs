@@ -613,7 +613,7 @@ impl MenuCore {
             Page::Profile => self.profile_view(),
             Page::PlayerProfile(_) => self.visitor_view(),
             Page::Heroes => PageView::Heroes,
-            Page::Hero(hero) => PageView::Hero { hero },
+            Page::Hero(hero) => self.hero_page(hero),
             Page::Leaderboard => self.leaderboard_view(),
             Page::Lobbies => PageView::Lobbies {
                 list: self
