@@ -120,6 +120,26 @@ fn a_click_beside_the_lobby_browser_returns_to_play_with_custom_lobbies_open() {
 }
 
 #[test]
+fn create_lobby_on_play_makes_the_room_at_once_without_a_dialog_in_between() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "alice");
+    click(&mut client, "play tab");
+    click(&mut client, "custom lobbies");
+    click(&mut client, "create lobby");
+    let mut dialog_drawn = false;
+    client.until("the lobby room", |client| {
+        let view = client.world().non_send::<MenuCore>().view();
+        dialog_drawn |= view.lobby_ui.editor.is_some() && named(client, "lobby name");
+        matches!(view.body, PageView::Lobby(_))
+    });
+    assert!(
+        !dialog_drawn,
+        "no window asks for the lobby's details first"
+    );
+    assert_eq!(room(&client).name, ALICES_LOBBY, "named after its host");
+}
+
+#[test]
 fn lobby_room_draws_two_team_columns_and_only_highlights_the_host_in_chat() {
     let mut client = Client::run(&["--menu-preview", "lobby-owner"]);
     client.frames(8);
@@ -190,12 +210,15 @@ fn lobby_room_draws_two_team_columns_and_only_highlights_the_host_in_chat() {
 #[test]
 fn the_lobby_password_dialog_draws_the_hide_password_control() {
     let mut client = Client::run(&["--menu-preview", "lobby-password"]);
-    client.frames(8);
-    assert!(
-        client
-            .shown_texts()
-            .iter()
-            .any(|text| text == "Hide password")
+    client.within(
+        std::time::Duration::from_secs(30),
+        "the hide-password control drawn",
+        |client| {
+            client
+                .shown_texts()
+                .iter()
+                .any(|text| text == "Hide password")
+        },
     );
 }
 
@@ -247,17 +270,32 @@ fn room(client: &Client) -> LobbyView {
     lobby
 }
 
-fn create(client: &mut Client, name: &str, password: &str) {
+/// What a lobby made at once is called: its host's name decides it, and it cannot be edited yet.
+const ALICES_LOBBY: &str = "alice's lobby";
+
+/// Alice makes a lobby at once, and sets its password from the room when she wants one.
+fn create(client: &mut Client, password: &str) {
     act(client, Act::Go(Page::Lobbies));
     click(client, "create lobby");
-    click(client, "lobby name");
-    act(client, Act::Type(name.into()));
-    click(client, "password");
-    act(client, Act::Type(password.into()));
-    click(client, "ok");
     client.until("the lobby created", |client| {
         let view = client.world().non_send::<MenuCore>().view();
         matches!(view.body, PageView::Lobby(_)) && view.lobby_ui.editor.is_none()
+    });
+    if password.is_empty() {
+        return;
+    }
+    click(client, "edit  ✎");
+    click(client, "password");
+    act(client, Act::Type(password.into()));
+    click(client, "ok");
+    client.until("the password saved", |client| {
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .view()
+            .lobby_ui
+            .editor
+            .is_none()
     });
 }
 
@@ -287,21 +325,21 @@ fn select_mode(client: &mut Client, name: &str) {
 fn protected_lobby_search_filters_password_retry_and_cancelled_settings_follow_the_real_service() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Friday night", "open sesame");
+    create(&mut alice, "open sesame");
     let mut bob = signed_up(&service, "bob");
     act(&mut bob, Act::Go(Page::Lobbies));
     bob.until("the protected lobby listed", |client| {
-        named(client, "join friday night")
+        named(client, "join alice's lobby")
     });
     click(&mut bob, "no password");
-    assert!(!named(&mut bob, "join friday night"));
+    assert!(!named(&mut bob, "join alice's lobby"));
     click(&mut bob, "no password");
     click(&mut bob, "lobby or host name");
-    act(&mut bob, Act::Type("FRIDAY".into()));
+    act(&mut bob, Act::Type("ALICE".into()));
     bob.until("the matching lobby remains", |client| {
-        named(client, "join friday night")
+        named(client, "join alice's lobby")
     });
-    click(&mut bob, "join friday night");
+    click(&mut bob, "join alice's lobby");
     act(&mut bob, Act::Type("wrong".into()));
     click(&mut bob, "ok");
     bob.until("the password refusal drawn", |client| {
@@ -464,7 +502,7 @@ impl crate::main_menu::LobbyChatPort for ChatPort {
 fn lobby_chat_uses_the_client_seam_has_no_fake_echo_and_preserves_a_refused_draft() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Conversation", "");
+    create(&mut alice, "");
     let mailbox = std::sync::Arc::new(std::sync::Mutex::new(Mailbox::default()));
     alice
         .world_mut()
@@ -626,7 +664,7 @@ fn replace_password(client: &mut Client, value: &str) {
 fn saving_freezes_the_draft_and_password_edits_survive_another_settings_save() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Saved settings", "old password");
+    create(&mut alice, "old password");
     click(&mut alice, "edit  ✎");
     replace_password(&mut alice, "new password");
     {
@@ -665,7 +703,7 @@ fn saving_freezes_the_draft_and_password_edits_survive_another_settings_save() {
         view.lobby_ui.editor.is_none()
     });
     let mut bob = signed_up(&service, "bob");
-    join(&mut bob, "Saved settings", "new password");
+    join(&mut bob, ALICES_LOBBY, "new password");
     assert_eq!(room(&bob).settings.mode, "1x1 Mid Only");
 }
 
@@ -673,7 +711,7 @@ fn saving_freezes_the_draft_and_password_edits_survive_another_settings_save() {
 fn saved_settings_close_on_the_real_done_reply_after_the_state_notification() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Save acknowledgement", "");
+    create(&mut alice, "");
     click(&mut alice, "edit  ✎");
     select_mode(&mut alice, "1x1 Mid Only");
     click(&mut alice, "ok");
@@ -727,7 +765,7 @@ fn another_owner_session_cannot_leave_a_stale_password_in_an_open_draft() {
     use bota_radovid::proto::{Audience, ClientMsg, Reply, RulesetId, Secret};
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Concurrent settings", "alpha secret");
+    create(&mut alice, "alpha secret");
     click(&mut alice, "edit  ✎");
     let mut other = crate::main_menu::tests::keep_menu_session_alive(
         alice.world().non_send::<MenuCore>(),
@@ -739,7 +777,7 @@ fn another_owner_session_cannot_leave_a_stale_password_in_an_open_draft() {
     };
     let lobby = list
         .iter()
-        .find(|row| row.name == "Concurrent settings")
+        .find(|row| row.name == ALICES_LOBBY)
         .expect("lobby")
         .id;
     let sequence = other
@@ -788,7 +826,7 @@ fn another_owner_session_cannot_leave_a_stale_password_in_an_open_draft() {
 fn a_confirmation_owns_enter_and_escape_above_a_lobby_draft() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Modal ownership", "");
+    create(&mut alice, "");
     click(&mut alice, "edit  ✎");
     select_mode(&mut alice, "1x1 Mid Only");
     act(&mut alice, Act::Focus(1));
@@ -934,9 +972,9 @@ fn the_lobby_list_scrolls_under_the_pointer_and_keeps_its_position_after_redraw(
 fn the_host_can_move_and_kick_a_spectating_member() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Spectator controls", "secret");
+    create(&mut alice, "secret");
     let mut bob = signed_up(&service, "bob");
-    join(&mut bob, "Spectator controls", "secret");
+    join(&mut bob, ALICES_LOBBY, "secret");
     click(&mut bob, "spectate");
     alice.until("the guest spectating", |c| {
         room(c).spectators.iter().any(|p| p.name == "bob")
@@ -994,7 +1032,7 @@ fn selecting_local_hosting_preserves_the_selected_game_mode() {
 fn lobby_chat_without_transport_is_drawn_disabled() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "No chat transport", "");
+    create(&mut alice, "");
     let world = alice.world_mut();
     let input = world
         .query::<(Entity, &Name)>()
@@ -1019,7 +1057,7 @@ fn bot_members_are_marked_in_the_drawn_lobby_roster() {
     use bota_radovid::proto::{AccountKind, ClientMsg, Reply};
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Bot roster", "");
+    create(&mut alice, "");
     let trust = bota_radovid::Tls::trust_pem(&service.pem).expect("trust");
     let mut bot = bota_radovid::Client::open(&service.url, &trust).expect("bot connection");
     let sequence = bot
@@ -1037,7 +1075,7 @@ fn bot_members_are_marked_in_the_drawn_lobby_roster() {
     };
     let lobby = list
         .iter()
-        .find(|row| row.name == "Bot roster")
+        .find(|row| row.name == ALICES_LOBBY)
         .expect("room")
         .id;
     let sequence = bot
@@ -1068,7 +1106,7 @@ fn an_accept_prompt_owns_input_above_a_lobby_settings_draft() {
     use bota_radovid::proto::{AccountKind, Audience, ClientMsg, RulesetId};
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Interrupted draft", "");
+    create(&mut alice, "");
     click(&mut alice, "edit  ✎");
     select_mode(&mut alice, "1x1 Mid Only");
     act(&mut alice, Act::Focus(1));
@@ -1116,7 +1154,7 @@ fn an_accept_prompt_owns_input_above_a_lobby_settings_draft() {
 fn a_lobby_control_reconnect_restores_the_room_without_an_obsolete_draft() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Reconnect room", "reconnect password");
+    create(&mut alice, "reconnect password");
     let _peer = crate::main_menu::tests::keep_menu_session_alive(
         alice.world().non_send::<MenuCore>(),
         &service,
@@ -1365,9 +1403,9 @@ fn scroll_at(client: &mut Client, at: Vec2, lines: f32, frames: usize) {
 fn touching_an_unknown_password_never_unlocks_the_lobby() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Protected touch", "stay locked");
+    create(&mut alice, "stay locked");
     let mut bob = signed_up(&service, "bob");
-    join(&mut bob, "Protected touch", "stay locked");
+    join(&mut bob, ALICES_LOBBY, "stay locked");
     alice.until("guest arrived", |c| {
         room(c)
             .teams
@@ -1417,9 +1455,9 @@ fn assert_password_touch_is_refused(alice: &mut Client, edit: Option<&str>) {
 fn a_guest_leave_acknowledgement_closes_the_room_and_clears_its_controls() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Guest leave", "guest secret");
+    create(&mut alice, "guest secret");
     let mut bob = signed_up(&service, "bob");
-    join(&mut bob, "Guest leave", "guest secret");
+    join(&mut bob, ALICES_LOBBY, "guest secret");
     click(&mut bob, "leave lobby  ×");
     // A later request on Bob's same link is the barrier for LobbyLeave's Done.
     act(&mut bob, Act::SearchLobbies);
@@ -1438,9 +1476,9 @@ fn a_guest_leave_acknowledgement_closes_the_room_and_clears_its_controls() {
 fn a_departed_move_target_cannot_swallow_the_owners_next_slot_click() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Move target", "guest secret");
+    create(&mut alice, "guest secret");
     let mut bob = signed_up(&service, "bob");
-    join(&mut bob, "Move target", "guest secret");
+    join(&mut bob, ALICES_LOBBY, "guest secret");
     alice.until("guest arrived", |c| {
         room(c)
             .teams
@@ -1480,7 +1518,7 @@ fn a_departed_move_target_cannot_swallow_the_owners_next_slot_click() {
 fn an_unanswered_save_expires_with_a_drawn_failure_and_a_working_cancel() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Save deadline", "");
+    create(&mut alice, "");
     click(&mut alice, "edit  ✎");
     select_mode(&mut alice, "1x1 Mid Only");
     alice
@@ -1580,7 +1618,7 @@ fn hostile_lobby_lists_are_bounded_before_storage_keyboard_or_drawing() {
 fn hostile_team_sizes_are_rejected_before_replacing_the_actual_room() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Stable room", "");
+    create(&mut alice, "");
     let mut state = alice.world().non_send::<MenuCore>().test_lobby_state();
     state.teams = vec![255, 255];
     alice
@@ -1605,7 +1643,7 @@ fn hostile_team_sizes_are_rejected_before_replacing_the_actual_room() {
 fn hostile_member_counts_and_names_are_bounded_once_on_receipt() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Bounded roster", "");
+    create(&mut alice, "");
     let mut state = alice.world().non_send::<MenuCore>().test_lobby_state();
     let template = state.members[0].clone();
     for index in 0..1000 {
@@ -1729,7 +1767,7 @@ fn lobby_housekeeping_and_non_lobby_scroll_do_not_build_full_menu_views() {
         .run_system_once(crate::main_menu::test_lobby_scroll)
         .expect("scroll system");
     assert_eq!(alice.world().non_send::<MenuCore>().test_view_builds(), 0);
-    create(&mut alice, "Housekeeping", "");
+    create(&mut alice, "");
     assert_eq!(
         alice
             .world_mut()
@@ -1791,7 +1829,7 @@ fn a_late_password_refusal_cannot_close_a_different_lobby_dialog() {
 fn losing_lobby_membership_on_resume_has_a_visible_explanation() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Gone room", "");
+    create(&mut alice, "");
     alice
         .world_mut()
         .non_send_mut::<MenuCore>()
@@ -1827,7 +1865,7 @@ fn cheats_off_cannot_satisfy_the_drawn_cheats_on_check_when_password_is_none() {
         )
     });
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Cheats value", "");
+    create(&mut alice, "");
     assert!(!room(&alice).locked);
     assert_eq!(
         drawn_setting(&mut alice, "lobby setting cheats").as_deref(),
@@ -1856,22 +1894,11 @@ fn cheats_off_cannot_satisfy_the_drawn_cheats_on_check_when_password_is_none() {
 }
 
 #[test]
-fn a_known_locked_password_can_only_be_removed_by_the_explicit_control() {
+fn a_locked_lobbys_password_can_only_be_removed_by_the_explicit_control() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Explicit removal", "known secret");
+    create(&mut alice, "known secret");
     click(&mut alice, "edit  ✎");
-    assert!(
-        !alice
-            .world()
-            .non_send::<MenuCore>()
-            .view()
-            .lobby_ui
-            .editor
-            .expect("draft")
-            .password_unknown,
-        "a Create reply gives this draft a known password"
-    );
     assert!(
         named(&mut alice, "remove password"),
         "locked state offers an explicit remove operation"
@@ -1899,15 +1926,11 @@ fn an_unconfirmed_create_is_explained_and_recovered_without_creating_another_lob
         &service,
     );
     act(&mut alice, Act::Go(Page::Lobbies));
-    click(&mut alice, "create lobby");
-    act(&mut alice, Act::Focus(0));
-    act(&mut alice, Act::Type("Unconfirmed room".into()));
-    act(&mut alice, Act::Focus(1));
-    act(&mut alice, Act::Type("creation secret".into()));
+    // Without a frame in between, so that the service's answer is not taken before the link is lost.
     alice
         .world_mut()
         .non_send_mut::<MenuCore>()
-        .act(Act::LobbyUi(LobbyAction::Save));
+        .act(Act::LobbyUi(LobbyAction::Create));
     observe_unconfirmed_create(&mut peer);
     crate::main_menu::tests::lose_menu_control(&mut alice.world_mut().non_send_mut::<MenuCore>());
     alice.frames(2);
@@ -1920,9 +1943,9 @@ fn an_unconfirmed_create_is_explained_and_recovered_without_creating_another_lob
     alice.within(
         std::time::Duration::from_secs(10),
         "existing lobby listed",
-        |c| named(c, "join unconfirmed room"),
+        |c| named(c, "join alice's lobby"),
     );
-    click(&mut alice, "join unconfirmed room");
+    click(&mut alice, "join alice's lobby");
     alice.until("owned membership recovered", |c| {
         matches!(
             c.world().non_send::<MenuCore>().view().body,
@@ -1942,9 +1965,7 @@ fn an_unconfirmed_create_is_explained_and_recovered_without_creating_another_lob
         panic!("list")
     };
     assert_eq!(
-        list.iter()
-            .filter(|row| row.name == "Unconfirmed room")
-            .count(),
+        list.iter().filter(|row| row.name == ALICES_LOBBY).count(),
         1
     );
 }
@@ -1958,7 +1979,7 @@ fn observe_unconfirmed_create(peer: &mut bota_radovid::Client) {
         let Reply::Lobbies { list } = control_reply(peer, sequence) else {
             panic!("list")
         };
-        if list.iter().any(|row| row.name == "Unconfirmed room") {
+        if list.iter().any(|row| row.name == ALICES_LOBBY) {
             break;
         }
         assert!(
@@ -1974,26 +1995,21 @@ fn observe_unconfirmed_create(peer: &mut bota_radovid::Client) {
 fn an_invalid_create_reply_cannot_complete_against_an_older_owned_room() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Existing room", "existing secret");
+    create(&mut alice, "existing secret");
     let mut invalid = alice.world().non_send::<MenuCore>().test_lobby_state();
     invalid.teams = vec![255, 255];
     act(&mut alice, Act::Go(Page::Lobbies));
-    click(&mut alice, "create lobby");
-    act(&mut alice, Act::Focus(0));
-    act(&mut alice, Act::Type("Another room".into()));
-    act(&mut alice, Act::Focus(1));
-    act(&mut alice, Act::Type("another secret".into()));
     alice
         .world_mut()
         .non_send_mut::<MenuCore>()
         .test_hold_lobby_requests();
-    act(&mut alice, Act::LobbyUi(LobbyAction::Save));
+    click(&mut alice, "create lobby");
     alice
         .world_mut()
         .non_send_mut::<MenuCore>()
         .test_answer_held_lobby_request(bota_radovid::proto::Reply::Lobby { state: invalid });
     let core = alice.world().non_send::<MenuCore>();
-    assert_eq!(core.test_lobby_state().name, "Existing room");
+    assert_eq!(core.test_lobby_state().name, ALICES_LOBBY);
     let editor = core
         .view()
         .lobby_ui
@@ -2012,7 +2028,7 @@ fn an_invalid_create_reply_cannot_complete_against_an_older_owned_room() {
 fn cancelling_a_pending_save_closes_its_dialog_and_ignores_a_late_done() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Cancel save", "");
+    create(&mut alice, "");
     click(&mut alice, "edit  ✎");
     select_mode(&mut alice, "1x1 Mid Only");
     alice
@@ -2051,11 +2067,11 @@ fn cancelling_a_pending_save_closes_its_dialog_and_ignores_a_late_done() {
 fn a_join_deadline_survives_background_request_tracking_pressure() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Bounded join", "secret");
+    create(&mut alice, "secret");
     let mut bob = signed_up(&service, "bob");
     act(&mut bob, Act::Go(Page::Lobbies));
-    bob.until("listed", |c| named(c, "join bounded join"));
-    click(&mut bob, "join bounded join");
+    bob.until("listed", |c| named(c, "join alice's lobby"));
+    click(&mut bob, "join alice's lobby");
     bob.world_mut()
         .non_send_mut::<MenuCore>()
         .test_hold_lobby_requests();
@@ -2160,13 +2176,16 @@ fn a_catalogue_budget_counts_supported_game_modes_not_foreign_games() {
 fn cancelling_a_refused_create_does_not_claim_that_creation_is_unconfirmed() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Taken room", "");
+    create(&mut alice, "");
     let mut bob = signed_up(&service, "bob");
     act(&mut bob, Act::Go(Page::Lobbies));
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_lobby_requests();
     click(&mut bob, "create lobby");
-    act(&mut bob, Act::Focus(0));
-    act(&mut bob, Act::Type("Taken room".into()));
-    click(&mut bob, "ok");
+    bob.world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_refuse_held_lobby_request(bota_radovid::proto::Error::LobbyNameTaken);
     bob.until("Create was definitively refused", |c| {
         c.world()
             .non_send::<MenuCore>()
@@ -2175,6 +2194,7 @@ fn cancelling_a_refused_create_does_not_claim_that_creation_is_unconfirmed() {
             .editor
             .is_some_and(|e| e.error.as_deref() == Some("A lobby of that name is open already"))
     });
+    bob.until("the refusal's dialog drawn", |c| named(c, "cancel"));
     click(&mut bob, "cancel");
     assert!(
         !bob.shown_texts()
@@ -2188,14 +2208,11 @@ fn cancelling_an_unexpected_create_answer_does_not_report_a_missing_answer() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
     act(&mut alice, Act::Go(Page::Lobbies));
-    click(&mut alice, "create lobby");
-    act(&mut alice, Act::Focus(0));
-    act(&mut alice, Act::Type("Unexpected answer".into()));
     alice
         .world_mut()
         .non_send_mut::<MenuCore>()
         .test_hold_lobby_requests();
-    click(&mut alice, "ok");
+    click(&mut alice, "create lobby");
     alice
         .world_mut()
         .non_send_mut::<MenuCore>()
@@ -2220,9 +2237,9 @@ fn cancelling_an_unexpected_create_answer_does_not_report_a_missing_answer() {
 fn retrying_a_timed_out_leave_clears_the_room_when_the_server_already_removed_the_guest() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Leave retry", "guest secret");
+    create(&mut alice, "guest secret");
     let mut bob = signed_up(&service, "bob");
-    join(&mut bob, "Leave retry", "guest secret");
+    join(&mut bob, ALICES_LOBBY, "guest secret");
     bob.world_mut()
         .non_send_mut::<MenuCore>()
         .act(Act::LeaveLobby);
@@ -2255,7 +2272,7 @@ fn retrying_a_timed_out_leave_clears_the_room_when_the_server_already_removed_th
 fn a_leave_answer_that_the_lobby_is_gone_clears_the_stale_room() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Gone leave", "");
+    create(&mut alice, "");
     alice
         .world_mut()
         .non_send_mut::<MenuCore>()
@@ -2275,11 +2292,11 @@ fn a_leave_answer_that_the_lobby_is_gone_clears_the_stale_room() {
 
 fn guest_with_a_timed_out_join(service: &crate::main_menu::tests::Service) -> (Client, Client) {
     let mut alice = signed_up(service, "alice");
-    create(&mut alice, "Join recovery", "guest secret");
+    create(&mut alice, "guest secret");
     let mut bob = signed_up(service, "bob");
     act(&mut bob, Act::Go(Page::Lobbies));
-    bob.until("listed", |c| named(c, "join join recovery"));
-    click(&mut bob, "join join recovery");
+    bob.until("listed", |c| named(c, "join alice's lobby"));
+    click(&mut bob, "join alice's lobby");
     act(&mut bob, Act::Type("guest secret".into()));
     bob.world_mut()
         .non_send_mut::<MenuCore>()
@@ -2342,11 +2359,11 @@ fn cancelling_a_timed_out_join_does_not_retry_it_when_the_browser_is_refreshed()
 fn a_refused_join_retry_is_not_reissued_by_a_later_list_refresh() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
-    create(&mut alice, "Retry answered", "guest secret");
+    create(&mut alice, "guest secret");
     let mut bob = signed_up(&service, "bob");
     act(&mut bob, Act::Go(Page::Lobbies));
-    bob.until("listed", |c| named(c, "join retry answered"));
-    click(&mut bob, "join retry answered");
+    bob.until("listed", |c| named(c, "join alice's lobby"));
+    click(&mut bob, "join alice's lobby");
     bob.world_mut()
         .non_send_mut::<MenuCore>()
         .test_hold_lobby_requests();
@@ -2457,8 +2474,8 @@ fn client_lobby_states_without_deadlines_restore_host_and_guest_actions() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
     let mut bob = signed_up(&service, "bob");
-    create(&mut alice, "Cancelled start", "key");
-    join(&mut bob, "Cancelled start", "key");
+    create(&mut alice, "key");
+    join(&mut bob, ALICES_LOBBY, "key");
     alice.until("both members in the host snapshot", |client| {
         client
             .world()
@@ -2574,8 +2591,8 @@ fn the_countdown_is_on_the_hosts_start_button_and_pressing_it_cancels_the_start(
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
     let mut bob = signed_up(&service, "bob");
-    create(&mut alice, "Countdown button", "key");
-    join(&mut bob, "Countdown button", "key");
+    create(&mut alice, "key");
+    join(&mut bob, ALICES_LOBBY, "key");
     alice.until("both members in the host snapshot", |client| {
         client
             .world()

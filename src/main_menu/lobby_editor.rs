@@ -13,6 +13,10 @@ pub fn draw(kit: &mut Kit, root: Entity, controls: &ControlsView) {
     let Some(editor) = &controls.editor else {
         return;
     };
+    // A lobby made at once has nothing to ask until the service refuses or does not answer.
+    if editor.creating && editor.saving && editor.error.is_none() {
+        return;
+    }
     let card = modal(kit, root, theme::lobby::EDITOR_WIDTH, 12.0);
     centered_text(
         kit,

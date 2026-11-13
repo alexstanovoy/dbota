@@ -35,7 +35,7 @@ fn enter_lobby(client: &mut Client) -> bota_radovid::proto::LobbyId {
         panic!("lobby search")
     };
     assert_eq!(list.len(), 1, "the owner search leaves out the newer decoy");
-    assert_eq!(list[0].name, "Friday Night");
+    assert_eq!(list[0].name, "alice's lobby");
     let lobby = list[0].id;
     let sequence = client
         .request(ClientMsg::LobbyJoin {

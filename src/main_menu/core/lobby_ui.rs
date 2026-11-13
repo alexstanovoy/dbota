@@ -268,7 +268,7 @@ impl MenuCore {
 
     fn edit_lobby_draft(&mut self, action: Action) {
         match action {
-            Action::Create => self.open_lobby_editor(true),
+            Action::Create => self.create_lobby_now(),
             Action::Edit => self.open_lobby_editor(false),
             Action::Cancel => {
                 self.cancel_lobby_editor();
@@ -503,6 +503,29 @@ impl MenuCore {
             Item::Button(Act::Go(Page::LocalLobby)),
         ]);
         self.form.set_controls(items);
+    }
+
+    /// Makes the lobby at once, named after its host; its name stays, and the mode, password and
+    /// audience are edited from the room.
+    fn create_lobby_now(&mut self) {
+        self.open_lobby_editor(true);
+        let Some(nickname) = self
+            .client
+            .as_ref()
+            .and_then(|client| client.me())
+            .map(|me| me.nickname.clone())
+        else {
+            return;
+        };
+        let name = super::text::line(
+            &format!("{nickname}'s lobby"),
+            bota_radovid::proto::MAX_LOBBY_NAME_LEN,
+        );
+        let Some(editor) = &mut self.lobby_ui.editor else {
+            return;
+        };
+        editor.form.put(0, &name);
+        self.save_lobby_editor();
     }
 
     fn open_lobby_editor(&mut self, creating: bool) {

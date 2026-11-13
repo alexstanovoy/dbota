@@ -541,21 +541,15 @@ pub(super) fn resize_menu_window(client: &mut Client, size: UVec2) {
 fn open_password_dialog(
     client: &mut Client,
     host: &mut crate::main_menu::tests::Player,
-    name: &str,
+    login: &str,
 ) {
-    host.menu.act(Act::Go(Page::Lobbies));
-    host.fill(&[name, crate::main_menu::tests::PASSWORD]);
-    host.menu
-        .act(Act::LobbyUi(crate::main_menu::LobbyAction::Save));
-    client.within(Duration::from_secs(30), "the host's lobby created", |_| {
-        host.menu.update();
-        host.menu.page() == Page::Lobby
-    });
+    host.make_lobby();
+    host.lock_lobby(crate::main_menu::tests::PASSWORD);
     act(client, Act::Go(Page::Lobbies));
     act(client, Act::Focus(0));
-    act(client, Act::Type(name.to_owned()));
+    act(client, Act::Type(login.to_owned()));
     act(client, Act::SearchLobbies);
-    let join = format!("join {name}");
+    let join = format!("join {login}'s lobby");
     client.within(Duration::from_secs(30), "the locked lobby listed", |c| {
         visible_menu_button(c, &join)
     });
@@ -593,9 +587,9 @@ fn assert_error_in_bottom_band(client: &mut Client, error: Rect) {
 fn refused_password_join_keeps_content_still(
     client: &mut Client,
     host: &mut crate::main_menu::tests::Player,
-    name: &str,
+    login: &str,
 ) {
-    open_password_dialog(client, host, name);
+    open_password_dialog(client, host, login);
     let before = lobby_rectangles(client);
     act(client, Act::Type("wrong password".to_owned()));
     click_menu_button(client, "ok");
@@ -677,8 +671,6 @@ fn assert_status_overlay_keeps_content_still(client: &mut Client, before: [Rect;
 #[test]
 fn a_failed_lobby_join_overlays_the_bottom_without_moving_menu_content() {
     let service = crate::main_menu::tests::service();
-    let mut host = crate::main_menu::tests::Player::new(Some(&service));
-    host.register("host");
     let mut client = signed_up(&service, "alice");
     client.within(Duration::from_secs(30), "the menu fonts loaded", |c| {
         let fonts = c.world().resource::<crate::ui::Fonts>();
@@ -701,11 +693,11 @@ fn a_failed_lobby_join_overlays_the_bottom_without_moving_menu_content() {
         resize_menu_window(&mut client, size);
         assert_eq!(client.world().non_send::<MenuCore>().in_game(), over_game);
         eprintln!("checking menu error: over_game={over_game}, window={size:?}");
-        refused_password_join_keeps_content_still(
-            &mut client,
-            &mut host,
-            if over_game { "live" } else { "menu" },
-        );
+        // A lobby is named after its host, so each round has a host of its own.
+        let login = if over_game { "live" } else { "menu" };
+        let mut host = crate::main_menu::tests::Player::new(Some(&service));
+        host.register(login);
+        refused_password_join_keeps_content_still(&mut client, &mut host, login);
         assert_eq!(client.world().non_send::<MenuCore>().in_game(), over_game);
     }
     act(&mut client, Act::Disconnect);

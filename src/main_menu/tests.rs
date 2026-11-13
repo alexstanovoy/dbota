@@ -413,13 +413,27 @@ impl Player {
 
     /// Types into the page's fields, one after another.
     pub(crate) fn fill(&mut self, values: &[&str]) {
-        if self.menu.page() == Page::Lobbies && self.menu.join_prompt.is_none() {
-            self.menu
-                .act(Act::LobbyUi(super::lobby_controls::Action::Create));
-        }
         for (at, value) in values.iter().enumerate() {
             self.fill_field(at, value);
         }
+    }
+
+    /// Makes a lobby from the browser at once; it is named after its host.
+    pub(crate) fn make_lobby(&mut self) {
+        self.menu.act(Act::Go(Page::Lobbies));
+        self.menu
+            .act(Act::LobbyUi(super::lobby_controls::Action::Create));
+        settle(&mut [self], |p| {
+            p.menu.page() == Page::Lobby && p.menu.view().lobby_ui.editor.is_none()
+        });
+    }
+
+    /// Locks the lobby this host sits in with `password`, from its settings.
+    pub(crate) fn lock_lobby(&mut self, password: &str) {
+        self.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
+        self.fill_field(1, password);
+        self.menu.act(Act::LobbyUi(super::LobbyAction::Save));
+        settle(&mut [self], |p| p.menu.view().lobby_ui.editor.is_none());
     }
 
     pub(crate) fn fill_field(&mut self, at: usize, value: &str) {
@@ -1803,13 +1817,10 @@ fn a_ruleset_for_bots_is_not_listed_to_humans() {
     );
 }
 
-/// Makes a lobby from the LOBBIES page with `fields` (its name, and its password if any), then
-/// changes its game mode to `mode` in the lobby, as its host.
-fn create_lobby(player: &mut Player, mode: &str, fields: &[&str]) {
-    player.menu.act(Act::Go(Page::Lobbies));
-    player.fill(fields);
-    player.menu.act(Act::LobbyUi(super::LobbyAction::Save));
-    settle(&mut [player], |p| p.menu.page() == Page::Lobby);
+/// Makes a lobby from the LOBBIES page at once (with `password`, set from its settings, if any),
+/// then changes its game mode to `mode` in the lobby, as its host.
+fn create_lobby(player: &mut Player, mode: &str, password: Option<&str>) {
+    player.make_lobby();
     let id = lobby_of(player)
         .settings
         .modes
@@ -1822,6 +1833,9 @@ fn create_lobby(player: &mut Player, mode: &str, fields: &[&str]) {
     player
         .menu
         .act(Act::LobbyUi(super::LobbyAction::EditMode(id)));
+    if let Some(password) = password {
+        player.fill_field(1, password);
+    }
     player.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [player], |p| lobby_of(p).settings.mode == mode);
 }
@@ -1835,10 +1849,7 @@ fn a_new_lobby_is_of_the_services_default_mode_and_its_host_changes_it() {
     });
     let mut alice = Player::new(Some(&service));
     alice.register("alice");
-    alice.menu.act(Act::Go(Page::Lobbies));
-    alice.fill(&["my practice"]);
-    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
-    settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
+    alice.make_lobby();
     let modes = lobby_of(&alice).settings.modes;
     assert_eq!(
         modes
@@ -1877,7 +1888,7 @@ fn a_host_starts_a_practice_lobby_alone_and_plays() {
     let service = service();
     let mut alice = Player::new(Some(&service));
     alice.register("alice");
-    create_lobby(&mut alice, "Practice", &["alone"]);
+    create_lobby(&mut alice, "Practice", None);
     let PageView::Lobby(lobby) = alice.menu.view().body else {
         panic!("the lobby page");
     };
@@ -1900,7 +1911,7 @@ fn a_host_starts_a_practice_lobby_alone_and_plays() {
 fn play_alone_and_leave(service: &Service) -> Player {
     let mut alice = Player::new(Some(service));
     alice.register("alice");
-    create_lobby(&mut alice, "Practice", &["alone"]);
+    create_lobby(&mut alice, "Practice", None);
     alice.menu.act(Act::ReadyLobby(true));
     settle(&mut [&mut alice], |p| p.menu.page() == Page::Game);
     let mut game = open(launch_of(&mut alice), &alice.trust);
@@ -1974,10 +1985,7 @@ fn a_new_lobby_is_full_rules_with_ten_slots_and_solo_mid_changes_the_rules_only(
     let service = service();
     let mut alice = Player::new(Some(&service));
     alice.register("alice");
-    alice.menu.act(Act::Go(Page::Lobbies));
-    alice.fill(&["default"]);
-    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
-    settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
+    alice.make_lobby();
     let (state, _) = alice.menu.lobby.as_ref().expect("sat in the lobby");
     assert_eq!(
         state.ruleset.0, "full",
@@ -2265,14 +2273,17 @@ fn squad_lobby() -> (Service, Player, Player) {
     let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
     alice.register("alice");
     bob.register("bob");
-    create_lobby(&mut alice, "Squad", &["slots", PASSWORD]);
+    create_lobby(&mut alice, "Squad", Some(PASSWORD));
     bob.menu.act(Act::Go(Page::Lobbies));
     settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());
     let listed = bob.menu.lobbies[0].clone();
-    assert!(listed.locked && listed.name == "slots", "{listed:?}");
+    assert!(
+        listed.locked && listed.name == "alice's lobby",
+        "{listed:?}"
+    );
     bob.menu.act(Act::JoinLobby(listed.id));
     let asked = bob.menu.view().password.expect("the password dialog");
-    assert_eq!((asked.lobby.as_str(), asked.error), ("slots", None));
+    assert_eq!((asked.lobby.as_str(), asked.error), ("alice's lobby", None));
     bob.menu.act(Act::Type("wrong password".to_owned()));
     bob.menu.act(Act::LobbyPassword(true));
     settle(&mut [&mut bob], |p| {
@@ -2454,22 +2465,20 @@ fn cancelling_or_logging_out_of_a_lobby_password_dialog_clears_its_secret_and_ta
     let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
     alice.register("alice");
     bob.register("bob");
-    alice.menu.act(Act::Go(Page::Lobbies));
-    alice.fill(&["protected", PASSWORD]);
-    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
-    settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
+    alice.make_lobby();
+    alice.lock_lobby(PASSWORD);
     bob.menu.act(Act::Go(Page::Lobbies));
     settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());
     let lobby = bob.menu.lobbies[0].id;
     bob.menu.act(Act::Focus(0));
-    bob.menu.act(Act::Type("protect".to_owned()));
+    bob.menu.act(Act::Type("alice".to_owned()));
     for close in [Act::LobbyPassword(false), Act::Back] {
         bob.menu.act(Act::JoinLobby(lobby));
         bob.menu.act(Act::Type("discard me".to_owned()));
         bob.menu.act(close);
         assert!(bob.menu.join_prompt.is_none());
         assert_eq!(bob.menu.page(), Page::Lobbies, "the dialog's close only");
-        assert_eq!(bob.menu.form.value(0), "protect", "the search stays");
+        assert_eq!(bob.menu.form.value(0), "alice", "the search stays");
         bob.menu.act(Act::JoinLobby(lobby));
         let fresh = bob.menu.view().password.expect("the dialog again");
         assert!(fresh.field.shown.is_empty(), "a fresh password dialog");
@@ -2500,10 +2509,7 @@ fn a_refused_join_says_why_and_lists_the_lobbies_again() {
     let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
     alice.register("alice");
     bob.register("bob");
-    alice.menu.act(Act::Go(Page::Lobbies));
-    alice.fill(&["short lived"]);
-    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
-    settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
+    alice.make_lobby();
     bob.menu.act(Act::Go(Page::Lobbies));
     settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());
     let lobby = bob.menu.lobbies[0].id;
@@ -3166,8 +3172,13 @@ fn local_hero_demo_preserves_the_clients_server_lookup_policy() {
 
 fn refuse_taken_lobby(player: &mut Player) {
     player.menu.act(Act::Go(Page::Lobbies));
-    player.fill(&["Taken room"]);
-    player.menu.act(Act::LobbyUi(super::LobbyAction::Save));
+    player.menu.test_hold_lobby_requests();
+    player
+        .menu
+        .act(Act::LobbyUi(super::lobby_controls::Action::Create));
+    player
+        .menu
+        .test_refuse_held_lobby_request(bota_radovid::proto::Error::LobbyNameTaken);
     settle(&mut [player], |p| {
         p.menu
             .view()
@@ -3180,7 +3191,7 @@ fn refuse_taken_lobby(player: &mut Player) {
 fn running_practice_player(service: &Service) -> (Player, bota_client_core::App) {
     let mut alice = Player::new(Some(service));
     alice.register("alice");
-    create_lobby(&mut alice, "Practice", &["Running room"]);
+    create_lobby(&mut alice, "Practice", None);
     alice.menu.act(Act::ReadyLobby(true));
     settle(&mut [&mut alice], |p| p.menu.page() == Page::Game);
     let mut game = open(launch_of(&mut alice), &alice.trust);
@@ -3201,7 +3212,7 @@ fn a_refused_create_does_not_replace_settings_with_a_creation_warning_on_link_lo
     let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
     alice.register("alice");
     bob.register("bob");
-    create_lobby(&mut bob, "Full rules", &["Taken room"]);
+    create_lobby(&mut bob, "Full rules", None);
     refuse_taken_lobby(&mut alice);
     alice.menu.act(Act::Go(Page::Settings));
     alice.menu.test_exhaust_control_retry();
@@ -3219,7 +3230,7 @@ fn a_refused_create_does_not_pull_a_running_game_into_the_lobby_browser_on_link_
     let service = service();
     let mut bob = Player::new(Some(&service));
     bob.register("bob");
-    create_lobby(&mut bob, "Full rules", &["Taken room"]);
+    create_lobby(&mut bob, "Full rules", None);
     let (mut alice, game) = running_practice_player(&service);
     refuse_taken_lobby(&mut alice);
     alice.menu.act(Act::ReturnToGame);
@@ -3239,8 +3250,9 @@ fn an_unanswered_create_warns_without_covering_the_running_game_when_its_link_dr
     let service = service();
     let (mut alice, game) = running_practice_player(&service);
     alice.menu.act(Act::Go(Page::Lobbies));
-    alice.fill(&["Unanswered room"]);
-    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
+    alice
+        .menu
+        .act(Act::LobbyUi(super::lobby_controls::Action::Create));
     alice.menu.act(Act::ReturnToGame);
     lose_menu_control(&mut alice.menu);
     assert_eq!(alice.menu.page(), Page::Game);

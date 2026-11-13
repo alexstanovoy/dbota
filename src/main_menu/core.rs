@@ -2968,7 +2968,12 @@ impl MenuCore {
                 } else {
                     Page::LocalLobby
                 });
-                self.form.focus(if !online && !create { 1 } else { 0 });
+                if online && create {
+                    self.lobby_ui.server = super::lobby_controls::Server::Service;
+                    self.lobby_action(super::LobbyAction::Create);
+                } else {
+                    self.form.focus(if !online && !create { 1 } else { 0 });
+                }
             }
         }
     }

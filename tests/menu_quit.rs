@@ -1277,8 +1277,8 @@ fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose(
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let (alice_dir, bob_dir) = (Scratch::new("lobby-alice"), Scratch::new("lobby-bob"));
     let alice_script = format!(
-        "{}click:play tab;click:custom lobbies;click:browse lobbies;await:button:create lobby;click:create lobby;click:lobby name;text:Friday Night;\
-         click:password;text:open sesame;click:ok;await:button:leave lobby  ×;\
+        "{}click:play tab;click:custom lobbies;click:create lobby;await:button:leave lobby  ×;\
+         click:edit  ✎;click:password;text:open sesame;click:ok;await:nobutton:ok;\
          await:text:FULL RULES;await:text:bob;await:text:carol;click:edit  ✎;\
          click:lobby game mode;click:1x1 mid only;click:password;text:open sesame;click:ok;\
          await:nobutton:ok;await:text:1X1 MID ONLY;await:button:start game;\
@@ -1286,12 +1286,12 @@ fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose(
         sign_up("alice")
     );
     let mut alice = Running::start(&alice_dir, &args, &alice_script, common::client());
-    alice.until_played("await:button:leave lobby  ×");
+    alice.until_played("await:nobutton:ok");
     let _decoy = open_lobby(&service, "dave", "Decoy Room");
     let bob_script = format!(
-        "{}click:play tab;click:custom lobbies;click:browse lobbies;await:button:join decoy room;await:button:join friday night;\
-         click:lobby or host name;text:FRIDAY;await:nobutton:join decoy room;\
-         click:join friday night;await:popup;text:guess;click:ok;await:text:Wrong password;\
+        "{}click:play tab;click:custom lobbies;click:browse lobbies;await:button:join decoy room;await:button:join alice's lobby;\
+         click:lobby or host name;text:ALICE;await:nobutton:join decoy room;\
+         click:join alice's lobby;await:popup;text:guess;click:ok;await:text:Wrong password;\
          await:popup;text:open sesame;click:ok;await:button:leave lobby  ×;\
          await:text:1X1 MID ONLY;click:ready;await:game;await:loaded;await:seats:2,1;exit",
         sign_up("bob")
@@ -1317,7 +1317,7 @@ fn a_lobby_owner_turns_cheats_on_and_everyone_sees_and_plays_with_them() {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let (alice_dir, bob_dir) = (Scratch::new("cheats-alice"), Scratch::new("cheats-bob"));
     let alice_script = format!(
-        "{}click:play tab;click:custom lobbies;click:browse lobbies;await:button:create lobby;click:create lobby;click:lobby name;text:Sandbox;click:ok;\
+        "{}click:play tab;click:custom lobbies;click:create lobby;\
          await:button:leave lobby  ×;await:named-text:lobby setting cheats:OFF;click:edit  ✎;click:enable cheats;click:ok;\
          await:nobutton:ok;await:named-text:lobby setting cheats:ON;await:text:bob;await:button:start game;click:start game;\
          await:game;await:loaded;click:pick shadow fiend;click:pick ready;await:level:1;\
@@ -1327,7 +1327,7 @@ fn a_lobby_owner_turns_cheats_on_and_everyone_sees_and_plays_with_them() {
     let mut alice = Running::start(&alice_dir, &args, &alice_script, common::client());
     alice.until_played("await:named-text:lobby setting cheats:ON");
     let bob_script = format!(
-        "{}click:play tab;click:custom lobbies;click:browse lobbies;await:button:join sandbox;click:join sandbox;await:button:leave lobby  ×;\
+        "{}click:play tab;click:custom lobbies;click:browse lobbies;await:button:join alice's lobby;click:join alice's lobby;await:button:leave lobby  ×;\
          await:named-text:lobby setting cheats:ON;await:nobutton:edit  ✎;click:ready;await:game;await:loaded;exit",
         sign_up("bob")
     );
@@ -1370,7 +1370,7 @@ fn the_script_rejects_cheats_on_when_only_password_none_is_visible() {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let client_dir = Scratch::new("cheats-off");
     let script = format!(
-        "{}click:play tab;click:custom lobbies;click:browse lobbies;await:button:create lobby;click:create lobby;click:lobby name;text:No Cheats;click:ok;await:button:leave lobby  ×;await:named-text:lobby setting cheats:OFF;expect:text:NONE;expect:text:ON;expect:named-text:lobby setting cheats:ON;exit",
+        "{}click:play tab;click:custom lobbies;click:create lobby;await:button:leave lobby  ×;await:named-text:lobby setting cheats:OFF;expect:text:NONE;expect:text:ON;expect:named-text:lobby setting cheats:ON;exit",
         sign_up("alice")
     );
     let result = Running::start(&client_dir, &args, &script, common::client()).finish();
