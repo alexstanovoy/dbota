@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bota_client_core::{Intent, Slot};
-use bota_proto::{Cheat, EffectId, HeroId, ItemId, RuneKind, StatusFlags, Vec2 as Spot};
+use bota_proto::{
+    Cheat, EffectId, HeroId, ItemId, Order, RuneKind, StatusFlags, Target, Vec2 as Spot,
+};
 use dbota_import::voice::concept::Concept;
 
 use super::harness::{Client, Server, pose_of, subtree};
@@ -43,6 +45,29 @@ pub(super) fn spawn_rune(client: &mut Client, kind: RuneKind, at: (i32, i32)) {
         kind,
         at: Spot::from_ints(at.0, at.1),
     });
+}
+
+/// The rune of `kind` nearest `at` in the view of a seat, if one is in it: nothing takes a rune
+/// but an order, so a test that wants one taken orders it.
+fn rune_in(view: &bota_proto::WorldView, kind: RuneKind, at: Spot) -> Option<bota_proto::EntityId> {
+    view.runes
+        .iter()
+        .filter(|rune| rune.kind == kind && rune.pos.within(at, bota_core::rules::units(300)))
+        .min_by_key(|rune| rune.pos.distance_squared(at))
+        .map(|rune| rune.id)
+}
+
+/// Orders the hero to take the rune of `kind` near `at`, as a right click on it does (the rune
+/// must be in its view): the hero walks within reach and takes it.
+pub(super) fn take_rune(client: &mut Client, kind: RuneKind, at: (i32, i32)) {
+    let at = Spot::from_ints(at.0, at.1);
+    let mut rune = None;
+    client.within(SOON, "the rune to take in view", |c| {
+        rune = rune_in(&c.view(), kind, at);
+        rune.is_some()
+    });
+    let target = Target::Unit(rune.expect("seen"));
+    client.core_mut().send_order(Order::Take { target });
 }
 
 /// The rune of `kind` drawn on the map, if one is: where it stands, and the model it wears (a
@@ -196,6 +221,18 @@ fn fog_hidden_bounty_rune_spawn_does_not_play_its_particle() {
     );
 }
 
+/// The driving seat of a spectated match orders its hero, standing at `at`, to take the rune
+/// of `kind` there.
+fn game_takes(game: &mut super::fog_pov::Spectated, kind: RuneKind, at: Spot) {
+    let mut rune = None;
+    game.wait("the rune in the driving seat's view", |driver, _| {
+        rune = driver.view().and_then(|view| rune_in(view, kind, at));
+        rune.is_some()
+    });
+    let target = Target::Unit(rune.expect("seen"));
+    game.driver.send_order(Order::Take { target });
+}
+
 fn recorded_spawns(visible: bool) -> super::fog_pov::ReplayFile {
     let mut game = super::fog_pov::Spectated::start("2");
     let at = bota_core::DOTA_RUNE_SPOTS[0].at;
@@ -211,8 +248,9 @@ fn recorded_spawns(visible: bool) -> super::fog_pov::ReplayFile {
     for kind in [RuneKind::Bounty, RuneKind::Water] {
         game.cheat(Cheat::SpawnRune { kind, at });
         game.wait("the real spawn present in the full stream", |_, client| {
+            // The second rune of a spot lies beside the first, on a ring round it.
             client.view().runes.iter().any(|rune| {
-                rune.pos == at
+                rune.pos.within(at, bota_core::rules::units(200))
                     && rune.kind == kind
                     && rune
                         .seen_by
@@ -307,6 +345,7 @@ fn replay_bounty_pickup_fx_follow_the_viewed_side() {
         client.view().runes.iter().any(|rune| rune.pos == at)
     });
     game.cheat(Cheat::Teleport { at });
+    game_takes(&mut game, RuneKind::Bounty, at);
     game.wait("the real pickup recorded", |_, client| {
         !client.view().runes.iter().any(|rune| rune.pos == at)
             && client.view().units.iter().any(|unit| {
@@ -381,6 +420,7 @@ fn recorded_bottling_with_both_sides_watching() -> super::fog_pov::ReplayFile {
         at,
     });
     game.cheat(Cheat::Teleport { at });
+    game_takes(&mut game, RuneKind::Haste, at);
     game.wait("the Haste rune really bottled", |driver, _| {
         driver
             .view()
@@ -583,6 +623,7 @@ fn a_rune_lies_drawn_and_the_minimap_keeps_it_until_its_spot_is_seen_without_it(
     // Bring the camera within hearing range before the teleport picks up the rune.
     client.stand_at((spot.0 + 400, spot.1));
     client.stand_at(spot);
+    take_rune(&mut client, RuneKind::Bounty, spot);
     client.within(SOON, "the rune taken", |c| {
         heard(c, "sound.rune.bounty") > 0
     });
@@ -598,7 +639,7 @@ fn a_rune_lies_drawn_and_the_minimap_keeps_it_until_its_spot_is_seen_without_it(
 }
 
 #[test]
-fn stacked_bounties_draw_apart_and_a_clicked_slot_is_reused_after_pickup() {
+fn stacked_bounties_draw_apart_and_a_clicked_one_is_picked_up_alone() {
     let server = Server::start(1, &["--map", "0", "--runes", "all"]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     client.cheat(Cheat::StartGame);
@@ -613,7 +654,7 @@ fn stacked_bounties_draw_apart_and_a_clicked_slot_is_reused_after_pickup() {
             .runes
             .iter()
             .copied()
-            .filter(|r| r.pos.within(at, bota_core::rules::units(200)))
+            .filter(|r| r.pos.within(at, bota_core::rules::units(400)))
             .collect::<Vec<_>>()
     };
     let before = nearby(&client);
@@ -624,12 +665,12 @@ fn stacked_bounties_draw_apart_and_a_clicked_slot_is_reused_after_pickup() {
         before.len(),
         "every bounty at the cap lies apart"
     );
-    let east = at + Spot::from_ints(128, 0);
-    let target = before
+    // One of the first ring (90 units round the first rune, which lies on the spawner's origin).
+    let clicked = before
         .iter()
-        .find(|r| r.pos == east)
-        .expect("the east slot")
-        .id;
+        .find(|r| r.pos != at && r.pos.within(at, bota_core::rules::units(100)))
+        .expect("a bounty on the first ring");
+    let (east, target) = (clicked.pos, clicked.id);
     client.within(SOON, "each bounty has a body at its own position", |c| {
         let world = c.world_mut();
         let bodies: Vec<_> = world
@@ -666,11 +707,9 @@ fn stacked_bounties_draw_apart_and_a_clicked_slot_is_reused_after_pickup() {
     );
     client.stand_at((spot.0 + 400, spot.1));
     spawn_rune(&mut client, RuneKind::Bounty, spot);
-    client.within(SOON, "the next bounty reuses the clicked slot", |c| {
-        c.view()
-            .runes
-            .iter()
-            .any(|r| r.pos == east && r.id != target)
+    // The next bounty is put where the placement finds room, apart from every other.
+    client.within(SOON, "the next bounty lies by the others", |c| {
+        nearby(c).len() == before.len()
     });
     for survivor in survivors {
         assert!(
@@ -679,6 +718,8 @@ fn stacked_bounties_draw_apart_and_a_clicked_slot_is_reused_after_pickup() {
                 .any(|r| r.id == survivor.id && r.pos == survivor.pos)
         );
     }
+    let positions: std::collections::BTreeSet<_> = nearby(&client).iter().map(|r| r.pos).collect();
+    assert_eq!(positions.len(), before.len(), "the new one overlaps none");
 }
 
 fn reach_rune_minute(client: &mut Client, minute: u32) {
@@ -899,8 +940,10 @@ fn a_player_sees_visible_water_and_power_spawns_without_an_announcement() {
                 .recent_events()
                 .iter()
                 .any(|event| {
+                    // The second rune of a spot lies beside the first, on a ring round it.
                     matches!(event.kind, bota_proto::EventKind::RuneSpawned { kind: got, at }
-                    if got == kind && at == Spot::from_ints(spot.0, spot.1))
+                    if got == kind
+                        && at.within(Spot::from_ints(spot.0, spot.1), bota_core::rules::units(200)))
                 })
         });
         client.within(SOON, "the visible spawned rune is drawn", |c| {
@@ -1073,6 +1116,7 @@ fn the_bottle_shows_its_charges_and_the_rune_it_keeps() {
     });
     super::hero_voice::quiet(&mut client);
     client.stand_at(spot);
+    take_rune(&mut client, RuneKind::Arcane, spot);
     let arcane = file(&client, "icon.item.bottle_arcane");
     client.within(SOON, "the rune in the Bottle", |c| {
         slot_face(c, slot).0.as_deref() == Some(arcane.as_str())
@@ -1143,6 +1187,7 @@ fn an_invisible_hero_is_see_through_and_an_attack_click_destroys_a_rune() {
         drawn(c, RuneKind::Invisibility).is_some()
     });
     client.stand_at(spot);
+    take_rune(&mut client, RuneKind::Invisibility, spot);
     client.within(SOON, "the hero invisible", |c| {
         c.me().statuses.bits & StatusFlags::INVISIBLE != 0
     });
