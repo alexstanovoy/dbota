@@ -535,41 +535,57 @@ fn tooltip(client: &mut Client) -> Option<Entity> {
 }
 
 /// Whichever ability or the innate is hovered, its popup stands beside the tile, inside the window,
-/// and covers none of it.
+/// and covers neither the tile nor the rest of the row of abilities nor the hero's title over it,
+/// in a small window and a large one.
 #[test]
-fn an_abilitys_tooltip_stands_beside_its_tile_and_never_over_it() {
+fn an_abilitys_tooltip_stands_beside_its_row_and_never_over_it() {
     let mut client = hero_page();
-    let tiles: Vec<Entity> = { ability_tiles(&mut client) };
-    assert!(tiles.len() >= 4, "the innate and the abilities");
-    let (width, height) = {
-        let world = client.world_mut();
-        let window = world
-            .query_filtered::<&Window, With<PrimaryWindow>>()
-            .single(world)
-            .expect("the window");
-        (
-            window.physical_width() as f32,
-            window.physical_height() as f32,
-        )
-    };
-    for tile in tiles {
-        let anchor = rect(&client, tile);
-        client.mouse(anchor.center());
-        client.frames(6);
-        let name = client.world().get::<Name>(tile).map(|n| n.to_string());
-        let popup = tooltip(&mut client)
-            .unwrap_or_else(|| panic!("a popup over the tile {name:?} at {anchor:?}"));
-        let popup = rect(&client, popup);
-        assert!(
-            popup.intersect(anchor).size().cmple(Vec2::ZERO).any(),
-            "the popup {popup:?} covers its tile {anchor:?}"
-        );
-        assert!(
-            popup.min.cmpge(Vec2::ZERO).all() && popup.max.x <= width && popup.max.y <= height,
-            "the popup {popup:?} is inside the window"
-        );
-        client.mouse(Vec2::new(width - 5.0, height - 5.0));
-        client.frames(3);
+    for (width, height) in [(1280.0, 720.0), (1920.0, 1080.0)] {
+        {
+            let world = client.world_mut();
+            let mut window = world
+                .query_filtered::<&mut Window, With<PrimaryWindow>>()
+                .single_mut(world)
+                .expect("the window");
+            window.resolution.set(width, height);
+        }
+        client.frames(10);
+        for hero in [HeroId::PUDGE, HeroId::SHADOW_FIEND] {
+            act(&mut client, Act::InspectHero(hero));
+            client.frames(8);
+            let tiles = ability_tiles(&mut client);
+            assert!(tiles.len() >= 4, "the innate and the abilities");
+            let protected = [
+                named(&mut client, "hero abilities").expect("the row of abilities"),
+                named(&mut client, "hero title").expect("the hero's title"),
+            ];
+            for tile in tiles {
+                let anchor = rect(&client, tile);
+                client.mouse(anchor.center());
+                client.frames(8);
+                let name = client.world().get::<Name>(tile).map(|n| n.to_string());
+                let popup = tooltip(&mut client).unwrap_or_else(|| {
+                    panic!("{width}x{height} {hero:?}: no popup over {name:?} at {anchor:?}")
+                });
+                let popup = rect(&client, popup);
+                let in_window = popup.min.cmpge(Vec2::ZERO).all()
+                    && popup.max.x <= width
+                    && popup.max.y <= height;
+                assert!(
+                    in_window,
+                    "{width}x{height}: the popup {popup:?} is inside the window"
+                );
+                for covered in [tile].into_iter().chain(protected) {
+                    let part = rect(&client, covered);
+                    assert!(
+                        popup.intersect(part).size().cmple(Vec2::ZERO).any(),
+                        "{width}x{height} {hero:?} {name:?}: the popup {popup:?} covers {part:?}"
+                    );
+                }
+                client.mouse(Vec2::new(width - 2.0, height - 2.0));
+                client.frames(3);
+            }
+        }
     }
 }
 

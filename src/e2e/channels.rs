@@ -41,13 +41,19 @@ pub(super) fn listen(client: &mut Client) {
 /// What the sink of a sound is told now; nothing for a sound that has ended (a loop of the
 /// ambience ends when its channel is muted, and starts again when it is not).
 fn sink_of(client: &Client, sound: Entity) -> f32 {
-    client.world().get_entity(sound).ok().map_or(0.0, |entity| {
-        entity
-            .get::<AudioSink>()
-            .expect("a sink in the sound's entity")
-            .volume()
-            .to_linear()
-    })
+    let ended = |entity: &EntityRef| entity.contains::<crate::audio_output::Ending>();
+    client
+        .world()
+        .get_entity(sound)
+        .ok()
+        .filter(|e| !ended(e))
+        .map_or(0.0, |entity| {
+            entity
+                .get::<AudioSink>()
+                .expect("a sink in the sound's entity")
+                .volume()
+                .to_linear()
+        })
 }
 
 fn set(client: &mut Client, change: impl FnOnce(&mut Settings)) {
@@ -126,7 +132,12 @@ pub(super) fn follows_the_balance(client: &mut Client, sound: Entity, channel: C
     set(client, |s| s.mix.set_muted(channel, true));
     close(sink_of(client, sound), 0.0, "after its mute");
     set(client, |s| s.mix.set_muted(channel, false));
-    if client.world().get_entity(sound).is_err() {
+    if client
+        .world()
+        .get_entity(sound)
+        .is_ok_and(|entity| entity.contains::<crate::audio_output::Ending>())
+        || client.world().get_entity(sound).is_err()
+    {
         // A loop the mute ended: the next one is the soundscape's to start, at the balance.
         return;
     }

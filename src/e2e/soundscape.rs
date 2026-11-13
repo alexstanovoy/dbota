@@ -215,6 +215,80 @@ fn an_occupied_roshan_pit_sounds_and_the_empty_one_does_not() {
     );
 }
 
+/// A loop that a mute ends falls instead of being cut: it stops being tuned at once (the mute
+/// does not reach its sink, which would cut it), its source is told to fall, and it is dropped
+/// once the taper has passed; unmuting starts a new one, which rises.
+#[test]
+fn a_mute_lets_the_ambience_loops_fall_instead_of_cutting_them() {
+    use crate::audio_output::{Ending, TAPER};
+    use crate::channels::{Channel, Tuned};
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    super::channels::listen(&mut client);
+    client.cheat(Cheat::TimeOfDay { night: false });
+    look_at(&mut client, (-7350.0, -6825.0));
+    client.within(Duration::from_secs(60), "day ambience", |c| {
+        heard(c) == Some(("default_day".to_owned(), 1.0))
+    });
+    client.frames(3);
+    let loops = |client: &mut Client| -> Vec<Entity> {
+        let world = client.world_mut();
+        world
+            .query::<(Entity, &Tuned, &crate::audio_output::Taper)>()
+            .iter(world)
+            .filter(|(_, tuned, _)| tuned.channel == Channel::Ambience)
+            .map(|(entity, ..)| entity)
+            .collect()
+    };
+    let playing = loops(&mut client);
+    assert!(!playing.is_empty(), "the ambience loops sound");
+    // A frame is a millisecond, so that the fall (twelve of them) is still going after two.
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(1),
+        ));
+    client
+        .world_mut()
+        .resource_mut::<crate::config::Settings>()
+        .mix
+        .set_muted(Channel::Ambience, true);
+    client.frames(2);
+    for loop_ in &playing {
+        let loop_ = client.world().entity(*loop_);
+        assert!(
+            loop_.contains::<Ending>(),
+            "the muted loop is falling, not cut"
+        );
+        assert!(!loop_.contains::<Tuned>(), "the mute does not reach it");
+        assert!(
+            loop_.get::<bevy::audio::AudioSink>().is_some(),
+            "its sink still sounds the fall"
+        );
+    }
+    assert!(
+        loops(&mut client).is_empty(),
+        "no loop is tuned while muted"
+    );
+    client.within(Duration::from_secs(10), "the fallen loops dropped", |c| {
+        playing
+            .iter()
+            .all(|loop_| c.world().get_entity(*loop_).is_err())
+    });
+    assert!(
+        TAPER < Duration::from_millis(50),
+        "a fall too short to hear"
+    );
+    client
+        .world_mut()
+        .resource_mut::<crate::config::Settings>()
+        .mix
+        .set_muted(Channel::Ambience, false);
+    client.within(Duration::from_secs(10), "the loops back", |c| {
+        !loops(c).is_empty()
+    });
+}
+
 /// A loop of the ambience that is already sounding takes the master volume once and the ambience's
 /// level and mute as they move, and a second loop of the day's scape sounds as the first.
 #[test]

@@ -273,6 +273,9 @@ fn hero_header(kit: &mut Kit, body: Entity, hero: &bota_core::HeroDef) {
             ..default()
         },
     );
+    kit.commands
+        .entity(header)
+        .insert((Name::new("hero title"), crate::tips::TipKeepClear));
     let attribute = hero_identity(kit, header, hero);
     kit.text(
         header,
@@ -333,6 +336,9 @@ fn skills(kit: &mut Kit, body: Entity, hero: &bota_core::HeroDef, _texts: &Texts
             ..default()
         },
     );
+    kit.commands
+        .entity(abilities)
+        .insert((Name::new("hero abilities"), crate::tips::TipKeepClear));
     let mut shown = std::collections::HashSet::new();
     for ability in hero
         .innate

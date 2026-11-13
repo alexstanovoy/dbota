@@ -6,8 +6,12 @@
 //! fades over the soundscape's fade time. Its loops play while they are heard, quieter with
 //! distance by their sound level; its random sounds play one of their waves now and then.
 
-use bevy::{audio::Volume, prelude::*};
+use bevy::{
+    audio::{AudioSink, Volume},
+    prelude::*,
+};
 
+use crate::audio_output::{Taper, end_softly};
 use crate::cache_text::{ScapeLine, ScapeSound};
 use crate::camera::RtsCamera;
 use crate::channels::{Channel, Tuned, live_gain};
@@ -220,6 +224,7 @@ fn play(
     settings: Res<Settings>,
     args: Res<crate::Args>,
     mut tuned: Query<&mut Tuned>,
+    sounding: Query<(&Taper, Has<AudioSink>)>,
     mut scapes: ResMut<Scapes>,
     mut ambience: ResMut<Ambience>,
     mut mixer: ResMut<Mixer>,
@@ -244,7 +249,15 @@ fn play(
     };
     // The ambience sounds while it is not silenced; how loud is the sink's ([`follow_levels`]).
     let audible = live_gain(&settings, args.mute, Channel::Ambience) > 0.0;
-    loops(&mut commands, scapes, ear, audible, &mut tuned);
+    loops(
+        &mut commands,
+        scapes,
+        ear,
+        audible,
+        &mut tuned,
+        &sounding,
+        time.elapsed(),
+    );
     randoms(
         &mut commands,
         &mut mixer,
@@ -306,6 +319,8 @@ fn loops(
     ear: Vec2,
     audible: bool,
     tuned: &mut Query<&mut Tuned>,
+    sounding: &Query<(&Taper, Has<AudioSink>)>,
+    now: std::time::Duration,
 ) {
     let (floor, mut ties) = loop_floor(scapes, ear);
     for p in scapes.sounds.iter_mut().filter(|p| p.line.looped) {
@@ -316,7 +331,14 @@ fn loops(
         }
         match (p.playing, on) {
             (Some(entity), false) => {
-                commands.entity(entity).despawn();
+                // A loop that a mute ends falls instead of being cut where it stands; one that
+                // only went out of reach is too quiet to be heard going.
+                match sounding.get(entity) {
+                    Ok((taper, has_sink)) if !audible => {
+                        end_softly(commands, entity, taper, has_sink, now);
+                    }
+                    _ => commands.entity(entity).despawn(),
+                }
                 p.playing = None;
             }
             (Some(entity), true) => {
@@ -334,6 +356,7 @@ fn loops(
                     commands
                         .spawn((
                             crate::mixer::GameAudio,
+                            Taper::default(),
                             Tuned {
                                 channel: Channel::Ambience,
                                 base: gain,
@@ -533,8 +556,17 @@ mod tests {
             .run_system_once(
                 |mut commands: Commands,
                  mut scapes: ResMut<Scapes>,
-                 mut tuned: Query<&mut Tuned>| {
-                    loops(&mut commands, &mut scapes, Vec2::ZERO, true, &mut tuned);
+                 mut tuned: Query<&mut Tuned>,
+                 sounding: Query<(&Taper, Has<AudioSink>)>| {
+                    loops(
+                        &mut commands,
+                        &mut scapes,
+                        Vec2::ZERO,
+                        true,
+                        &mut tuned,
+                        &sounding,
+                        std::time::Duration::ZERO,
+                    );
                 },
             )
             .expect("loop system runs");

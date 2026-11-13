@@ -595,6 +595,91 @@ fn the_keyboard_walks_an_open_list_and_picks_from_it() {
     assert!(screen(&client, |s| s.dropdown.is_none()));
 }
 
+/// Tab leaves an open list: the list closes with the choice as it was and the walk goes on from the
+/// button that opened it (Shift+Tab the other way); Escape closes it and the button keeps the ring.
+#[test]
+fn tab_and_shift_tab_leave_an_open_list_with_its_choice_unchanged_and_escape_keeps_the_focus() {
+    use bevy::input::keyboard::Key;
+    let mut client = open_settings("video");
+    for _ in 0..400 {
+        client.tap_named(KeyCode::Tab, Key::Tab);
+        if ringed(&mut client) == ["texture quality choice"] {
+            break;
+        }
+    }
+    assert_eq!(ringed(&mut client), ["texture quality choice"]);
+    let before = format!("{:?}", settings(&client));
+    let open = |client: &mut Client| {
+        client.tap_named(KeyCode::Space, Key::Space);
+        assert!(screen(client, |s| s.dropdown.is_some()), "the list opens");
+        client.tap_named(KeyCode::ArrowDown, Key::ArrowDown);
+    };
+    open(&mut client);
+    client.tap_named(KeyCode::Tab, Key::Tab);
+    assert!(
+        screen(&client, |s| s.dropdown.is_none()),
+        "Tab closes the list"
+    );
+    let next = ringed(&mut client);
+    assert_eq!(next.len(), 1, "one control has the ring: {next:?}");
+    assert_ne!(next, ["texture quality choice"], "Tab walks on");
+    assert_eq!(
+        format!("{:?}", settings(&client)),
+        before,
+        "Tab picks nothing"
+    );
+
+    client.key(KeyCode::ShiftLeft, ButtonState::Pressed);
+    client.tap_named(KeyCode::Tab, Key::Tab);
+    client.key(KeyCode::ShiftLeft, ButtonState::Released);
+    assert_eq!(
+        ringed(&mut client),
+        ["texture quality choice"],
+        "Shift+Tab walks back"
+    );
+
+    open(&mut client);
+    client.key(KeyCode::ShiftLeft, ButtonState::Pressed);
+    client.tap_named(KeyCode::Tab, Key::Tab);
+    client.key(KeyCode::ShiftLeft, ButtonState::Released);
+    assert!(
+        screen(&client, |s| s.dropdown.is_none()),
+        "Shift+Tab closes the list"
+    );
+    let previous = ringed(&mut client);
+    assert_eq!(previous.len(), 1, "one control has the ring: {previous:?}");
+    assert_ne!(previous, ["texture quality choice"], "Shift+Tab walks on");
+    assert_ne!(previous, next, "the other way");
+    assert_eq!(
+        format!("{:?}", settings(&client)),
+        before,
+        "Shift+Tab picks nothing"
+    );
+
+    client.tap_named(KeyCode::Tab, Key::Tab);
+    assert_eq!(ringed(&mut client), ["texture quality choice"]);
+    open(&mut client);
+    client.tap_named(KeyCode::Escape, Key::Escape);
+    assert!(
+        screen(&client, |s| s.dropdown.is_none()),
+        "Escape closes the list"
+    );
+    assert_eq!(
+        ringed(&mut client),
+        ["texture quality choice"],
+        "Escape keeps the ring"
+    );
+    assert!(
+        screen(&client, |s| s.open),
+        "Escape closed the list, not the window"
+    );
+    assert_eq!(
+        format!("{:?}", settings(&client)),
+        before,
+        "Escape picks nothing"
+    );
+}
+
 /// An option the monitor cannot do is passed over by the arrow keys.
 #[test]
 fn the_arrow_keys_pass_over_an_option_that_cannot_be_picked() {

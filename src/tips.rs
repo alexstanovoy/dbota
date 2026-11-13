@@ -28,6 +28,11 @@ struct Tip;
 #[require(Hovered, DirectlyHovered)]
 pub struct AbilityTile(pub u16);
 
+/// A part of a menu page that the popup of an [`AbilityTile`] leaves uncovered along with the tile:
+/// the rest of the row of icons and the title over it are what the player reads the popup against.
+#[derive(Component)]
+pub struct TipKeepClear;
+
 /// The talent tree's mark on a hero's row of skills (the pick panel, the strategy screen): under
 /// the cursor, the popup that lists the hero's talents by the level that opens each.
 #[derive(Component)]
@@ -256,6 +261,10 @@ fn pick_pregame(
         &ComputedNode,
         &UiGlobalTransform,
     )>,
+    keep_clear: Query<
+        (&ComputedNode, &UiGlobalTransform, &InheritedVisibility),
+        With<TipKeepClear>,
+    >,
     talent_tiles: Query<(
         &DirectlyHovered,
         &TalentTile,
@@ -277,7 +286,17 @@ fn pick_pregame(
         .and_then(|(_, tile, ..)| entering_tip(&look, tile.0))
         .or_else(|| over_talents.and_then(|(_, tile, ..)| talents_tip(tile.0)));
     let rect = over
-        .map(|(.., node, at)| Rect::from_center_size(at.translation, node.size()))
+        .map(|(.., node, at)| {
+            // The popup stands clear of the tile and of what the page keeps clear with it.
+            keep_clear
+                .iter()
+                .filter(|(node, _, seen)| seen.get() && node.size() != Vec2::ZERO)
+                .map(|(node, at, _)| Rect::from_center_size(at.translation, node.size()))
+                .fold(
+                    Rect::from_center_size(at.translation, node.size()),
+                    |region, part| region.union(part),
+                )
+        })
         .or_else(|| {
             over_talents.map(|(.., node, at)| Rect::from_center_size(at.translation, node.size()))
         });

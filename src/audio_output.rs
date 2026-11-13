@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use bevy::audio::{
     AudioLoader, AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackMode,
-    PlaybackSettings, Source,
+    PlaybackSettings, Source, Volume,
 };
 use bevy::prelude::*;
 use rodio::cpal::StreamError;
@@ -271,6 +271,116 @@ fn open_device(failed: Arc<AtomicBool>) -> Option<MixerDeviceSink> {
     Some(stream)
 }
 
+/// How long a loop takes to rise when it starts and to fall when it ends: a few hundred samples,
+/// too short to be heard as a fade and long enough that a loop is never cut at a sample far from
+/// zero (a click).
+pub const TAPER: Duration = Duration::from_millis(12);
+
+/// The end of a loop that is to be told to fall: the loop's source reads the flag, so the fall is
+/// made by the sample, not by the frame.
+#[derive(Component, Clone, Default)]
+pub struct Taper(Arc<AtomicBool>);
+
+impl Taper {
+    fn is_ending(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// A loop that is falling: it is no longer tuned (the balance does not reach it, so that a mute
+/// does not cut it before its source has fallen) and it is dropped once [`TAPER`] has passed.
+#[derive(Component)]
+pub struct Ending {
+    since: Duration,
+}
+
+/// Ends the loop `entity` at `now` without a cut. One that has not begun sounding has nothing to
+/// let fall and goes at once.
+pub fn end_softly(
+    commands: &mut Commands,
+    entity: Entity,
+    taper: &Taper,
+    sounding: bool,
+    now: Duration,
+) {
+    if !sounding {
+        commands.entity(entity).despawn();
+        return;
+    }
+    taper.0.store(true, Ordering::Relaxed);
+    commands
+        .entity(entity)
+        .remove::<(crate::channels::Tuned, AudioPlayer)>()
+        .insert(Ending { since: now });
+}
+
+/// Drops the loops that have fallen.
+fn finish_endings(endings: Query<(Entity, &Ending)>, time: Res<Time>, mut commands: Commands) {
+    for (entity, ending) in &endings {
+        if time.elapsed().saturating_sub(ending.since) >= TAPER {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// A loop's samples with a rise at its start and a fall once its [`Taper`] says it ends, after
+/// which it is exhausted.
+struct Tapered<S> {
+    inner: S,
+    ending: Taper,
+    gain: f32,
+    /// How much the gain moves by each sample.
+    step: f32,
+}
+
+impl<S: Source<Item = f32>> Tapered<S> {
+    fn new(inner: S, ending: Taper) -> Self {
+        let samples = f32::from(inner.channels().get())
+            * inner.sample_rate().get() as f32
+            * TAPER.as_secs_f32();
+        Tapered {
+            inner,
+            ending,
+            gain: 0.0,
+            step: 1.0 / samples.max(1.0),
+        }
+    }
+}
+
+impl<S: Source<Item = f32>> Iterator for Tapered<S> {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        if self.ending.is_ending() {
+            self.gain -= self.step;
+            if self.gain <= 0.0 {
+                return None;
+            }
+        } else if self.gain < 1.0 {
+            self.gain = (self.gain + self.step).min(1.0);
+        }
+        self.inner.next().map(|sample| sample * self.gain)
+    }
+}
+
+impl<S: Source<Item = f32>> Source for Tapered<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        self.inner.current_span_len()
+    }
+
+    fn channels(&self) -> rodio::ChannelCount {
+        self.inner.channels()
+    }
+
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.inner.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
+}
+
 /// A sound that ends its entity when it has played out.
 #[derive(Component)]
 struct Despawn;
@@ -298,6 +408,7 @@ pub fn plugin(app: &mut App) {
                 supervise,
                 play_queued,
                 crate::channels::follow_levels,
+                finish_endings,
                 cleanup_finished,
             )
                 .chain(),
@@ -333,13 +444,25 @@ fn supervise(
 fn play_queued(
     output: Res<Output>,
     sources: Res<Assets<AudioSource>>,
-    queued: Query<(Entity, &AudioPlayer, &PlaybackSettings), Without<AudioSink>>,
+    settings: Res<crate::config::Settings>,
+    args: Option<Res<crate::Args>>,
+    queued: Query<
+        (
+            Entity,
+            &AudioPlayer,
+            &PlaybackSettings,
+            Option<&crate::channels::Tuned>,
+            Option<&Taper>,
+        ),
+        Without<AudioSink>,
+    >,
     mut commands: Commands,
 ) {
+    let muted_by_run = args.is_some_and(|args| args.mute);
     let mixer = output.0.stream.as_ref().map(Stream::mixer);
-    for (entity, player, settings) in &queued {
+    for (entity, player, playback, tuned, taper) in &queued {
         let Some(mixer) = mixer else {
-            if !matches!(settings.mode, PlaybackMode::Loop) {
+            if !matches!(playback.mode, PlaybackMode::Loop) {
                 commands.entity(entity).despawn();
             }
             continue;
@@ -358,23 +481,33 @@ fn play_queued(
             }
         };
         let player = Player::connect_new(mixer);
-        if matches!(settings.mode, PlaybackMode::Loop) {
-            player.append(decoder.repeat_infinite());
+        // The sound begins at the loudness the balance gives it now, not at its own and then the
+        // balance's a system later: the output's worker does not wait for the frame's systems,
+        // and a sound started under a mute must not be heard for the length of a pull.
+        let loudness = tuned.map_or(playback.volume.to_linear(), |tuned| {
+            tuned.base * crate::channels::live_gain(&settings, muted_by_run, tuned.channel)
+        });
+        player.set_volume(loudness);
+        if playback.paused {
+            player.pause();
+        }
+        if matches!(playback.mode, PlaybackMode::Loop) {
+            player.append(Tapered::new(
+                decoder.repeat_infinite(),
+                taper.cloned().unwrap_or_default(),
+            ));
         } else {
             player.append(decoder);
         }
         let mut sink = AudioSink::new(player);
-        if settings.muted {
+        if playback.muted {
             sink.mute();
         }
-        sink.set_speed(settings.speed);
-        // The balance of the channels and the master are [`crate::channels::follow_levels`]'s.
-        sink.set_volume(settings.volume);
-        if settings.paused {
-            sink.pause();
-        }
+        sink.set_speed(playback.speed);
+        // Later changes of the balance are [`crate::channels::follow_levels`]'s.
+        sink.set_volume(Volume::Linear(loudness));
         let mut entity = commands.entity(entity);
-        match settings.mode {
+        match playback.mode {
             PlaybackMode::Loop | PlaybackMode::Once => entity.insert(sink),
             PlaybackMode::Despawn => entity.insert((sink, Despawn)),
             PlaybackMode::Remove => entity.insert((sink, Remove)),
@@ -398,6 +531,195 @@ fn cleanup_finished(
                 .entity(entity)
                 .remove::<(AudioPlayer, AudioSink, PlaybackSettings, Remove)>();
         }
+    }
+}
+
+/// A sound begins at the balance: the first samples a worker pulls from a sound that started
+/// under a mute are silent, and those of one that did not are at the loudness the balance gives.
+#[cfg(test)]
+mod start_under_the_balance {
+    use super::*;
+    use crate::channels::{Channel, Tuned};
+    use crate::config::Settings;
+    use bevy::ecs::system::RunSystemOnce;
+
+    /// How loud the test sound is of itself: a quarter of full scale.
+    const SAMPLE: f32 = 0.25;
+    /// What a worker pulls between the start of a sound and the next system of the frame.
+    const PULL: usize = 4096;
+
+    /// The samples a pull takes from a sound of `channel` that [`play_queued`] started in `mode`,
+    /// with the balance `settings` and the run's mute.
+    fn first_samples(
+        settings: Settings,
+        muted_by_run: bool,
+        channel: Channel,
+        mode: PlaybackSettings,
+    ) -> Vec<f32> {
+        let (mixer, mut samples) = silent_mixer();
+        let silent = Silent {
+            mixer,
+            stop: Arc::new(AtomicBool::new(false)),
+            worker: None,
+        };
+        let mut world = World::new();
+        world.insert_resource(Output(Device::new(|_| Some(Stream::Silent(silent)))));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: SILENT_RATE,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut wav = hound::WavWriter::new(&mut bytes, spec).expect("a wav writer");
+        for _ in 0..SILENT_RATE {
+            wav.write_sample((SAMPLE * f32::from(i16::MAX)) as i16)
+                .expect("a sample");
+        }
+        wav.finalize().expect("a finished wav");
+        let mut sources = Assets::<AudioSource>::default();
+        let handle = sources.add(AudioSource {
+            bytes: bytes.into_inner().into(),
+        });
+        world.insert_resource(sources);
+        world.insert_resource(settings);
+        if muted_by_run {
+            let args = <crate::Args as clap::Parser>::parse_from(["dbota", "--mute"]);
+            assert!(args.mute, "the run is muted");
+            world.insert_resource(args);
+        }
+        world.spawn((AudioPlayer::new(handle), mode, Tuned { channel, base: 0.8 }));
+        world.run_system_once(play_queued).expect("play queued");
+        // The worker pulls here, before `follow_levels` has run.
+        let pulled: Vec<f32> = samples.by_ref().take(PULL).collect();
+        assert_eq!(pulled.len(), PULL, "the output pulls audio");
+        pulled
+    }
+
+    fn peak(samples: &[f32]) -> f32 {
+        samples.iter().copied().map(f32::abs).fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn a_sound_started_under_a_mute_is_silent_from_its_first_sample() {
+        for channel in Channel::ALL {
+            for mode in [PlaybackSettings::ONCE, PlaybackSettings::LOOP] {
+                let mutes: [(&str, Box<dyn Fn(&mut Settings)>, bool); 5] = [
+                    ("mute all", Box::new(|s| s.muted = true), false),
+                    (
+                        "the channel's mute",
+                        Box::new(move |s| s.mix.set_muted(channel, true)),
+                        false,
+                    ),
+                    (
+                        "the channel's level at nothing",
+                        Box::new(move |s| s.mix.set_level(channel, 0.0)),
+                        false,
+                    ),
+                    ("the master at nothing", Box::new(|s| s.volume = 0.0), false),
+                    ("the run's mute", Box::new(|_| {}), true),
+                ];
+                for (what, mute, by_run) in mutes {
+                    let mut settings = Settings::default();
+                    mute(&mut settings);
+                    let pulled = first_samples(settings, by_run, channel, mode);
+                    assert_eq!(
+                        peak(&pulled),
+                        0.0,
+                        "{channel:?} {mode:?} under {what}: the first samples are heard"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_sound_starts_at_its_loudness_times_the_channels_level_and_the_master() {
+        for channel in Channel::ALL {
+            let mut settings = Settings {
+                volume: 0.5,
+                ..Settings::default()
+            };
+            settings.mix.set_level(channel, 0.4);
+            let pulled = first_samples(settings, false, channel, PlaybackSettings::ONCE);
+            let wanted = SAMPLE * 0.8 * 0.5 * 0.4;
+            let at_end = pulled[PULL - 1].abs();
+            assert!(
+                (at_end - wanted).abs() < 0.002,
+                "{channel:?}: the sound plays at {at_end}, not {wanted}"
+            );
+            assert!(
+                peak(&pulled) <= wanted + 0.002,
+                "{channel:?}: no sample is louder than the balance gives: {}",
+                peak(&pulled)
+            );
+        }
+    }
+}
+
+/// A loop rises when it starts and falls when it ends, by the sample.
+#[cfg(test)]
+mod tapered_loops {
+    use super::*;
+
+    fn constant() -> rodio::buffer::SamplesBuffer {
+        rodio::buffer::SamplesBuffer::new(
+            NonZero::new(1).expect("a channel"),
+            NonZero::new(SILENT_RATE).expect("a rate"),
+            vec![1.0_f32; 4 * SILENT_RATE as usize],
+        )
+    }
+
+    /// Samples in [`TAPER`].
+    fn taper_samples() -> usize {
+        (SILENT_RATE as f32 * TAPER.as_secs_f32()).ceil() as usize
+    }
+
+    #[test]
+    fn a_loop_rises_from_silence_to_full_in_one_taper_without_a_step() {
+        let taper = Taper::default();
+        let heard: Vec<f32> = Tapered::new(constant(), taper)
+            .take(3 * taper_samples())
+            .collect();
+        assert!(
+            heard[0] < 0.01,
+            "the first sample is near silence: {}",
+            heard[0]
+        );
+        assert_eq!(heard[taper_samples() + 1], 1.0, "full after one taper");
+        let widest = heard
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f32::max);
+        assert!(widest < 2.0 / taper_samples() as f32, "no step: {widest}");
+    }
+
+    #[test]
+    fn a_loop_that_ends_falls_to_silence_in_one_taper_and_is_then_exhausted() {
+        let taper = Taper::default();
+        let mut loop_ = Tapered::new(constant(), taper.clone());
+        let before: Vec<f32> = loop_.by_ref().take(3 * taper_samples()).collect();
+        assert_eq!(before.last(), Some(&1.0), "it was at full");
+        taper.0.store(true, Ordering::Relaxed);
+        let after: Vec<f32> = loop_.by_ref().take(3 * taper_samples()).collect();
+        assert!(
+            after.len() <= taper_samples() + 1,
+            "it ends within a taper: {}",
+            after.len()
+        );
+        assert!(
+            after.first().is_some_and(|first| *first > 0.9),
+            "it falls from full"
+        );
+        assert!(after.windows(2).all(|w| w[1] <= w[0]), "it only falls");
+        let widest = std::iter::once(1.0)
+            .chain(after.iter().copied())
+            .collect::<Vec<_>>()
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f32::max);
+        assert!(widest < 2.0 / taper_samples() as f32, "no step: {widest}");
+        assert_eq!(loop_.next(), None, "exhausted");
     }
 }
 

@@ -1236,15 +1236,22 @@ fn focus(
     let shift = held.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     for event in keyboard.read().filter(|e| e.state == ButtonState::Pressed) {
         if let Some(choice) = screen.dropdown {
-            pick_option(
-                choice,
-                &event.logical_key,
-                &mut screen,
-                &mut settings,
-                &mut at,
-                &displays,
-            );
-            continue;
+            if event.logical_key == Key::Tab {
+                // Tab leaves an open list as it leaves a dialog's field: the list closes with the
+                // choice as it was, and the walk goes on from the button that opened it.
+                screen.dropdown = None;
+                at.option = None;
+            } else {
+                pick_option(
+                    choice,
+                    &event.logical_key,
+                    &mut screen,
+                    &mut settings,
+                    &mut at,
+                    &displays,
+                );
+                continue;
+            }
         }
         if controls.is_empty() {
             return;
