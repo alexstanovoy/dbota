@@ -1228,3 +1228,186 @@ fn a_spare_of_the_stage_started_in_the_world_plays_in_the_world() {
     assert_eq!(playing.started(&effect), 1);
     assert_eq!(playing.started_on_stage(&effect), 1);
 }
+
+fn sequential_path_instance(count: FloatInput, distance: FloatInput, continuous: bool) -> Instance {
+    use heatel::particle::{Path, SequentialPath};
+    let path = SequentialPath {
+        max_distance: distance,
+        count,
+        looped: true,
+        pairs: false,
+        save_offset: false,
+        path: Path {
+            start: point(3),
+            mid: None,
+            end: point(4),
+            bulge_control: 0,
+            bulge: 0.0,
+            mid_point: 0.5,
+            start_offset: [0.0; 3],
+            mid_offset: [0.0; 3],
+            end_offset: [0.0; 3],
+        },
+    };
+    let mut definition = bare(
+        16.0,
+        vec![
+            Initializer::CreateSequentialPath(Box::new(path)),
+            lifetime_of(10.0),
+        ],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    if continuous {
+        definition.emitters = vec![always(Emitter::Continuous {
+            rate: FloatInput::Literal(20.0),
+            start_time: FloatInput::Literal(0.0),
+            duration: FloatInput::Literal(0.0),
+        })];
+    }
+    let effect = Arc::new(Effect::new(&[("sequential".to_owned(), definition)]));
+    let mut instance = Instance::new(effect, 42);
+    instance.set_control_point(3, Vec3::ZERO, Vec3::X, true);
+    instance.set_control_point(4, Vec3::X * 100.0, Vec3::X, true);
+    instance
+}
+
+fn control_point_input(index: u8) -> FloatInput {
+    FloatInput::ControlPointComponent {
+        control_point: point(index),
+        component: 0,
+        mapping: Mapping::Direct,
+    }
+}
+
+#[test]
+fn sequential_path_evaluates_literal_and_control_point_counts() {
+    for count in [4, 16] {
+        let input = if count == 16 {
+            FloatInput::Literal(16.0)
+        } else {
+            control_point_input(5)
+        };
+        let mut instance = sequential_path_instance(input, FloatInput::Literal(0.0), false);
+        instance.set_control_point(5, Vec3::X * count as f32, Vec3::X, true);
+        instance.advance(0.02, None);
+        let parts = &instance.nodes[0].parts;
+        for index in 0..count {
+            let expected = Vec3::X * (100.0 * index as f32 / (count - 1) as f32);
+            assert!(parts.vectors[store::POSITION][index].distance(expected) < 0.001);
+        }
+    }
+}
+
+#[test]
+fn sequential_path_count_inputs_use_whole_points_within_the_particle_limit() {
+    for (input, expected_second) in [
+        (-5.0, 0.0),
+        (0.0, 0.0),
+        (0.5, 0.0),
+        (1.0, 0.0),
+        (1.9, 0.0),
+        (2.75, 100.0),
+        (1e30, 100.0 / 4999.0),
+        (f32::INFINITY, 100.0 / 4999.0),
+        (f32::NAN, 0.0),
+    ] {
+        let mut instance =
+            sequential_path_instance(FloatInput::Literal(input), FloatInput::Literal(0.0), false);
+        instance.advance(0.02, None);
+        let position = instance.nodes[0].parts.vectors[store::POSITION][1];
+        assert!(
+            (position.x - expected_second).abs() < 1e-5,
+            "count {input}: second point {position}, expected x={expected_second}"
+        );
+    }
+}
+
+#[test]
+fn sequential_path_negative_distance_places_points_on_the_path() {
+    for distance in [-2.0, f32::NEG_INFINITY, f32::NAN] {
+        let mut instance = sequential_path_instance(
+            FloatInput::Literal(1.0),
+            FloatInput::Literal(distance),
+            false,
+        );
+        instance.advance(0.02, None);
+        assert!(
+            instance.nodes[0].parts.vectors[store::POSITION]
+                .iter()
+                .all(|p| *p == Vec3::ZERO)
+        );
+    }
+}
+
+#[test]
+fn sequential_path_fractional_distance_keeps_subunit_jitter() {
+    let mut instance =
+        sequential_path_instance(FloatInput::Literal(1.0), FloatInput::Literal(0.25), false);
+    instance.advance(0.02, None);
+    let positions = &instance.nodes[0].parts.vectors[store::POSITION];
+    assert!(positions.iter().all(|p| p.abs().max_element() <= 0.25));
+    assert!(positions.iter().any(|p| p.length_squared() > 0.01));
+}
+
+#[test]
+fn sequential_path_huge_distance_keeps_positions_and_squared_lengths_finite() {
+    for distance in [f32::MAX, f32::INFINITY, f32::NAN] {
+        let mut instance = sequential_path_instance(
+            FloatInput::Literal(1.0),
+            FloatInput::Literal(distance),
+            false,
+        );
+        instance.advance(0.02, None);
+        for position in &instance.nodes[0].parts.vectors[store::POSITION] {
+            assert!(position.is_finite(), "finite position: {position}");
+            assert!(
+                position.length_squared().is_finite(),
+                "finite squared length: {position}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sequential_path_refreshes_count_when_control_points_change_between_batches() {
+    let mut instance =
+        sequential_path_instance(control_point_input(5), FloatInput::Literal(0.0), true);
+    instance.set_control_point(5, Vec3::X * 3.0, Vec3::X, true);
+    instance.advance(0.1, None);
+    assert_eq!(instance.nodes[0].parts.len(), 2);
+    instance.set_control_point(5, Vec3::X * 5.0, Vec3::X, true);
+    instance.advance(0.1, None);
+    let positions = &instance.nodes[0].parts.vectors[store::POSITION];
+    assert_eq!(positions.len(), 4);
+    assert!((positions[2].x - 100.0).abs() < 0.001);
+    assert!(
+        (positions[3].x - 25.0).abs() < 0.001,
+        "new input changes spacing: {:?}",
+        positions[3]
+    );
+    instance.set_control_point(5, Vec3::X * 0.5, Vec3::X, true);
+    instance.advance(0.1, None);
+    assert_eq!(
+        &instance.nodes[0].parts.vectors[store::POSITION][4..],
+        &[Vec3::ZERO; 2]
+    );
+}
+
+#[test]
+fn sequential_path_refreshes_distance_when_control_points_change_between_batches() {
+    let mut instance =
+        sequential_path_instance(FloatInput::Literal(1.0), control_point_input(6), true);
+    instance.set_control_point(6, Vec3::ZERO, Vec3::X, true);
+    instance.advance(0.1, None);
+    assert_eq!(
+        &instance.nodes[0].parts.vectors[store::POSITION][..2],
+        &[Vec3::ZERO; 2]
+    );
+    instance.set_control_point(6, Vec3::X * 0.25, Vec3::X, true);
+    instance.advance(0.1, None);
+    let positions = &instance.nodes[0].parts.vectors[store::POSITION];
+    assert!(positions[2..].iter().all(|p| p.abs().max_element() <= 0.25));
+    assert!(positions[2..].iter().any(|p| p.length_squared() > 0.001));
+}

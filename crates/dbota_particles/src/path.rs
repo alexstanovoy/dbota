@@ -88,15 +88,15 @@ pub struct Walk {
 }
 
 impl Walk {
-    fn new(s: &SequentialPath) -> Self {
+    fn new(s: &SequentialPath, count: f32) -> Self {
         let (start, end) = (s.path.start.index() as f32, s.path.end.index() as f32);
-        let step = if s.count <= 1.0 {
+        let step = if count <= 1.0 {
             0.0
         } else {
-            1.0 / (s.count - 1.0)
+            1.0 / (count - 1.0)
         };
         let span = end - start;
-        let pairs = s.pairs && span > 1.0 && s.count > 1.0;
+        let pairs = s.pairs && span > 1.0 && count > 1.0;
         Self {
             parameter: 0.0,
             direction: -1.0,
@@ -106,9 +106,21 @@ impl Walk {
         }
     }
 
+    /// Changes in creation inputs keep the phase; a one-point path collapses to the start.
+    fn set_count(&mut self, path: &SequentialPath, count: f32) {
+        let spacing = Self::new(path, count);
+        if count <= 1.0 {
+            *self = spacing;
+            return;
+        }
+        self.parameter_step = spacing.parameter_step * -self.direction;
+        self.control_point_step = spacing.control_point_step * -self.direction;
+    }
+
     /// The next particle's share of the way and its segment's control points; the walk moves
     /// on past it.
-    fn next(&mut self, s: &SequentialPath) -> (f32, usize, usize) {
+    fn next(&mut self, s: &SequentialPath, count: f32) -> (f32, usize, usize) {
+        self.set_count(s, count);
         let (start, end) = (s.path.start.index(), s.path.end.index());
         let mut t = self.parameter;
         let (from, to) = if s.pairs {
@@ -161,13 +173,20 @@ pub fn create_sequential_path(init: &Initializer, scene: &Scene<'_>, batch: &mut
     let Initializer::CreateSequentialPath(s) = init else {
         return;
     };
-    let walk = batch.memory.path.get_or_insert_with(|| Walk::new(s));
     for i in batch.first..batch.parts.len() {
-        let (t, from, to) = walk.next(s);
+        // Counts use the emitter's truncation and the shared particle limit. One point
+        // collapses this layout; the emitter still owns how many particles are made.
+        let count = (float(&s.count, scene, batch.parts, Some(i), batch.salt).max(0.0) as u32)
+            .clamp(1, heatel::particle::MAX_PARTICLES) as f32;
+        let walk = batch.memory.path.get_or_insert_with(|| Walk::new(s, count));
+        let (t, from, to) = walk.next(s, count);
         let creation = batch.parts.scalars[store::CREATION][i];
         let curve = bezier(scene, &s.path, (from, to), creation, scene.seed);
         let seed = batch.parts.seed[i];
-        let d = s.max_distance;
+        // Leave room for a three-dimensional diameter's squared length, as bounds and
+        // rendering use lengths as well as positions. Negative or NaN distance is zero.
+        let distance = float(&s.max_distance, scene, batch.parts, Some(i), batch.salt).max(0.0);
+        let d = distance.min(f32::MAX.sqrt() / 8.0);
         let jitter = Vec3::new(
             between(seed, batch.salt, -d, d),
             between(seed, batch.salt + 1, -d, d),
