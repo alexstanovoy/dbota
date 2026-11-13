@@ -56,8 +56,8 @@ fn with_trail(check: impl FnOnce(&mut Client, &HashSet<u16>)) {
         let instance = world
             .resource::<Playing>()
             .instances_of(effect)
-            .next()
-            .expect("worn trail");
+            .find(|instance| !instance.portrait)
+            .expect("world trail");
         assert_eq!(
             instance.world_time, 0.0,
             "noise starts at a known world time"
@@ -86,8 +86,7 @@ fn ready(client: &mut Client) -> bool {
                 world
                     .resource::<Playing>()
                     .instances_of(effect)
-                    .next()
-                    .is_some()
+                    .any(|instance| !instance.portrait)
             })
 }
 
@@ -147,7 +146,8 @@ fn assert_attribution(client: &Client, looks: &HashSet<u16>) {
 fn walk(client: &mut Client, looks: &HashSet<u16>) {
     let mut hero = client.me().clone();
     let origin = hero.pos;
-    let mut seen = HashSet::new();
+    let mut seen_world = HashSet::new();
+    let mut seen_portrait = HashSet::new();
     let mut worst = 0.0_f32;
     for step in 0..1800 {
         let phase = step % 1200;
@@ -181,19 +181,30 @@ fn walk(client: &mut Client, looks: &HashSet<u16>) {
             if !looks.contains(&batch.look) {
                 continue;
             }
-            seen.insert(batch.look);
+            let anchor = if batch.stage {
+                seen_portrait.insert(batch.look);
+                portrait_origin(client).expect("a portrait batch has a live subject pivot")
+            } else {
+                seen_world.insert(batch.look);
+                at
+            };
             for quad in &frame.quads[batch.range.start as usize..batch.range.end as usize] {
                 let head = Vec3::from_array(quad.head);
                 let tail = Vec3::from_array(quad.tail);
-                worst = worst.max(head.distance(at));
+                worst = worst.max(head.distance(anchor));
                 assert!(
                     head.is_finite() && tail.is_finite(),
                     "finite submitted ribbon geometry"
                 );
                 assert!(
-                    head.distance(at) <= EXCURSION,
-                    "ribbon escaped at frame {step}: {head:?}, hero {at:?}, distance {}",
-                    head.distance(at)
+                    head.distance(anchor) <= EXCURSION,
+                    "ribbon head escaped at frame {step}: {head:?}, anchor={anchor:?}, stage={}",
+                    batch.stage
+                );
+                assert!(
+                    tail.distance(anchor) <= EXCURSION,
+                    "ribbon tail escaped at frame {step}: {tail:?}, anchor={anchor:?}, stage={}",
+                    batch.stage
                 );
                 assert!(
                     head.distance(tail) < 1000.0,
@@ -202,7 +213,11 @@ fn walk(client: &mut Client, looks: &HashSet<u16>) {
             }
         }
     }
-    assert_eq!(&seen, looks, "ribbons were actually submitted");
+    assert_eq!(&seen_world, looks, "world ribbons were actually submitted");
+    assert_eq!(
+        &seen_portrait, looks,
+        "portrait ribbons were actually submitted"
+    );
     eprintln!(
         "SF detector: startup=0, seed=1, cadence=1ms->200ms->30Hz, 1800 idle/walk frames, excursion={worst}"
     );
@@ -313,8 +328,8 @@ fn tracked_heads(client: &Client) -> Vec<TrackedHead> {
         .world()
         .resource::<Playing>()
         .instances_of(effect)
-        .next()
-        .expect("worn trail");
+        .find(|instance| !instance.portrait)
+        .expect("world trail");
     let tracked: Vec<_> = instance
         .nodes
         .iter()
@@ -353,8 +368,8 @@ fn submitted_heads(client: &Client, tracked: &[TrackedHead]) -> Vec<Vec3> {
     let instance = world
         .resource::<Playing>()
         .instances_of(effect)
-        .next()
-        .expect("worn trail");
+        .find(|instance| !instance.portrait)
+        .expect("world trail");
     let frame = world.resource::<ParticleFrame>();
     tracked
         .iter()
@@ -371,7 +386,7 @@ fn submitted_heads(client: &Client, tracked: &[TrackedHead]) -> Vec<Vec3> {
             frame
                 .batches
                 .iter()
-                .filter(|batch| batch.look == tracked.look)
+                .filter(|batch| !batch.stage && batch.look == tracked.look)
                 .flat_map(|batch| {
                     &frame.quads[batch.range.start as usize..batch.range.end as usize]
                 })
@@ -380,4 +395,13 @@ fn submitted_heads(client: &Client, tracked: &[TrackedHead]) -> Vec<Vec3> {
                 .expect("the tracked particle is a submitted rope head")
         })
         .collect()
+}
+
+/// The actual subject pivot of the separate portrait view, independent of particle inputs.
+fn portrait_origin(client: &Client) -> Option<Vec3> {
+    let world = client.world();
+    let actor = world.resource::<crate::portrait::Stage>().actor.as_ref()?;
+    world
+        .get::<GlobalTransform>(actor.pivot)
+        .map(GlobalTransform::translation)
 }
