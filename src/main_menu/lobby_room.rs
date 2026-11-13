@@ -523,6 +523,22 @@ fn ready_action(
     } else {
         None
     };
+    // The host's button carries the countdown and cancels the start, where it began it.
+    let counting = lobby.owner.then_some(lobby.starting_in_secs).flatten();
+    if let Some(secs) = counting {
+        let button = w::full_button(
+            kit,
+            go,
+            &format!("STARTING IN {secs}"),
+            Act::ReadyLobby(false),
+            Tone::Primary,
+            52.0,
+            theme::lobby::ROOM_ACTION,
+        );
+        // The same name as before the start, so that the keyboard's focus survives each second's redraw.
+        kit.commands.entity(button).insert(Name::new("start game"));
+        return;
+    }
     let label = if lobby.owner {
         "START GAME"
     } else if lobby.me_ready {

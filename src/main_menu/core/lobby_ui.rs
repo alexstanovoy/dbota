@@ -457,7 +457,12 @@ impl MenuCore {
             .iter()
             .flat_map(|team| &team.slots)
             .any(|slot| slot.who.as_ref().is_some_and(|member| member.me));
-        if seated && room.starting_in_secs.is_none() && (!room.owner || room.waiting.is_none()) {
+        if room.owner && room.starting_in_secs.is_some() {
+            items.push(Item::Button(Act::ReadyLobby(false)));
+        } else if seated
+            && room.starting_in_secs.is_none()
+            && (!room.owner || room.waiting.is_none())
+        {
             items.push(Item::Button(Act::ReadyLobby(room.owner || !room.me_ready)));
         }
         if self.lobby_ui.chat.port.is_some() {

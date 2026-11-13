@@ -2552,3 +2552,74 @@ fn client_lobby_states_without_deadlines_restore_host_and_guest_actions() {
         "the guest can use the restored action"
     );
 }
+
+/// The room's button named `name` and the words drawn on it.
+fn room_button(client: &mut Client, name: &str) -> Option<(Entity, String)> {
+    let world = client.world_mut();
+    let button = world
+        .query_filtered::<(Entity, &Name), With<crate::main_menu::MenuButton>>()
+        .iter(world)
+        .find(|(_, label)| label.as_str() == name)
+        .map(|(entity, _)| entity)?;
+    let words = super::harness::subtree(world, button)
+        .into_iter()
+        .filter_map(|entity| world.get::<Text>(entity).map(|text| text.0.clone()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some((button, words))
+}
+
+#[test]
+fn the_countdown_is_on_the_hosts_start_button_and_pressing_it_cancels_the_start() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    let mut bob = signed_up(&service, "bob");
+    create(&mut alice, "Countdown button", "key");
+    join(&mut bob, "Countdown button", "key");
+    alice.until("both members in the host snapshot", |client| {
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .test_lobby_state()
+            .members
+            .len()
+            == 2
+    });
+    for client in [&mut alice, &mut bob] {
+        let mut menu = client.world_mut().non_send_mut::<MenuCore>();
+        menu.test_pause_service_events();
+        menu.test_hold_lobby_requests();
+    }
+    let mut state = alice.world().non_send::<MenuCore>().test_lobby_state();
+    let room_id = state.id;
+    state.starting_in_ms = Some(5000);
+    for member in &mut state.members {
+        member.ready = true;
+    }
+    for client in [&mut alice, &mut bob] {
+        client
+            .world_mut()
+            .non_send_mut::<MenuCore>()
+            .test_lobby_event(state.clone());
+        client.frames(3);
+    }
+    let (button, words) = room_button(&mut alice, "start game").expect("the host's start button");
+    assert_eq!(
+        words, "STARTING IN 5",
+        "the host's start button says how long is left, and stays a button"
+    );
+    assert!(
+        room_button(&mut bob, "ready").is_none_or(|(_, words)| !words.contains("STARTING")),
+        "a guest's button does not carry a countdown it cannot cancel"
+    );
+    let at = alice.centre_of(button).expect("laid out");
+    alice.mouse(at);
+    alice.click(MouseButton::Left);
+    assert!(
+        matches!(
+            alice.world().non_send::<MenuCore>().test_lobby_requests().last(),
+            Some(bota_radovid::proto::ClientMsg::LobbyReady { lobby, ready: false }) if *lobby == room_id
+        ),
+        "pressing the countdown asks the service to cancel the start"
+    );
+}
