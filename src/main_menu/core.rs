@@ -1250,6 +1250,8 @@ impl MenuCore {
             return;
         }
         let list_key=self.list_request_key(&msg,asked);
+        let lobby_changes=is_lobby && !matches!(msg,
+            ClientMsg::Rulesets|ClientMsg::LobbyList|ClientMsg::LobbySearch{..});
         let Some(client) = &mut self.client else {
             self.tell("Not connected to the service".to_owned(), true);
             return;
@@ -1265,6 +1267,7 @@ impl MenuCore {
         }
         match client.request(msg) {
             Ok(seq) => {
+                if lobby_changes {self.lobby_list_written();}
                 if let Some(key)=list_key {self.list_cache.sent(seq,key);}
                 self.track_request(seq, asked);
                 if is_lobby {

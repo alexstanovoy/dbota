@@ -1844,7 +1844,7 @@ fn an_unconfirmed_create_is_explained_and_recovered_without_creating_another_lob
         c.world().non_send::<MenuCore>().lobby_sync_settled()
     });
     act(&mut alice, Act::SearchLobbies);
-    alice.until("existing lobby listed", |c| {
+    alice.within(std::time::Duration::from_secs(10), "existing lobby listed", |c| {
         named(c, "join unconfirmed room")
     });
     click(&mut alice, "join unconfirmed room");
@@ -2021,7 +2021,11 @@ fn a_full_lobby_request_tracker_refuses_new_work_without_forgetting_old_requests
         .test_hold_lobby_requests();
     {
         let mut core = alice.world_mut().non_send_mut::<MenuCore>();
-        for _ in 0..70 {
+        for query in 0..70 {
+            core.act(Act::Focus(0));
+            core.act(Act::Erase);
+            core.act(Act::Erase);
+            core.act(Act::Type(query.to_string()));
             core.act(Act::SearchLobbies);
         }
     }

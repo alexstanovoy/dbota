@@ -3637,3 +3637,29 @@ pub(crate) fn withhold_confidence_profile(service:&Service,account:u64,banned:bo
     assert!(std::process::Command::new("python3").args(["-c",script]).arg(service._dir.0.join("radovid.db"))
         .arg(account.to_string()).arg(if banned {"ban"}else{"hide"}).status().expect("private fixture visibility").success());
 }
+
+#[test]
+fn a_cached_service_catalogue_keeps_supported_modes_after_foreign_modes_on_reconnect() {
+    let service=service_with(|text| {
+        let (header,rest)=text.split_once("[[ruleset]]").expect("rulesets");
+        let first=rest.split("[[ruleset]]").next().expect("first ruleset");
+        let mut prefix=String::new();
+        for index in 0..70 {
+            prefix.push_str("[[ruleset]]");
+            prefix.push_str(&first.replace("id = \"full\"",&format!("id = \"foreign_{index}\""))
+                .replace("game = \"bota\"","game = \"another_game\"")
+                .replace("rated = true","rated = false"));
+        }
+        format!("{header}{prefix}[[ruleset]]{rest}")
+    });
+    let mut alice=Player::new(Some(&service));
+    alice.register("catalogue_cache");
+    alice.menu.act(Act::Go(Page::Lobbies));
+    settle(&mut [&mut alice], |alice|alice.menu.lobby_sync_settled());
+    assert!(alice.menu.view().lobby_ui.modes.iter().any(|mode|mode.id.0=="solo_mid"));
+    lose_menu_control(&mut alice.menu);
+    alice.menu.act(Act::RetryService);
+    settle(&mut [&mut alice], |alice|alice.menu.lobby_sync_settled());
+    assert!(alice.menu.view().lobby_ui.modes.iter().any(|mode|mode.id.0=="solo_mid"),
+        "cached replies must not spend the supported-mode budget on another game's modes");
+}

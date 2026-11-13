@@ -1,7 +1,7 @@
 //! One bounded in-memory cache for service lists. Only opening a request checks freshness.
 use super::{core::{Asked,MenuCore},leaderboard::{Board,Query},player_profile::Snapshot};
 use bevy::platform::time::Instant;
-use bota_radovid::proto::{ClientMsg,Reply,Error,MAX_RECENT_MATCHES,MAX_LOBBY_LIST,MAX_RATED_MODES};
+use bota_radovid::proto::{ClientMsg,Reply,Error,MAX_RECENT_MATCHES,MAX_LOBBY_LIST};
 use std::{sync::Arc,time::Duration};
 
 const FRESHNESS:Duration=Duration::from_secs(60);
@@ -49,6 +49,13 @@ impl Cache {
     }
     pub(super) fn disconnected(&mut self) {self.pending.clear();}
     pub(super) fn clear(&mut self) {self.pending.clear();self.entries.clear();}
+    fn lobby_changed(&mut self,scope:&Key) {
+        let affected=|key:&Key|key.service==scope.service && key.viewer==scope.viewer
+            && matches!(key.request,Request::Rpc(ClientMsg::LobbySearch{..}));
+        self.entries.retain(|entry|!affected(&entry.key));
+        // An older in-flight list must not repopulate a snapshot invalidated by this write.
+        self.pending.retain(|(_,key)|!affected(key));
+    }
 }
 
 fn request(message:&ClientMsg,asked:Asked)->Option<Request> {
@@ -68,7 +75,8 @@ fn cached_reply(request:&Request,reply:&Reply)->Option<Read> {
         (ClientMsg::RecentMatches{account,limit},Reply::Matches{list})
             if list.len()<=usize::from((*limit).min(MAX_RECENT_MATCHES)) && list.iter().all(|result|result.seats.iter().any(|seat|seat.account==*account))=>reply.clone(),
         (ClientMsg::LobbySearch{..},Reply::Lobbies{list})=>Reply::Lobbies{list:list.iter().take(MAX_LOBBY_LIST).cloned().collect()},
-        (ClientMsg::Rulesets,Reply::Rulesets{list})=>Reply::Rulesets{list:list.iter().take(MAX_RATED_MODES+1).cloned().collect()},
+        // The wire frame bounds this reply. The consumer filters other games before its cap.
+        (ClientMsg::Rulesets,Reply::Rulesets{..})=>reply.clone(),
         // Handoffs include credentials. Keep only the fact that the live state was synchronized;
         // its membership continues to follow events in MenuCore, not a stale cached handoff.
         (ClientMsg::MyMatches,Reply::Handoffs{..})=>return Some(Read::Synced),
@@ -77,6 +85,11 @@ fn cached_reply(request:&Request,reply:&Reply)->Option<Read> {
     Some(Read::Reply(Arc::new(reply)))
 }
 impl MenuCore {
+    pub(super) fn lobby_list_written(&mut self) {
+        if let Some(scope)=self.list_request_key(&ClientMsg::LobbyList,Asked::Other) {
+            self.list_cache.lobby_changed(&scope);
+        }
+    }
     pub(super) fn list_key(&self,request:Request)->Option<Key> {
         if !self.logged_in() {return None;}
         Some(Key {service:bota_radovid::matchmaker_identity(&self.prefs.service)?,viewer:self.my_id()?.0,request})
