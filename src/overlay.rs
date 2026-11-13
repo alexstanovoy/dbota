@@ -180,6 +180,7 @@ fn draw(
         }
         casts(&mut gizmos, &ctx);
         camp_boxes(&mut gizmos, &ctx);
+        base_blocker_ranges(&mut gizmos, &ctx);
     }
     rings.0 = ranges;
     shots.0 = tower_shots(&mut gizmos, &ctx);
@@ -194,6 +195,16 @@ fn draw(
         tree.0
             .map(|(_, at)| Vec2::new(at.x.to_f32(), at.y.to_f32())),
     );
+}
+
+/// Permanent map sight sources show their vision while ranges are held.
+fn base_blocker_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
+    let Some(session) = ctx.core.session() else { return; };
+    for gate in session.map().base_blockers {
+        let (x, y) = (gate.at.x.to_f32(), gate.at.y.to_f32());
+        ring(gizmos, ctx, (x, y), bota_core::BASE_BLOCKER_VISION as f32,
+            team_color(gate.team).with_alpha(0.6), false);
+    }
 }
 
 /// Every neutral camp's spawn box, outlined on the ground as Dota shows

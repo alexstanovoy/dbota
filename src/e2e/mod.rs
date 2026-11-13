@@ -10,6 +10,7 @@ mod announcer;
 mod arcane_tips;
 mod backpack_rules;
 mod bars;
+mod base_gates;
 mod buffs;
 mod building_announcement;
 mod building_clicks;

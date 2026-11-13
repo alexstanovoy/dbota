@@ -677,9 +677,8 @@ fn rope_point(
 ) -> (Vec3, Vec3, [f32; 4]) {
     let at = catmull_rom(p0, p1, p2, p3, t);
     let tangent = catmull_rom_tangent(p0, p1, p2, p3, t).normalize_or(Vec3::X);
-    let k = if t < 0.5 { span } else { span + 1 };
     let plane = match ropes.look.orientation {
-        Orientation::ParticleNormal => parts.vectors[store::NORMAL][k],
+        Orientation::ParticleNormal => parts.vectors[store::NORMAL][span].lerp(parts.vectors[store::NORMAL][span + 1], t),
         Orientation::WorldZ => Vec3::Z,
         _ => eye.position - at,
     };

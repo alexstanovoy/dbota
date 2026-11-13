@@ -17,6 +17,7 @@ mod attenuation;
 mod audio_output;
 mod bag;
 mod bars;
+mod base_blockers;
 mod buff_words;
 mod buffs;
 mod buyback;
@@ -745,6 +746,7 @@ fn client_plugins(app: &mut App, read_environment: bool) {
             icon_mips::plugin,
             shadow_casters::plugin,
             ambient::plugin,
+            base_blockers::plugin,
             soundscape::plugin,
             hero_voice::plugin,
         ))

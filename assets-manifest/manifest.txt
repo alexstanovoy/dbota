@@ -516,6 +516,9 @@ particle shrine.ambient particles/base_static/experience_shrine_ambient.vpcf_c p
 particle shrine.active particles/base_static/experience_shrine_active.vpcf_c particles/experience_shrine_active.json
 particle lotus_pool.gathering particles/econ/generic/generic_progress_meter/generic_progress_circle.vpcf_c particles/generic_progress_circle.json
 particle lotus_pool.pluck particles/world_fountain_of_life/fol_active.vpcf_c particles/fol_active.json
+# Team-only base fields are native-created particles; the map entity has no model.
+particle base_gate.radiant_ambient particles/base_static/base_gate_ambient_radiant.vpcf_c particles/base_gate_ambient_radiant.json
+particle base_gate.dire_ambient particles/base_static/base_gate_ambient_dire.vpcf_c particles/base_gate_ambient_dire.json
 particle twin_gate.ambient particles/base_static/team_portal_ambient.vpcf_c particles/team_portal_ambient.json
 particle twin_gate.dire_ambient particles/base_static/team_portal_dire_ambient.vpcf_c particles/team_portal_dire_ambient.json
 particle twin_gate.active particles/base_static/team_portal_active.vpcf_c particles/team_portal_active.json
