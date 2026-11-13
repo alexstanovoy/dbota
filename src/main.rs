@@ -98,6 +98,7 @@ mod replays;
 mod roshan_status;
 mod rune_toast;
 mod runes;
+mod scan;
 mod scoreboard;
 mod script;
 mod seat_name;
@@ -742,6 +743,7 @@ fn client_plugins(app: &mut App, read_environment: bool) {
             heap::plugin,
         ))
         .add_plugins(pregame::plugin)
+        .add_plugins(scan::plugin)
         .add_plugins((
             bag::plugin,
             cursor::plugin,

@@ -323,6 +323,11 @@ impl EventSight<'_> {
             | EventKind::ItemDestroyed { .. }
             | EventKind::ItemTaken { .. }
             | EventKind::ItemPlaced { .. } => self.placement(subject, true),
+            // A side's Scan is told to that side alone: a spectator watching through the other
+            // side's eyes is shown none of it.
+            EventKind::Scan { team, .. } => {
+                told || self.fog.team.is_none_or(|watching| watching == team)
+            }
             EventKind::MegaCreeps { team } => {
                 let lost = match team {
                     bota_proto::Team::Radiant => bota_proto::Team::Dire,

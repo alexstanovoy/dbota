@@ -197,7 +197,12 @@ fn pick(
     attribute: Query<(Entity, &DirectlyHovered), With<crate::talents::AttributeRow>>,
     innate: Query<(Entity, &DirectlyHovered), With<crate::hud::InnateButton>>,
     layout: Query<(&ComputedNode, &UiGlobalTransform)>,
-    (mut shown, mut anchor): (ResMut<Shown>, ResMut<ShownAnchor>),
+    (mut shown, mut anchor, settings, scan): (
+        ResMut<Shown>,
+        ResMut<ShownAnchor>,
+        Res<crate::config::Settings>,
+        Query<(Entity, &DirectlyHovered), With<crate::scan::ScanButton>>,
+    ),
 ) {
     let core = &session.0;
     let rate = u32::from(core.tick_rate().max(1));
@@ -222,6 +227,9 @@ fn pick(
     } else if let Some((entity, _)) = attribute.iter().find(|(_, i)| i.get()) {
         over = Some(entity);
         Some(note_tip(attribute_tip(&texts, core)))
+    } else if let Some((entity, _)) = scan.iter().find(|(_, i)| i.get()) {
+        over = Some(entity);
+        crate::scan::tip(&texts, core, &settings).map(note_tip)
     } else if let Some((entity, _)) = innate.iter().find(|(_, i)| i.get()) {
         over = Some(entity);
         innate_tip(&look, core)

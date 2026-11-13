@@ -89,6 +89,7 @@ mod roshan;
 mod rune_lifecycle;
 mod runes;
 mod scale_handover;
+mod scan;
 mod scoreboard;
 mod secret_shop;
 mod sentry_ward;

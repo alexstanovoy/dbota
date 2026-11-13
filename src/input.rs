@@ -340,6 +340,9 @@ fn seat(
     if fired.pressed(Action::Glyph) && core.my_slot.is_some() {
         core.activate_glyph();
     }
+    if fired.pressed(Action::Scan) {
+        core.press_scan();
+    }
     if fired.pressed(Action::CameraLock) {
         panels.camera_lock = !panels.camera_lock;
     }
@@ -424,12 +427,14 @@ fn escape(
 ) {
     let half_done = core.attack_move_armed
         || core.aiming.is_some()
+        || core.scan_aim
         || core.held_item.is_some()
         || panels.move_armed
         || panels.learn_mode;
     if half_done {
         core.attack_move_armed = false;
         core.aiming = None;
+        core.scan_aim = false;
         core.held_item = None;
         panels.move_armed = false;
         panels.learn_mode = false;
@@ -476,6 +481,11 @@ pub(crate) fn mouse(
         if core.held_item.is_some() {
             return;
         }
+        // The Scan taken up is aimed by the next click, which gives it no hero's order.
+        if core.scan_aim && matches!(core.source, Source::Live(_)) {
+            core.activate_scan(bota_client_core::world_vec(ground));
+            return;
+        }
         if commands && core.aiming.is_some() {
             // At a tree, the click names the very tree the cursor rings.
             let at = tree
@@ -500,6 +510,12 @@ pub(crate) fn mouse(
             return;
         }
         core.act(Intent::SelectUnit(unit_of(hover.select)));
+    }
+    // A right click lays the aim of the Scan down and does nothing else, as Dota's click
+    // behaviours end.
+    if buttons.just_pressed(MouseButton::Right) && core.scan_aim {
+        core.scan_aim = false;
+        return;
     }
     if buttons.just_pressed(MouseButton::Right) && commands {
         core.attack_move_armed = false;

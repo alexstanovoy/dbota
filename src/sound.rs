@@ -429,6 +429,13 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<Vec<String>> {
             CueKind::Buy => named(&["sound.buy"]),
             CueKind::LevelUp => named(&["sound.level_up"]),
             CueKind::TowerShot => named(&["sound.tower.hero_impact"]),
+            // Dota's UI sounds of its own side's Scan: at the placing, at every look, and the
+            // blip of a find on top of the look that makes it.
+            CueKind::ScanActivated => named(&["sound.scan.activate"]),
+            CueKind::ScanLooked { found: false } => named(&["sound.scan.cycle"]),
+            CueKind::ScanLooked { found: true } => {
+                layered(&["sound.scan.cycle", "sound.scan.target"])
+            }
             // A hero's own, sounded through its rows; so is a building's fall.
             CueKind::Attack | CueKind::Hit | CueKind::HeroDeath | CueKind::StructureFell => {
                 vec![]
@@ -467,6 +474,9 @@ fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<Ass
         CueKind::Buy,
         CueKind::LevelUp,
         CueKind::TowerShot,
+        CueKind::ScanActivated,
+        CueKind::ScanLooked { found: false },
+        CueKind::ScanLooked { found: true },
     ]
     .map(Kind::Cue)
     .into_iter()

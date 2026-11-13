@@ -191,6 +191,8 @@ pub enum Action {
     CameraLock,
     /// Activates the Glyph of Fortification.
     Glyph,
+    /// Takes Scan up for aiming.
+    Scan,
     /// Held, every range aid shows at full strength.
     ShowRanges,
     /// Held, the scoreboard shows.
@@ -261,7 +263,7 @@ use Group::{Abilities, Camera, Interface, Items, Shop as ShopGroup, Units, Watch
 /// Every action, Dota's default of each (the `dotakeys.lst` command in the
 /// comment; `-` for dbota's own), in the settings screen's order.
 #[rustfmt::skip]
-pub const BINDINGS: [Binding; 58] = [
+pub const BINDINGS: [Binding; 59] = [
     row(Action::Ability(0), "ability_1", "Ability 1", Abilities, Play, key(KeyCode::KeyQ)), // AbilityPrimary1
     row(Action::Ability(1), "ability_2", "Ability 2", Abilities, Play, key(KeyCode::KeyW)), // AbilityPrimary2
     row(Action::Ability(2), "ability_3", "Ability 3", Abilities, Play, key(KeyCode::KeyE)), // AbilityPrimary3
@@ -309,6 +311,7 @@ pub const BINDINGS: [Binding; 58] = [
     // is an action too, unbound.
     row(Action::CameraLock, "camera_lock", "Lock camera to hero", Camera, Play, None), // -
     row(Action::Glyph, "glyph", "Glyph of Fortification", Interface, Play, key(KeyCode::KeyJ)), // ActivateGlyph
+    row(Action::Scan, "scan", "Scan", Interface, Play, key(KeyCode::KeyP)), // ActivateRadar
     // Dota's Alt (the DotaAlt pseudo-modifier) shows what it hides.
     row(Action::ShowRanges, "show_ranges", "Show ranges (held)", Interface, Both, key(KeyCode::AltLeft)), // DotaAlt
     row(Action::Scoreboard, "scoreboard", "Scoreboard (held)", Interface, Both, key(KeyCode::Backquote)), // ScoreboardToggle (SpectatorScoreboard the same)

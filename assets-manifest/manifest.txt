@@ -883,6 +883,8 @@ texture hud.item_combine_lock panorama/images/hud/reborn/item_combine_lock_psd.v
 texture hud.courier panorama/images/hud/reborn/courier_icon_psd.vtex_c hud/courier_icon_psd.png
 texture hud.glyph_on panorama/images/hud/reborn/icon_glyph_on_psd.vtex_c hud/icon_glyph_on_psd.png
 texture hud.glyph_off panorama/images/hud/reborn/icon_glyph_off_psd.vtex_c hud/icon_glyph_off_psd.png
+texture hud.scan_on panorama/images/hud/reborn/icon_scan_on_psd.vtex_c hud/icon_scan_on_psd.png
+texture hud.scan_off panorama/images/hud/reborn/icon_scan_off_psd.vtex_c hud/icon_scan_off_psd.png
 # The top bar's mark over a dead hero's portrait; the buff and debuff ring.
 texture hud.top_bar_dead panorama/images/hud/reborn/top_bar_dead_overlay_png.vtex_c hud/top_bar_dead_overlay_png.png
 texture hud.buff_outline panorama/images/hud/reborn/buff_outline_psd.vtex_c hud/buff_outline_psd.png
@@ -933,6 +935,9 @@ label resource/localization/dota_english.txt DOTA_StatBranch_TooltipTitle
 label resource/localization/dota_english.txt DOTA_LevelUpAttributes
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_attribute_bonus
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_attribute_bonus_Description
+label resource/localization/abilities_english.txt DOTA_Tooltip_ability_radar
+label resource/localization/abilities_english.txt DOTA_Tooltip_ability_radar_Description
+label resource/localization/dota_english.txt dota_hud_error_cant_radar
 # The scoreboard (held on its key, pinned by the top-left menu's button): its backdrop, the player
 # colour's vignette, the ultimate's three states, the Show Items button; the menu's settings and
 # scoreboard buttons; the headings and the menu's names (Dota's dota_hud_scoreboard layout).
@@ -1335,6 +1340,10 @@ sound sound.announcer.kill.streak.7 sounds/vo/announcer_killing_spree/announcer_
 sound sound.announcer.kill.streak.8 sounds/vo/announcer_killing_spree/announcer_kill_monster_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_monster_01.mp3 event=announcer_killing_spree_announcer_kill_monster_01
 sound sound.announcer.kill.streak.9 sounds/vo/announcer_killing_spree/announcer_kill_godlike_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_godlike_01.mp3 event=announcer_killing_spree_announcer_kill_godlike_01
 sound sound.announcer.kill.streak.max sounds/vo/announcer_killing_spree/announcer_kill_holy_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_holy_01.mp3 event=announcer_killing_spree_announcer_kill_holy_01
+# Scan's UI sounds, heard by the scanning side alone: at its placing, at every look, and at a look that finds an enemy hero.
+sound sound.scan.activate sounds/ui/scan.vsnd_c sounds/ui/scan.mp3 event=scan_minimap.activate
+sound sound.scan.cycle sounds/ui/scan_cycle.vsnd_c sounds/ui/scan_cycle.wav event=minimap_radar.cycle
+sound sound.scan.target sounds/ui/scan_enemy.vsnd_c sounds/ui/scan_enemy.wav event=minimap_radar.target
 # The announcer's lines for a tower or barracks that fell (scripts/talker/response_rules_announcer: IsTowerKilled/IsEnemyTowerKilled and the
 # Good/Bad variants a spectator hears, IsBarracksKilled likewise; twr_deny_* when the owner's own side struck it). yr = the listener's side lost it,
 # enm = the other side did, rad/dire = what a spectator hears; by lane. Which plays when is src/voice.rs.

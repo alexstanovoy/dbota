@@ -184,6 +184,10 @@ pub struct HeroMark(pub Option<(Team, bota_proto::SlotId)>);
 #[derive(Component)]
 pub struct ShopMark(pub Option<bota_proto::Vec2>);
 
+/// The minimap's frame, which other parts of the interface lay their own marks in.
+#[derive(Component)]
+pub struct MinimapFrame;
+
 /// The photograph on the minimap.
 #[derive(Component)]
 struct Photo;
@@ -248,6 +252,7 @@ fn spawn(
             Hovered::default(),
             DirectlyHovered::default(),
             Blocker,
+            MinimapFrame,
             ChildOf(docks.minimap),
         ))
         .id();
@@ -470,6 +475,11 @@ fn photograph(
 pub(crate) fn on_map(x: f32, y: f32) -> Vec2 {
     let inner = SIDE - 6.0;
     Vec2::new(x / MAP_SIZE * inner, (1.0 - y / MAP_SIZE) * inner)
+}
+
+/// How many interface pixels a stretch of the map takes on the minimap.
+pub(crate) fn map_to_pixels(units: f32) -> f32 {
+    units / MAP_SIZE * (SIDE - 6.0)
 }
 
 fn shop_marks(
@@ -1075,6 +1085,12 @@ fn clicks(
     let k = ((cursor - (center - half)) / (half * 2.0)).clamp(Vec2::ZERO, Vec2::ONE);
     let (x, y) = (k.x * MAP_SIZE, (1.0 - k.y) * MAP_SIZE);
     let core = &mut session.0;
+    // The Scan taken up is aimed where the minimap is clicked.
+    if core.scan_aim && buttons.just_pressed(MouseButton::Left) {
+        core.activate_scan(bota_client_core::world_vec((x, y)));
+        *pinged = true;
+        return;
+    }
     if let Some(kind) = crate::pings::pressed(&fired) {
         *pinged = true;
         if crate::pings::may(core) {
