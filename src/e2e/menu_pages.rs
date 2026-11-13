@@ -39,12 +39,13 @@ fn the_heroes_tab_opens_the_catalogue_and_a_hero_page_without_an_account() {
     client.mouse(at);
     client.click(MouseButton::Left);
     client.frames(5);
-    assert!(
-        crate::main_menu::tests::page_words(client.world_mut())
-            .iter()
-            .any(|text| text == "INNATE"),
-        "the hero page includes its innate"
-    );
+    // The innate is the round mark among the hero's icons (it names no text: see e2e::hero_page).
+    let world = client.world_mut();
+    let innate = world
+        .query::<(&Name, &InheritedVisibility)>()
+        .iter(world)
+        .any(|(name, shown)| shown.get() && name.as_str() == "ability necromastery");
+    assert!(innate, "the hero page includes its innate");
 }
 
 #[test]
@@ -298,7 +299,7 @@ fn the_hero_pages_demo_button_opens_the_chosen_hero_in_a_local_sandbox() {
     let button = world
         .query_filtered::<(Entity, &Name), With<NativeButton>>()
         .iter(world)
-        .find(|(_, name)| name.as_str() == "demo")
+        .find(|(_, name)| name.as_str() == "demo hero")
         .map(|(entity, _)| entity)
         .unwrap();
     let at = client.centre_of(button).unwrap();
@@ -944,40 +945,21 @@ fn unfinished_match_details_only_draw_the_owner_while_finished_details_draw_both
 
 #[test]
 fn every_hero_page_draws_pinned_game_values() {
+    use bevy::prelude::*;
     use bota_proto::HeroId;
     let expected = [
         (
             HeroId::PUDGE,
             [
-                "25",
-                "13",
-                "16",
-                "+3.0",
-                "+1.4",
-                "+1.8",
-                "70–76",
-                "2.2",
-                "175",
-                "280",
-                "1.5 s",
-                "670 / 267",
+                "25", "13", "16", "+ 3.0", "+ 1.4", "+ 1.8", "70–76", "2.2", "175", "280", "1.5 s",
+                "670", "267",
             ],
         ),
         (
             HeroId::SHADOW_FIEND,
             [
-                "19",
-                "25",
-                "16",
-                "+2.7",
-                "+3.6",
-                "+2.2",
-                "41–47",
-                "4.2",
-                "525",
-                "305",
-                "1.3 s",
-                "538 / 267",
+                "19", "25", "16", "+ 2.7", "+ 3.6", "+ 2.2", "41–47", "4.2", "525", "305", "1.3 s",
+                "538", "267",
             ],
         ),
     ];
@@ -989,7 +971,15 @@ fn every_hero_page_draws_pinned_game_values() {
     let mut client = local_menu();
     for (hero, values) in expected {
         act(&mut client, Act::InspectHero(hero));
-        let words = crate::main_menu::tests::page_words(client.world_mut());
+        let mut words = crate::main_menu::tests::page_words(client.world_mut());
+        // The gains are set with their values in one text, as spans of it.
+        let world = client.world_mut();
+        words.extend(
+            world
+                .query::<&TextSpan>()
+                .iter(world)
+                .map(|span| span.0.trim().to_owned()),
+        );
         for value in values {
             assert!(
                 words.iter().any(|word| word == value),

@@ -17,7 +17,7 @@ pub fn draw(
     clock: super::page_time::Clock,
 ) {
     if let Some(hero) = hero {
-        super::hero_stage::draw(kit, root, hero);
+        super::hero_stage::draw(kit, root, hero, super::hero_stage::Anchor::Home);
     }
     let cards = kit.node(
         root,

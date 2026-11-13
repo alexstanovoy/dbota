@@ -145,7 +145,6 @@ pub enum Act {
     ToggleCheats,
     /// Starts Dota's Demo Hero with a hero: the service's Demo ruleset, started for this account alone
     /// at once.
-    #[cfg(not(target_arch = "wasm32"))]
     Demo(u16),
     /// Watches a kept replay, by its file name.
     OpenReplay(String),
@@ -1807,6 +1806,24 @@ impl MenuCore {
         self.ask(ClientMsg::Account { account }, Asked::Profile);
     }
 
+    /// Whether a Demo Hero can be started from here: a desktop always can (the service's, else
+    /// a game of its own), a browser only when the service lists one.
+    pub(super) fn demo_offered(&self) -> bool {
+        Self::demo_policy(
+            cfg!(not(target_arch = "wasm32")),
+            self.service_offers_demo(),
+        )
+    }
+
+    /// The rule of [`Self::demo_offered`], for a client that can start its own game or not.
+    pub(crate) fn demo_policy(can_host: bool, service_offers: bool) -> bool {
+        can_host || service_offers
+    }
+
+    fn service_offers_demo(&self) -> bool {
+        self.menu_rulesets().any(bota_radovid::is_demo)
+    }
+
     /// Whether the service lists `ruleset` as a Demo Hero.
     pub(super) fn is_demo_ruleset(&self, ruleset: &RulesetId) -> bool {
         self.menu_rulesets()
@@ -1815,7 +1832,7 @@ impl MenuCore {
 
     /// Dota's Demo Hero with `hero`: the service's Demo ruleset started for this account alone, at
     /// once (no queue, lobby or countdown); its match comes as any match does ([`Self::event`]).
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Without such a ruleset a desktop starts a game of its own; a browser says so.
     fn start_demo(&mut self, hero: bota_proto::HeroId) {
         if bota_core::hero_def(hero).is_none() || self.demo_asked.is_some() {
             return;
@@ -1825,6 +1842,7 @@ impl MenuCore {
             .find(|r| bota_radovid::is_demo(r))
             .map(|r| r.id.clone());
         let Some(ruleset) = ruleset else {
+            #[cfg(not(target_arch = "wasm32"))]
             self.start(Launch::LocalDemo {
                 hero,
                 name: self.name(),
@@ -1832,6 +1850,8 @@ impl MenuCore {
                 server: self.server_binary.clone(),
                 server_environment: self.server_environment,
             });
+            #[cfg(target_arch = "wasm32")]
+            self.tell("This service offers no Demo Hero".to_owned(), true);
             return;
         };
         self.demo_asked = Some(hero);
@@ -2123,7 +2143,6 @@ impl MenuCore {
             | Act::LeaveSeat => self.act_game(act),
             #[cfg(test)]
             Act::Find(_) => self.act_lobby(act),
-            #[cfg(not(target_arch = "wasm32"))]
             Act::Demo(_) => self.act_library(act),
             #[cfg(target_arch = "wasm32")]
             Act::DownloadReplay(_) => self.act_library(act),
@@ -2276,7 +2295,6 @@ impl MenuCore {
 
     fn act_library(&mut self, act: Act) -> Option<Act> {
         match act {
-            #[cfg(not(target_arch = "wasm32"))]
             Act::Demo(hero) => self.start_demo(bota_proto::HeroId(hero)),
             Act::OpenReplay(name) => self.open_listed(&name),
             Act::DeleteReplay(name) => self.library.delete(&name),

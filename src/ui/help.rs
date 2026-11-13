@@ -1,5 +1,5 @@
 //! Hover-owned context help, shared by menu and settings controls.
-mod placement;
+pub(crate) mod placement;
 use crate::{theme, ui::Draw as Kit};
 use bevy::{
     picking::hover::{DirectlyHovered, Hovered},

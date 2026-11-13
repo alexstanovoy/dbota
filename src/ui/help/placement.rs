@@ -80,7 +80,7 @@ fn clear(rect: Rect, row: Rect, gap: f32) -> bool {
     (row.min - rect.max).max(rect.min - row.max).max_element() >= gap
 }
 
-fn position(
+pub(crate) fn position(
     row: Rect,
     size: Vec2,
     point: Vec2,

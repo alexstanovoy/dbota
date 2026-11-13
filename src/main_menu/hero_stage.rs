@@ -78,16 +78,54 @@ impl HeroStage {
     pub(crate) fn ready(&self) -> bool {
         self.framed && self.actor.as_ref().is_some_and(|a| a.posed)
     }
+
+    /// The picture the stage renders the hero into.
+    #[cfg(test)]
+    pub(crate) fn image_handle(&self) -> &Handle<Image> {
+        &self.image
+    }
 }
 
-pub(super) fn draw(kit: &mut super::kit::Kit, root: Entity, hero: bota_proto::HeroId) {
+/// Where on the page the hero stands.
+#[derive(Clone, Copy)]
+pub(super) enum Anchor {
+    /// Home: a little left of the page's middle, between the landscape and the match cards.
+    Home,
+    /// The hero page: large in the middle of the scene, as the original game's hero page has it
+    /// (its model stands a little left of the screen's middle).
+    Centre,
+}
+
+impl Anchor {
+    /// The hero's middle across the page: the share of its width and the pixels added to it, and
+    /// how far down from Home's place the hero stands.
+    fn middle(self) -> (f32, f32, f32) {
+        match self {
+            Anchor::Home => (50.0, -200.0, 0.0),
+            Anchor::Centre => (48.5, 0.0, 85.0),
+        }
+    }
+}
+
+pub(super) fn draw(
+    kit: &mut super::kit::Kit,
+    root: Entity,
+    hero: bota_proto::HeroId,
+    anchor: Anchor,
+) {
+    let (share, offset, drop) = anchor.middle();
     kit.commands.spawn((
         ContactShadow,
+        // Its own middle (the stage places a shadow with none at Home's).
+        StageShadow {
+            scale: 1.0,
+            centre: offset,
+        },
         Node {
             position_type: PositionType::Absolute,
-            left: percent(50),
-            margin: UiRect::left(px(-310)),
-            top: px(GROUND - 24.0),
+            left: percent(share),
+            margin: UiRect::left(px(offset - 110.0)),
+            top: px(GROUND - 24.0 + drop),
             width: px(220),
             height: px(48),
             ..default()
@@ -103,9 +141,9 @@ pub(super) fn draw(kit: &mut super::kit::Kit, root: Entity, hero: bota_proto::He
         ImageNode::default(),
         Node {
             position_type: PositionType::Absolute,
-            left: percent(50),
-            margin: UiRect::left(px(-720)),
-            top: px(TOP),
+            left: percent(share),
+            margin: UiRect::left(px(offset - SIZE.0 as f32 / 2.0)),
+            top: px(TOP + drop),
             width: px(SIZE.0 as f32),
             height: px(SIZE.1 as f32),
             ..default()

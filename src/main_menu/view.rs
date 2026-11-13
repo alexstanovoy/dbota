@@ -268,6 +268,8 @@ pub enum PageView {
     Hero {
         hero: bota_proto::HeroId,
         record: String,
+        /// Whether a Demo Hero can be started with it from here.
+        demo: bool,
     },
     Leaderboard {
         board: super::leaderboard::Board,
@@ -656,7 +658,11 @@ impl MenuCore {
             || "No attributed matches on this machine.".to_owned(),
             |row| format!("Your matches: {} · {}% won", row.games, row.percentage()),
         );
-        PageView::Hero { hero, record }
+        PageView::Hero {
+            hero,
+            record,
+            demo: self.demo_offered(),
+        }
     }
 
     fn leaderboard_view(&self) -> PageView {

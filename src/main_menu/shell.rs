@@ -110,6 +110,7 @@ pub fn plugin(app: &mut App) {
                 demo_start,
                 super::screens::draw.in_set(crate::ui::WidgetBuild),
                 super::kit::focus_ring,
+                super::highlight::highlight,
                 super::lobby_widgets::focus_ring,
                 super::kit::hover.in_set(crate::ui::WidgetPaint),
                 super::availability::navigate,

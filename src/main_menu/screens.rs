@@ -76,11 +76,13 @@ pub fn draw(
         server: &server,
     };
     kit.commands.entity(page).despawn_children();
-    if view.play.open
-        && view.page == super::core::Page::Home
-        && view.offer.is_none()
-        && view.confirm.is_none()
-    {
+    // Tab and a controller's pad walk the buttons of Play's open panel and of the heroes' pages.
+    let walkable = (view.play.open && view.page == super::core::Page::Home)
+        || matches!(
+            view.page,
+            super::core::Page::Heroes | super::core::Page::Hero(_)
+        );
+    if walkable && view.offer.is_none() && view.confirm.is_none() {
         kit.commands
             .entity(page)
             .insert(bevy::input_focus::tab_navigation::TabGroup::new(0));

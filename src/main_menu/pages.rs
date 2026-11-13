@@ -158,6 +158,10 @@ fn hero_backdrop(kit: &mut Kit, root: Entity, view: &MenuView) {
             kit.commands.entity(warm).insert(theme::hero_field(true));
         }
     }
+    if let PageView::Hero { hero, .. } = view.body {
+        // Over the page's ground and under its words: the hero stands in the middle.
+        super::hero_stage::draw(kit, root, hero, super::hero_stage::Anchor::Centre);
+    }
 }
 
 fn page_body(kit: &mut Kit, root: Entity) -> Entity {
@@ -194,7 +198,9 @@ fn draw_account_page(
 ) -> bool {
     match &view.body {
         PageView::Heroes => super::catalogue::grid(kit, root),
-        PageView::Hero { hero, record } => super::catalogue::hero(kit, body, *hero, texts, record),
+        PageView::Hero { hero, record, demo } => {
+            super::catalogue::hero(kit, body, *hero, texts, record, *demo);
+        }
         PageView::Leaderboard { board, field } => {
             kit.commands.entity(body).remove::<MenuBody>();
             super::ladder_page::draw(kit, root, board, field);

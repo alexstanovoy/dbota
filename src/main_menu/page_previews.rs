@@ -220,6 +220,7 @@ fn body(page: Page, name: &str) -> PageView {
                 "Your matches: 18 · 50% won"
             }
             .to_owned(),
+            demo: true,
         },
         Page::Leaderboard => ladder_fixture(name),
         _ => PageView::Hidden,

@@ -13,7 +13,9 @@ use crate::hud::{AbilityBox, ItemBox};
 use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::shop::ShopCell;
+use crate::theme::Face;
 use crate::tip_content::{Content, Cost, Kind, Lookup, Run, Section, Tone};
+use crate::ui::help::{Side, placement::position};
 use crate::ui::{self, Fonts};
 
 /// The popup box.
@@ -40,8 +42,15 @@ struct TipBody;
 #[derive(Resource, Default)]
 struct Shown(Option<Content>);
 
+/// Where the thing the popup is about stands, in the window's pixels, when the popup is to stand
+/// beside it rather than by the cursor: the menu's ability tiles name theirs.
+#[derive(Resource, Default)]
+struct ShownAnchor(Option<Rect>);
+
 /// Width of the popup in interface pixels: Dota's 330 of text blocks (`#AbilityDescriptionContainer`) and a 2 pixel border either side, so its blocks and bars span it whole.
 const WIDTH: f32 = 334.0;
+/// Where the popup stands in the interface's layers: over the menu's page and its overlay.
+pub const TIP_Z: i32 = 72;
 /// Space between the cursor and the popup.
 const GAP: f32 = 16.0;
 
@@ -122,6 +131,7 @@ fn tone_color(tone: Tone, palette: &Palette) -> Color {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Shown>()
+        .init_resource::<ShownAnchor>()
         .add_systems(Startup, spawn)
         .add_systems(
             Update,
@@ -146,9 +156,10 @@ fn spawn(mut commands: Commands) {
                 flex_direction: FlexDirection::Column,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.07, 0.09, 0.11, 0.98)),
+            BackgroundColor(Color::srgb(0.07, 0.09, 0.11)),
             BorderColor::all(Color::BLACK),
-            GlobalZIndex(30),
+            // Over the menu's page (60) and its overlay (70).
+            GlobalZIndex(TIP_Z),
             Pickable::IGNORE,
             Visibility::Hidden,
         ))
@@ -182,7 +193,12 @@ fn pick(
     attribute: Query<&DirectlyHovered, With<crate::talents::AttributeRow>>,
     innate: Query<&DirectlyHovered, With<crate::hud::InnateButton>>,
     mut shown: ResMut<Shown>,
+    mut anchor: ResMut<ShownAnchor>,
 ) {
+    // A popup of the game stands by the cursor.
+    if anchor.0.is_some() {
+        anchor.0 = None;
+    }
     let core = &session.0;
     let rate = u32::from(core.tick_rate().max(1));
     // The numbers of the unit the tooltip is about: what shortens its cooldowns and costs (an Arcane Rune) shortens what it shows.
@@ -227,15 +243,27 @@ fn pick(
     }
 }
 
-/// What the cursor is over on the pick screen, before any hero is one's own: an ability or the
-/// talent tree of the hero shown. The popup stays up exactly while the cursor is over one, so it
-/// leaves alone what the menu's own pages show.
+/// What the cursor is over on the pick screen, before any hero is one's own, and on a hero's page
+/// of the menu: an ability or the talent tree of the hero shown. The popup stands beside the tile
+/// (see [`ShownAnchor`]) and stays up exactly while the cursor is over one, so it leaves alone
+/// what the menu's other pages show.
 fn pick_pregame(
     texts: Res<Texts>,
     manifest: Res<Manifest>,
-    tiles: Query<(&DirectlyHovered, &AbilityTile)>,
-    talent_tiles: Query<(&DirectlyHovered, &TalentTile)>,
+    tiles: Query<(
+        &DirectlyHovered,
+        &AbilityTile,
+        &ComputedNode,
+        &UiGlobalTransform,
+    )>,
+    talent_tiles: Query<(
+        &DirectlyHovered,
+        &TalentTile,
+        &ComputedNode,
+        &UiGlobalTransform,
+    )>,
     mut shown: ResMut<Shown>,
+    mut anchor: ResMut<ShownAnchor>,
     mut was_up: Local<bool>,
 ) {
     let look = Lookup {
@@ -243,13 +271,23 @@ fn pick_pregame(
         manifest: &manifest,
         rates: Default::default(),
     };
-    let content = hovered(&tiles)
-        .and_then(|tile| entering_tip(&look, tile.0))
-        .or_else(|| hovered(&talent_tiles).and_then(|tile| talents_tip(tile.0)));
+    let over = tiles.iter().find(|(hover, ..)| hover.get());
+    let over_talents = talent_tiles.iter().find(|(hover, ..)| hover.get());
+    let content = over
+        .and_then(|(_, tile, ..)| entering_tip(&look, tile.0))
+        .or_else(|| over_talents.and_then(|(_, tile, ..)| talents_tip(tile.0)));
+    let rect = over
+        .map(|(.., node, at)| Rect::from_center_size(at.translation, node.size()))
+        .or_else(|| {
+            over_talents.map(|(.., node, at)| Rect::from_center_size(at.translation, node.size()))
+        });
     if content.is_some() || *was_up {
         *was_up = content.is_some();
         if shown.0 != content {
             shown.0 = content;
+        }
+        if anchor.0 != rect {
+            anchor.0 = rect;
         }
     }
 }
@@ -473,17 +511,73 @@ fn rebuild(
     draw.content(content);
 }
 
-/// Puts the popup by the cursor, above it where there is room.
+/// Puts a popup that is about something beside it, clear of it, and hides the frame in which a new
+/// size has not been laid out yet.
+fn place_beside(
+    anchor: Rect,
+    window: &Window,
+    tip: (
+        &mut Node,
+        &mut Mut<Visibility>,
+        &ComputedNode,
+        &UiGlobalTransform,
+    ),
+) {
+    let (node, visibility, computed, at) = tip;
+    let unit = computed.inverse_scale_factor;
+    let size = computed.size();
+    let extent = Vec2::new(
+        window.physical_width() as f32,
+        window.physical_height() as f32,
+    );
+    let margin = Vec2::splat(8.0 / unit.max(1e-3));
+    let bounds = Rect::from_corners(margin, extent - margin);
+    let gap = 12.0 / unit.max(1e-3);
+    // The shared help widget's rule: clear of the whole anchor, the preferred side then the others, within the window.
+    let Some(corner) = position(anchor, size, anchor.center(), bounds, gap, Side::Right)
+        .filter(|_| size.min_element() > 0.0)
+    else {
+        visibility.set_if_neq(Visibility::Hidden);
+        return;
+    };
+    node.left = px(corner.x * unit);
+    node.top = px(corner.y * unit);
+    // Layout applies the new corner next frame: the box that is drawn now may still cover the anchor.
+    let drawn = Rect::from_center_size(at.translation, size);
+    let apart = (anchor.min - drawn.max)
+        .max(drawn.min - anchor.max)
+        .max_element();
+    visibility.set_if_neq(if apart >= 0.0 {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    });
+}
+
+/// Puts the popup beside what it is about, else by the cursor, above it where there is room.
 fn place(
     shown: Res<Shown>,
+    anchor: Res<ShownAnchor>,
     args: Res<crate::Args>,
     window: Single<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
-    mut tip: Single<(&mut Node, &mut Visibility, &ComputedNode), With<Tip>>,
+    mut tip: Single<
+        (
+            &mut Node,
+            &mut Visibility,
+            &ComputedNode,
+            &UiGlobalTransform,
+        ),
+        With<Tip>,
+    >,
 ) {
-    let (node, visibility, computed) = &mut *tip;
+    let (node, visibility, computed, at) = &mut *tip;
     if shown.0.is_none() {
         visibility.set_if_neq(Visibility::Hidden);
+        return;
+    }
+    if let Some(anchor) = anchor.0 {
+        place_beside(anchor, &window, (node, visibility, computed, at));
         return;
     }
     let cursor = window.cursor_position().or_else(|| {
@@ -643,7 +737,7 @@ impl Draw<'_, '_, '_> {
                 } else {
                     c.title.to_uppercase()
                 },
-                &self.fonts.bold,
+                self.fonts.face(Face::Bold),
                 17.0,
                 NAME,
             ),
@@ -652,7 +746,12 @@ impl Draw<'_, '_, '_> {
         ));
         if let Some(level) = &c.level {
             self.commands.spawn((
-                ui::text(level.clone(), &self.fonts.regular, 14.0, Color::WHITE),
+                ui::text(
+                    level.clone(),
+                    self.fonts.face(Face::Regular),
+                    14.0,
+                    Color::WHITE,
+                ),
                 Pickable::IGNORE,
                 ChildOf(top),
             ));
@@ -683,7 +782,7 @@ impl Draw<'_, '_, '_> {
                 ));
             }
             self.commands.spawn((
-                ui::text(price.clone(), &self.fonts.bold, 15.0, ui::GOLDEN),
+                ui::text(price.clone(), self.fonts.face(Face::Bold), 15.0, ui::GOLDEN),
                 Pickable::IGNORE,
                 ChildOf(cost),
             ));
@@ -728,7 +827,12 @@ impl Draw<'_, '_, '_> {
         }
         let bar = bar.id();
         self.commands.spawn((
-            ui::text(text.to_string(), &self.fonts.bold, 14.0, palette.header),
+            ui::text(
+                text.to_string(),
+                self.fonts.face(Face::Bold),
+                14.0,
+                palette.header,
+            ),
             Pickable::IGNORE,
             ChildOf(bar),
         ));
@@ -796,7 +900,7 @@ impl Draw<'_, '_, '_> {
                 }
                 None => {
                     self.commands.spawn((
-                        ui::text(cost.word, &self.fonts.regular, 14.0, STAT_LABEL),
+                        ui::text(cost.word, self.fonts.face(Face::Regular), 14.0, STAT_LABEL),
                         Pickable::IGNORE,
                         ChildOf(cell),
                     ));
@@ -838,7 +942,7 @@ impl Draw<'_, '_, '_> {
             .spawn((
                 Text::default(),
                 TextFont {
-                    font: self.fonts.regular.clone().into(),
+                    font: self.fonts.face(Face::Regular).clone().into(),
                     font_size: FontSize::Px(size),
                     ..default()
                 },
@@ -853,9 +957,9 @@ impl Draw<'_, '_, '_> {
             .id();
         for run in runs {
             let font = if run.bold {
-                &self.fonts.bold
+                self.fonts.face(Face::Bold)
             } else {
-                &self.fonts.regular
+                self.fonts.face(Face::Regular)
             };
             self.commands.spawn((
                 TextSpan::new(run.text.clone()),

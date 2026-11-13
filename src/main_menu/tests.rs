@@ -2957,6 +2957,29 @@ pub(crate) fn page_words(world: &mut bevy::prelude::World) -> Vec<String> {
         .collect()
 }
 
+/// The asset paths of the pictures at least `least` pixels wide that the menu's page shows.
+pub(crate) fn page_pictures(world: &mut bevy::prelude::World, least: f32) -> Vec<String> {
+    use bevy::prelude::*;
+    let pictures: Vec<_> = world
+        .query::<(Entity, &ImageNode, &InheritedVisibility, &ComputedNode)>()
+        .iter(world)
+        .filter(|(_, _, visible, laid)| visible.get() && laid.size().x >= least)
+        .filter_map(|(entity, image, ..)| Some((entity, image.image.path()?.to_string())))
+        .collect();
+    pictures
+        .into_iter()
+        .filter_map(|(mut entity, path)| {
+            for _ in 0..32 {
+                if world.get::<super::screens::PageRoot>(entity).is_some() {
+                    return Some(path);
+                }
+                entity = world.get::<ChildOf>(entity)?.parent();
+            }
+            None
+        })
+        .collect()
+}
+
 #[test]
 fn demo_from_the_catalogue_can_launch_a_local_sandbox_without_an_account() {
     let mut player = Player::new(None);

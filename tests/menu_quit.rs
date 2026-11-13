@@ -1002,11 +1002,13 @@ impl Drop for Service {
     }
 }
 
-/// The script steps that create the account `demo` on the service and open the DEMO HERO page.
+/// The script steps that create the account `demo` on the service and open Shadow Fiend's page
+/// under HEROES, which has the DEMO HERO button.
 const SIGN_UP: &str = "await:menu;await:button:create account;click:create account;\
                        await:button:back;text:demo;key:Tab;text:correct horse battery;key:Tab;\
-                       text:correct horse battery;click:create account;await:button:demo hero;\
-                       click:demo hero;await:button:demo shadow fiend;";
+                       text:correct horse battery;click:create account;await:button:heroes;\
+                       click:heroes;await:button:Shadow Fiend;click:Shadow Fiend;\
+                       await:button:demo hero;";
 
 /// Plays `script` after [`SIGN_UP`] against a [`Service`] of Demo Hero alone: the client's exit
 /// code, what it said, and the whole script.
@@ -1029,7 +1031,7 @@ fn demo_hero_plays_a_hero_with_every_cheat() {
     let scratch = Scratch::new("demo");
     let (code, said, script) = run_demo(
         &scratch,
-        "wait:1;shot:demo-menu.png;click:demo shadow fiend;await:game;await:horn;\
+        "wait:1;shot:demo-menu.png;click:demo hero;await:game;await:horn;\
          await:button:demo levelmax;wait:3;shot:demo-panel.png;click:demo levelmax;\
          await:level:30;say:-gold 20000;await:gold:20000;click:demo freespells;\
          click:demo spawnenemy;click:demo creepwave;wait:3;shot:demo-cheats.png;\
@@ -1083,7 +1085,7 @@ fn night_light_differs_from_day_light() {
     let scratch = Scratch::new("night-light");
     let (code, said, script) = run_demo(
         &scratch,
-        "click:demo shadow fiend;await:game;await:horn;await:daylight:day;wait:1;\
+        "click:demo hero;await:game;await:horn;await:daylight:day;wait:1;\
          light;shot:light-day.png;click:demo night;await:daylight:night;wait:1;\
          light;shot:light-night.png;click:demo quit;await:menu;key:Escape;key:Escape;\
          await:popup;click:ok",
