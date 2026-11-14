@@ -228,8 +228,7 @@ fn lotuses_and_cheese_show_their_icons_and_names_and_cheese_eaten_sounds() {
             .map(|entry| entry.name.clone())
             .expect("its name in the cache");
         let item_box = client.item_box(slot).expect("its box");
-        let on = client.centre_of(item_box).expect("laid out");
-        client.mouse(on);
+        client.hover_ui(item_box, SOON);
         // The tooltip's title is the name in capitals, as Dota's is.
         let title = named.to_uppercase();
         client.within(SOON, "its name in the tooltip", |c| {
