@@ -14,6 +14,7 @@ pub enum ResultKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Match {
     pub file: String,
+    pub players: Vec<bota_proto::SeatIdentity>,
     pub when: u64,
     pub mode: String,
     pub hero: Option<HeroId>,

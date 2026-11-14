@@ -3,11 +3,24 @@
 use bota_client_core::App as Core;
 use bota_proto::{SlotId, Speaker};
 
-/// The display name of a seat.
+/// The display name of a seat with its bot version in one plain string, for text that is not
+/// drawn by the name widget (a terminal line, a log).
+pub fn seat_name(core: &Core, slot: SlotId, texts: Option<&crate::dota_text::Texts>) -> String {
+    crate::player_name::plain(
+        &base_seat_name(core, slot, texts),
+        core.player_version(slot),
+    )
+}
+
+/// The display name of a seat, without its version.
 ///
 /// A seat that sent no name, as in a replay, is called by its hero and its
 /// side, and by its number before the match tells either.
-pub fn seat_name(core: &Core, slot: SlotId, texts: Option<&crate::dota_text::Texts>) -> String {
+pub fn base_seat_name(
+    core: &Core,
+    slot: SlotId,
+    texts: Option<&crate::dota_text::Texts>,
+) -> String {
     if let Some(name) = core.player_name(slot) {
         return name.to_string();
     }

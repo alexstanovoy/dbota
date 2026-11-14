@@ -186,7 +186,22 @@ impl Saved {
             (Some(_), Some(_)) => ResultKind::Lost,
             _ => ResultKind::Undecided,
         };
+        let players = summary.map_or_else(Vec::new, |summary| {
+            summary
+                .rows
+                .iter()
+                .filter_map(|row| {
+                    Some(bota_proto::SeatIdentity {
+                        slot: row.slot,
+                        name: row.name.clone()?,
+                        bot: row.bot.unwrap_or(false),
+                        version: row.version.clone(),
+                    })
+                })
+                .collect()
+        });
         Match {
+            players,
             file: self.key.clone(),
             when: self.when,
             mode: self.mode.clone(),
@@ -357,6 +372,13 @@ impl Archive {
                 entry.summary = previous.summary.clone();
             }
         }
+    }
+
+    pub fn identities(&self, file: &str) -> Vec<bota_proto::SeatIdentity> {
+        self.entries
+            .iter()
+            .find(|entry| entry.file.as_deref() == Some(file))
+            .map_or_else(Vec::new, |entry| entry.card(&[]).players)
     }
 
     pub fn cards(&self, records: &[Record]) -> Arc<Vec<Match>> {
@@ -836,6 +858,7 @@ mod tests {
         archive.insert(old, 100);
         let mut bad = delivered("invalid");
         bad.result.as_mut().unwrap().seats.push(SeatResult {
+            version: None,
             slot: 0,
             team: 0,
             account: AccountId(1),

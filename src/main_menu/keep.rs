@@ -537,6 +537,7 @@ impl MenuCore {
         #[cfg(not(target_arch = "wasm32"))]
         for record in self.library.records() {
             if record.players.is_empty()
+                && self.local_history.identities(&record.name).is_empty()
                 && let Some(path) = self.library.path(&record.name)
             {
                 self.shelf.summary(&path, stamp_of(record));
@@ -547,8 +548,10 @@ impl MenuCore {
     /// The summary of a listed replay.
     pub(super) fn summary_of(&self, record: &replays::Record) -> super::replay_info::Summary {
         use super::replay_info::Summary;
-        if !record.players.is_empty() {
+        let identities = self.local_history.identities(&record.name);
+        if !record.players.is_empty() || !identities.is_empty() {
             return Summary::Read {
+                identities,
                 sides: record.players.clone().into(),
                 outcome: record.outcome.clone(),
             };
@@ -558,6 +561,7 @@ impl MenuCore {
             return self.shelf.peek(&path, stamp_of(record));
         }
         Summary::Read {
+            identities: Vec::new(),
             sides: String::new().into(),
             outcome: record.outcome.clone(),
         }
@@ -573,15 +577,16 @@ fn stamp_of(record: &replays::Record) -> super::replay_info::Stamp {
     }
 }
 
-/// Who played and how it ended, as the match's result tells it.
+/// Who played and how it ended, as the match's result tells it. The names carry no version: the
+/// replay list draws the recorded identities through the name widget, and this line is only the
+/// fallback where there are none.
 fn sum_up(result: &MatchResult) -> (String, String) {
-    use super::text;
     let team = |team: u8| {
         let names: Vec<String> = result
             .seats
             .iter()
             .filter(|s| s.team == team)
-            .map(|s| text::line(&s.nickname, text::NAME))
+            .map(|s| super::text::line(&s.nickname, super::text::NAME))
             .collect();
         if names.is_empty() {
             "nobody".to_owned()
@@ -665,6 +670,7 @@ mod profile_capture_tests {
                 kind: AccountKind::Human,
                 before: None,
                 after: None,
+                version: None,
             }],
         };
         let profiles = super::super::profile_metadata::from_result(source, &result);

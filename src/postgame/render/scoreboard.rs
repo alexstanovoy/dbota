@@ -288,6 +288,7 @@ fn row_line(kit: &mut Kit, parent: Entity, view: &View, row: &Row, y: f32) {
         } else {
             theme::INK_1
         },
+        SCOREBOARD_NAME_WIDTH,
     );
     if row.bot == Some(true) {
         bot(kit, name_line, Node::default());
@@ -438,3 +439,6 @@ fn totals(kit: &mut Kit, parent: Entity, view: &View, team: Team, y: f32) {
         x += width + gap;
     }
 }
+
+/// The widest a player's name may draw in a scoreboard row.
+const SCOREBOARD_NAME_WIDTH: f32 = 200.0;

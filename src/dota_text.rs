@@ -141,6 +141,15 @@ impl Texts {
         parts(self.labels.get(&key.to_lowercase())?, values)
     }
 
+    pub fn label_parts_with_identities(
+        &self,
+        key: &str,
+        values: &[(&str, String)],
+        identities: &[(&str, bota_proto::SeatIdentity)],
+    ) -> Option<Vec<Part>> {
+        parts_with_identities(self.labels.get(&key.to_lowercase())?, values, identities)
+    }
+
     #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -183,6 +192,7 @@ pub enum Part {
     Text(String),
     /// The variable's name (`outpost_icon`).
     Icon(String),
+    Identity(bota_proto::SeatIdentity),
 }
 
 /// A piece of a chat line.
@@ -238,6 +248,14 @@ fn chat_pieces(label: &str) -> Vec<Piece> {
 }
 
 fn parts(label: &str, values: &[(&str, String)]) -> Option<Vec<Part>> {
+    parts_with_identities(label, values, &[])
+}
+
+fn parts_with_identities(
+    label: &str,
+    values: &[(&str, String)],
+    identities: &[(&str, bota_proto::SeatIdentity)],
+) -> Option<Vec<Part>> {
     let mut out: Vec<Part> = Vec::new();
     let mut push = |part: Part| match (out.last_mut(), part) {
         (Some(Part::Text(last)), Part::Text(text)) => last.push_str(&text),
@@ -256,6 +274,8 @@ fn parts(label: &str, values: &[(&str, String)]) -> Option<Vec<Part>> {
             let name = rest[at + 1..end].rsplit(':').next()?;
             if name.ends_with("_icon") {
                 push(Part::Icon(name.to_owned()));
+            } else if let Some((_, identity)) = identities.iter().find(|(key, _)| *key == name) {
+                push(Part::Identity(identity.clone()));
             } else {
                 let (_, value) = values.iter().find(|(key, _)| *key == name)?;
                 push(Part::Text(value.clone()));

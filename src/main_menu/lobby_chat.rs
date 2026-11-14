@@ -28,6 +28,7 @@ pub struct Line {
     pub minute: u16,
     pub account: Option<AccountId>,
     pub name: String,
+    pub version: Option<String>,
     pub message: String,
 }
 
@@ -35,6 +36,7 @@ pub struct Line {
 pub struct Person {
     pub account: AccountId,
     pub name: String,
+    pub version: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -93,29 +95,35 @@ impl Chat {
             .map(|member| Person {
                 account: member.account,
                 name: text::line(&member.nickname, text::NAME),
+                version: member.version.clone(),
             })
             .collect();
         self.owner = Some(state.owner);
         for person in &people {
             if !self.people.iter().any(|old| old.account == person.account) {
-                self.system(format!("{} joined the lobby.", person.name));
+                self.system(
+                    (&person.name, person.version.as_deref()),
+                    "joined the lobby.",
+                );
             }
         }
         let departed: Vec<_> = self
             .people
             .iter()
             .filter(|old| !people.iter().any(|p| p.account == old.account))
-            .map(|old| format!("{} left the lobby.", old.name))
+            .cloned()
             .collect();
-        for line in departed {
-            self.system(line);
+        for old in departed {
+            self.system((&old.name, old.version.as_deref()), "left the lobby.");
         }
         if self.mode.as_ref().is_some_and(|old| old != mode) {
             let host = people
                 .iter()
                 .find(|p| p.account == state.owner)
-                .map_or("The host", |p| p.name.as_str());
-            self.system(format!("{host} set the mode to {mode}."));
+                .map_or(("The host", None), |p| {
+                    (p.name.as_str(), p.version.as_deref())
+                });
+            self.system(host, &format!("set the mode to {mode}."));
         }
         self.mode = Some(mode.to_owned());
         self.people = people;
@@ -137,11 +145,13 @@ impl Chat {
                 continue;
             };
             let name = person.name.clone();
+            let version = person.version.clone();
             let message = text::line(&incoming.message, MAX_MESSAGE);
             if message.is_empty() {
                 continue;
             }
             self.push(Line {
+                version,
                 minute: incoming.minute % (24 * 60),
                 account: Some(incoming.account),
                 name,
@@ -193,13 +203,16 @@ impl Chat {
         self.error = None;
     }
 
-    fn system(&mut self, message: String) {
+    /// A line of the room itself: `subject` (a name with its version, drawn by the name widget)
+    /// and what happened to it.
+    fn system(&mut self, (name, version): (&str, Option<&str>), message: &str) {
         let minute = minute_now();
         self.push(Line {
+            version: version.map(str::to_owned),
             minute,
             account: None,
-            name: String::new(),
-            message: text::line(&message, MAX_MESSAGE),
+            name: name.to_owned(),
+            message: text::line(message, MAX_MESSAGE),
         });
     }
 

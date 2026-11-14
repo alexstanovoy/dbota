@@ -554,12 +554,14 @@ pub(super) fn shown_spans(client: &mut Client) -> Vec<String> {
         .filter(|(_, _, seen)| seen.get())
         .map(|(e, ..)| e)
         .collect();
-    world
+    let mut texts: Vec<_> = world
         .query::<(&TextSpan, &ChildOf)>()
         .iter(world)
         .filter(|(_, parent)| shown.contains(&parent.parent()))
         .map(|(span, _)| span.0.clone())
-        .collect()
+        .collect();
+    texts.extend(crate::chat::shown_lines(world));
+    texts
 }
 
 /// One of the install's labels.

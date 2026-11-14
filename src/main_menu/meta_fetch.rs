@@ -252,6 +252,7 @@ mod profile_tests {
                     kind: AccountKind::Human,
                     before: None,
                     after: None,
+                    version: None,
                 }],
             };
             player.menu.meta_finished(&result);

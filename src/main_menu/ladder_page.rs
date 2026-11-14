@@ -58,7 +58,7 @@ pub(super) fn visible_range(
 pub fn draw(kit: &mut Kit, root: Entity, board: &Board, field: &FieldView) {
     let page = window(kit, root);
     filters(kit, page, board, field);
-    table_heading(kit, page, board);
+    table_heading(kit, page);
     let list = player_list(kit, page);
     list_status(kit, list, board);
     player_rows(kit, page, list, board);
@@ -146,7 +146,7 @@ fn filters(kit: &mut Kit, page: Entity, board: &Board, field: &FieldView) {
     super::pages::search_field(kit, search, 0, field);
 }
 
-fn table_heading(kit: &mut Kit, page: Entity, board: &Board) {
+fn table_heading(kit: &mut Kit, page: Entity) {
     let heading = kit.node(
         page,
         Node {
@@ -164,9 +164,7 @@ fn table_heading(kit: &mut Kit, page: Entity, board: &Board) {
     cells(
         kit,
         heading,
-        board.query.players,
-        ["RANK", "", "NICKNAME", "VERSION", "GAMES", "RATING"],
-        false,
+        ["RANK", "", "PLAYER", "GAMES", "RATING"],
         theme::INK_4,
     );
 }
@@ -357,21 +355,16 @@ fn player(
     );
     player_avatar(kit, line, row, kind);
     let nickname = cell(kit, line, 0.0, true, JustifyContent::FlexStart);
-    kit.text(
+    kit.player_name(
         nickname,
         &row.nickname,
-        14.0,
+        row.version.as_deref(),
+        theme::Type {
+            size: 14.0,
+            ..theme::BODY
+        },
         if own { theme::SELECT } else { theme::INK_1 },
     );
-    let version = cell(kit, line, 90.0, false, JustifyContent::FlexStart);
-    if kind == Players::Bots {
-        kit.text(
-            version,
-            row.version.as_deref().unwrap_or("—"),
-            13.0,
-            theme::INK_3,
-        );
-    }
     let games = cell(kit, line, 80.0, false, JustifyContent::FlexEnd);
     kit.text(games, row.games.to_string(), 13.0, theme::INK_3);
     let rating = cell(kit, line, 90.0, false, JustifyContent::FlexEnd);
@@ -383,10 +376,10 @@ fn cell(kit: &mut Kit, parent: Entity, width: f32, grow: bool, justify: JustifyC
     kit.node(
         parent,
         Node {
-            width: if grow { auto() } else { px(width) },
+            width: if grow { px(0) } else { px(width) },
             flex_grow: if grow { 1.0 } else { 0.0 },
             min_width: px(0),
-            flex_shrink: 0.0,
+            flex_shrink: if grow { 1.0 } else { 0.0 },
             overflow: Overflow::clip(),
             column_gap: px(0),
             justify_content: justify,
@@ -476,26 +469,19 @@ fn player_avatar(kit: &mut Kit, line: Entity, row: &Row, kind: Players) {
     );
 }
 
-fn cells(kit: &mut Kit, parent: Entity, kind: Players, values: [&str; 6], _bold: bool, ink: Color) {
+fn cells(kit: &mut Kit, parent: Entity, values: [&str; 5], ink: Color) {
     for (index, value) in values.into_iter().enumerate() {
         let column = cell(
             kit,
             parent,
-            [56.0, 36.0, 0.0, 90.0, 80.0, 90.0][index],
+            [56.0, 36.0, 0.0, 80.0, 90.0][index],
             index == 2,
-            if index == 0 || index >= 4 {
+            if index == 0 || index >= 3 {
                 JustifyContent::FlexEnd
             } else {
                 JustifyContent::FlexStart
             },
         );
-        if index != 3 || kind == Players::Bots {
-            kit.typed(
-                column,
-                if index == 3 { "BOT VERSION" } else { value },
-                theme::CAPTION,
-                ink,
-            );
-        }
+        kit.typed(column, value, theme::CAPTION, ink);
     }
 }

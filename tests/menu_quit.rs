@@ -925,7 +925,7 @@ version_probe = ["--wire-fingerprint"]
 args = ["--map", "0", "--cheats", "--match-id", "{match_id}", "--bind", "127.0.0.1",
         "--port", "0", "--ws-port", "{port}", "--abandon-unjoined", "--empty-after-secs", "60",
         "--tactical-secs", "0"]
-env = { BOTA_SEATS = "{seats}" }
+env = { BOTA_SEATS = "{seats_with_versions}" }
 "#;
 
 impl Service {
@@ -1197,7 +1197,7 @@ version_probe = ["--wire-fingerprint"]
 args = ["--map", "2", "--heroes", "1", "--match-id", "{match_id}", "--bind", "127.0.0.1",
         "--port", "0", "--ws-port", "{port}", "--abandon-unjoined", "--empty-after-secs", "60",
         "--pick-secs", "5", "--tactical-secs", "0", "--idle-timeout-secs", "0"]
-env = { BOTA_SEATS = "{seats}" }
+env = { BOTA_SEATS = "{seats_with_versions}" }
 
 [[ruleset]]
 id = "full"
@@ -1214,7 +1214,7 @@ version_probe = ["--wire-fingerprint"]
 args = ["--map", "0", "--match-id", "{match_id}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{port}", "--abandon-unjoined", "--empty-after-secs", "60",
         "--pick-secs", "5", "--tactical-secs", "0", "--idle-timeout-secs", "0"]
-env = { BOTA_SEATS = "{seats}" }
+env = { BOTA_SEATS = "{seats_with_versions}" }
 "#;
 
 /// The script steps that create the account `login` on the service and wait for the menu of an

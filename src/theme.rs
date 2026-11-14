@@ -547,3 +547,14 @@ pub mod lobby {
     pub const CHOICES: Color = hex(0x12171C);
     pub const CLOCK: Color = hex(0x6B747D);
 }
+
+/// A bot version keeps the hue of the player's name, with less emphasis.
+pub fn version_color(name: Color) -> Color {
+    let name = name.to_srgba();
+    Color::srgba(
+        name.red * 0.72,
+        name.green * 0.72,
+        name.blue * 0.72,
+        name.alpha,
+    )
+}

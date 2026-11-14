@@ -41,11 +41,28 @@ pub struct Row {
     pub items: [Option<ItemId>; BAG],
     /// Optional recording facts retained for the match-results consumer. Old files omit them.
     pub name: Option<String>,
+    pub version: Option<String>,
     pub bot: Option<bool>,
     pub left_at: Option<u32>,
 }
 
 impl Row {
+    pub fn identity(&mut self, identity: &bota_proto::SeatIdentity) {
+        self.name = Some(crate::main_menu::line(
+            &identity.name,
+            crate::main_menu::text::NAME,
+        ));
+        self.bot = Some(identity.bot);
+        self.version = identity
+            .bot
+            .then(|| {
+                identity.version.as_ref().map(|version| {
+                    crate::player_name::version_text(version, bota_proto::MAX_VERSION_LEN)
+                })
+            })
+            .flatten();
+    }
+
     pub fn display_name(&self) -> String {
         self.name
             .clone()
@@ -282,6 +299,7 @@ impl MatchSummary {
                     healing: None,
                     items: [None; BAG],
                     name: None,
+                    version: None,
                     bot: None,
                     left_at: stats
                         .leaves
@@ -332,6 +350,7 @@ fn row(seat: &Seat, seconds: u32) -> Option<Row> {
         healing: get(stat::HEALING).map(to_i32),
         items,
         name: None,
+        version: None,
         bot: None,
         left_at: None,
     })

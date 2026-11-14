@@ -1,8 +1,8 @@
 //! Peer lobby data is bounded before it reaches forms, projections or chat.
 use super::*;
 use bota_radovid::proto::{
-    MAX_BOT_VERSION_LEN, MAX_LOBBY_LIST, MAX_LOBBY_NAME_LEN, MAX_NICKNAME_LEN, MAX_RATED_MODES,
-    MAX_RULESET_INFO_LEN, MAX_SEATS, RulesetInfo, valid_ruleset_id,
+    MAX_LOBBY_LIST, MAX_LOBBY_NAME_LEN, MAX_NICKNAME_LEN, MAX_RATED_MODES, MAX_RULESET_INFO_LEN,
+    MAX_SEATS, MAX_VERSION_LEN, RulesetInfo, valid_ruleset_id,
 };
 
 // The protocol caps rated modes, not the complete catalogue. This is the client's displayed
@@ -36,8 +36,8 @@ pub(super) fn sanitise_state(mut state: LobbyState) -> Option<LobbyState> {
     state.retired_pending = Vec::new();
     for member in &mut state.members {
         member.nickname = peer_text(&member.nickname, MAX_NICKNAME_LEN, MAX_NICKNAME_LEN);
-        if let Some(version) = &mut member.bot_version {
-            *version = peer_text(version, MAX_BOT_VERSION_LEN, MAX_BOT_VERSION_LEN);
+        if let Some(version) = &mut member.version {
+            *version = crate::player_name::version_text(version, MAX_VERSION_LEN);
         }
     }
     Some(state)
@@ -55,6 +55,9 @@ impl MenuCore {
                 row.name = peer_text(&row.name, MAX_LOBBY_NAME_LEN * 4, MAX_LOBBY_NAME_LEN);
                 row.owner_nickname =
                     peer_text(&row.owner_nickname, MAX_NICKNAME_LEN, MAX_NICKNAME_LEN);
+                row.version = row
+                    .version
+                    .map(|version| crate::player_name::version_text(&version, MAX_VERSION_LEN));
                 row.seats = row.seats.min(MAX_SEATS as u8);
                 Some(row)
             })

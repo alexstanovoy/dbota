@@ -80,7 +80,9 @@ pub fn told(reason: RejectReason) -> Option<Told> {
         // What Dota has no line of, and the player must still hear to act:
         // a cheat this match does not honour, a seat the server will not give,
         // a Bottle that keeps a rune and so stays in hand.
-        Why::NoCheats
+        Why::BadVersion
+        | Why::VersionNotAllowed
+        | Why::NoCheats
         | Why::BadCheat
         | Why::NotAdmitted
         | Why::SeatHeld
@@ -234,6 +236,10 @@ fn plain_words(reason: RejectReason) -> &'static str {
         Why::NothingToBuy => "every component has already been purchased",
         Why::HeroAlive => "the hero is not dead",
         Why::NotAHero => "only a hero is bought back",
+        Why::BadVersion => {
+            "version must be 1–32 printable ASCII characters, with no leading or trailing spaces"
+        }
+        Why::VersionNotAllowed => "only a bot can state a version",
     }
 }
 

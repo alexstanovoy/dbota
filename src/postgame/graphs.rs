@@ -93,6 +93,7 @@ pub struct Point {
 #[derive(Clone, Debug)]
 pub struct Curve {
     pub name: String,
+    pub version: Option<String>,
     pub slot: Option<SlotId>,
     pub colour: [u8; 3],
     pub values: Vec<Point>,
@@ -167,6 +168,7 @@ pub fn curves(summary: &MatchSummary, metric: Metric) -> Vec<Curve> {
                     .collect();
                 (!values.is_empty()).then(|| Curve {
                     name: row.display_name(),
+                    version: row.version.clone(),
                     slot: Some(row.slot),
                     colour: player_colour(summary, row.slot),
                     values,
@@ -193,6 +195,7 @@ pub fn curves(summary: &MatchSummary, metric: Metric) -> Vec<Curve> {
         .filter_map(|(stat, name, colour)| {
             aggregate(summary, &times, stat, None).map(|values| Curve {
                 name: name.to_owned(),
+                version: None,
                 slot: None,
                 colour,
                 values,
@@ -209,6 +212,7 @@ pub fn curves(summary: &MatchSummary, metric: Metric) -> Vec<Curve> {
     .filter_map(|(team, name, colour)| {
         aggregate(summary, &times, stat, Some(team)).map(|values| Curve {
             name: name.to_owned(),
+            version: None,
             slot: None,
             colour,
             values,

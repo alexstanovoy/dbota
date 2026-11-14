@@ -62,6 +62,7 @@ struct Visit {
     retry: Option<Instant>,
     tries: u8,
     name: String,
+    version: Option<String>,
     ratings: Vec<Rating>,
     matches: Arc<Vec<Match>>,
     results: Arc<Vec<MatchResult>>,
@@ -93,6 +94,7 @@ impl Reader {
         self.visit = Some(Visit {
             generation: self.generation,
             name: format!("Player #{}", target.account),
+            version: None,
             target,
             back,
             stage: Part::Account,
@@ -198,6 +200,9 @@ impl Reader {
         match (part, reply) {
             (Part::Account, Reply::Account { account }) if account.id.0 == visit.target.account => {
                 visit.name = text::who(&account.nickname, account.id.0);
+                visit.version = account.version.as_deref().map(|version| {
+                    crate::player_name::version_text(version, bota_radovid::proto::MAX_VERSION_LEN)
+                });
                 visit.ratings = public_ratings(&account, modes);
                 visit.avatar_version = account.avatar;
                 visit.notice = None;
@@ -317,7 +322,19 @@ pub(super) fn public_match(result: MatchResult, account: u64) -> Match {
         (Outcome::Draw, _) => ResultKind::Draw,
         _ => ResultKind::Undecided,
     };
+    let players = result
+        .seats
+        .iter()
+        .take(bota_proto::limits::MAX_SEATS)
+        .map(|seat| bota_proto::SeatIdentity {
+            slot: bota_proto::SlotId(seat.slot),
+            name: text::line(&seat.nickname, text::NAME),
+            bot: seat.kind == bota_radovid::proto::AccountKind::Bot,
+            version: seat.version.clone(),
+        })
+        .collect();
     Match {
+        players,
         file: format!("public-{}", result.match_id.0),
         when: result.finished_at.0 / 1000,
         mode: text::line(&result.ruleset.0, 32),
@@ -431,6 +448,7 @@ impl MenuCore {
         PageView::Profile {
             mode_names: self.profile_mode_names(),
             name: visit.map_or_else(|| "Profile unavailable".into(), |visit| visit.name.clone()),
+            version: visit.and_then(|visit| visit.version.clone()),
             ratings: visit.map_or_else(Vec::new, |visit| visit.ratings.clone()),
             avatar: visit.map_or_else(Default::default, |visit| visit.avatar.clone()),
             matches,
@@ -492,7 +510,9 @@ mod tests {
                     nickname: "old".into(),
                     kind: AccountKind::Human,
                     online: false,
-                    bot_version: None,
+                    retired_bot_version: None,
+                    version: None,
+                    main_account: None,
                     ratings: Vec::new(),
                     avatar: None,
                 },

@@ -21,12 +21,17 @@ pub(super) fn enrich_rows(meta: &Meta, rows: &mut [Row]) {
     // allocate and optional facts attach correctly regardless of their record ordering.
     for record in &meta.records {
         match record {
+            // The old name record only serves a recording that has no identity for the seat.
             MetaRecord::SeatName { slot, name, bot }
-                if name.len() <= bota_proto::MAX_SHOWN_NAME_BYTES =>
+                if name.len() <= bota_proto::MAX_SHOWN_NAME_BYTES
+                    && !meta.records.iter().any(|other| {
+                        matches!(other, MetaRecord::SeatIdentity(identity) if identity.slot.0 == *slot)
+                    }) =>
             {
                 if let Some(row) = rows.iter_mut().find(|row| row.slot.0 == *slot) {
                     row.name = (!name.is_empty()).then(|| bota_core::clean_name(name));
                     row.bot = Some(*bot);
+                    row.version = None;
                 }
             }
             MetaRecord::Leave { tick, slot } => {
@@ -35,6 +40,13 @@ pub(super) fn enrich_rows(meta: &Meta, rows: &mut [Row]) {
                 }
             }
             _ => {}
+        }
+    }
+    for record in &meta.records {
+        if let MetaRecord::SeatIdentity(identity) = record
+            && let Some(row) = rows.iter_mut().find(|row| row.slot == identity.slot)
+        {
+            row.identity(identity);
         }
     }
 }

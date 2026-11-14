@@ -58,7 +58,7 @@ pub struct Bar {
     segments: Vec<Entity>,
     mana: Option<Entity>,
     level: Option<Entity>,
-    name: Option<Entity>,
+    name: Option<crate::player_name::Label>,
     /// The well and the fill of a hero's teleport channel.
     channel: Option<(Entity, Entity)>,
     /// The colour of the bar's outline when its unit is not under the cursor.
@@ -388,20 +388,31 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitV
             .id()
     });
     let name = hero.then(|| {
-        commands
-            .spawn((
-                ui::text("", &fonts.bold, 10.0, ui::INK),
-                ui::shadow(),
-                TextLayout::no_wrap(),
-                Node {
-                    position_type: PositionType::Absolute,
-                    bottom: px(h + 3.0),
-                    left: px(0.0),
-                    ..default()
-                },
-                ChildOf(root),
-            ))
-            .id()
+        let label = crate::player_name::spawn(
+            commands,
+            fonts,
+            root,
+            "",
+            None,
+            crate::theme::Type {
+                size: 10.0,
+                face: crate::theme::Face::Bold,
+                ..crate::theme::BODY
+            },
+            ui::INK,
+        );
+        commands.entity(label.root).insert(Node {
+            position_type: PositionType::Absolute,
+            bottom: px(h + 3.0),
+            left: px(0),
+            width: px(240),
+            min_width: px(0),
+            align_items: AlignItems::Center,
+            column_gap: px(4),
+            overflow: Overflow::clip(),
+            ..default()
+        });
+        label
     });
     Bar {
         root,
@@ -499,6 +510,7 @@ fn bars(
     units: Query<(Entity, &Unit, Has<Dying>)>,
     mut nodes: Query<(&mut Node, &mut Visibility, Option<&mut BackgroundColor>)>,
     mut texts: Query<&mut Text>,
+    mut versions: Query<&mut crate::player_name::VersionRun>,
 ) {
     let core = &session.0;
     let (Some(view), Some(layer)) = (core.view(), &p.layer) else {
@@ -564,7 +576,17 @@ fn bars(
             continue;
         }
         lay_ticks(&mut p.commands, bar, live.max_hp, (w, h));
-        fill_bar(core, view, live, bar, corner, w, &mut nodes, &mut texts);
+        fill_bar(
+            core,
+            view,
+            live,
+            bar,
+            corner,
+            w,
+            &mut nodes,
+            &mut texts,
+            &mut versions,
+        );
     }
     alive.sort_unstable();
     p.bars.0.retain(|entity, bar| {
@@ -587,6 +609,7 @@ fn fill_bar(
     w: f32,
     nodes: &mut Query<(&mut Node, &mut Visibility, Option<&mut BackgroundColor>)>,
     texts: &mut Query<&mut Text>,
+    versions: &mut Query<&mut crate::player_name::VersionRun>,
 ) {
     let place = |node: &mut Node| {
         node.left = px(corner.x);
@@ -648,7 +671,7 @@ fn fill_bar(
         t.set_if_neq(Text(s));
     }
     if let Some(name) = bar.name
-        && let Ok(mut t) = texts.get_mut(name)
+        && let Ok(mut t) = texts.get_mut(name.name)
     {
         // The player's name only: the hero is plain to see.
         let s = live
@@ -657,6 +680,15 @@ fn fill_bar(
             .unwrap_or_default()
             .to_string();
         t.set_if_neq(Text(s));
+    }
+    if let Some(name) = bar.name
+        && let Ok(mut version) = versions.get_mut(name.version)
+        && let Ok(mut text) = texts.get_mut(name.version)
+    {
+        version.set(
+            live.owner.and_then(|slot| core.player_version(slot)),
+            &mut text,
+        );
     }
 }
 

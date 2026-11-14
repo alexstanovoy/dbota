@@ -525,6 +525,7 @@ fn known_graph_stats_survive_unknown_ids_and_pregame_purchases_keep_their_sign()
 fn graph_axes_have_round_steps_and_keep_the_exact_end_label() {
     use super::graphs::{Axis, Curve, Point, label_positions, time_ticks};
     let curve = Curve {
+        version: None,
         name: "recorded".to_owned(),
         slot: None,
         colour: [0; 3],
@@ -1631,4 +1632,118 @@ fn the_replay_hud_draws_installed_hero_names() {
             .iter()
             .any(|text| text == "INSTALLED REPLAY HERO")
     });
+}
+
+/// A short real bot match, copied as a standalone recording without its sidecar.
+pub(crate) fn recorded_version_match_for_menu() -> PathBuf {
+    use bota_client_core::Transport;
+    use bota_proto::{ClientMsg, ServerMsg};
+    static FILE: OnceLock<PathBuf> = OnceLock::new();
+    FILE.get_or_init(|| {
+        let replay = scratch("version.brp");
+        let mut server =
+            Server::start(1, &["--replay", replay.to_str().unwrap(), "--meta-trailer"]);
+        let mut link = Link::connect(&server.address, std::time::Duration::from_secs(30))
+            .unwrap()
+            .with_redial(bota_client_core::Redial::OFF);
+        bota_client_core::join_on_with_version(
+            &mut link,
+            bota_core::WIRE_FINGERPRINT,
+            "engine",
+            Some("v1.0.0 (buster)"),
+            HeroId::SHADOW_FIEND,
+            None,
+        )
+        .unwrap();
+        let mut first_tick = None;
+        for _ in 0..1024 {
+            if let Some(ServerMsg::Snapshot { view }) = link.recv().unwrap() {
+                first_tick = Some(view.tick);
+                break;
+            }
+        }
+        let first_tick = first_tick.expect("the recorded bot match starts");
+        link.send(&ClientMsg::Say(bota_proto::Line {
+            to: bota_proto::Audience::All,
+            body: bota_proto::Body::Text("hello".into()),
+        }))
+        .unwrap();
+        let mut heard = false;
+        for _ in 0..1024 {
+            if matches!(link.recv().unwrap(), Some(ServerMsg::Heard(_))) {
+                heard = true;
+                break;
+            }
+        }
+        assert!(heard, "the real bot speaks before leaving");
+        // Advance explicit ticks, enough that the viewer is still mid-match when loading ends and
+        // it pauses on the live scoreboard.
+        for tick in first_tick..first_tick + 150 {
+            link.send(&ClientMsg::Ack { tick }).unwrap();
+            let mut next = false;
+            for _ in 0..1024 {
+                if let Some(ServerMsg::Snapshot { view }) = link.recv().unwrap()
+                    && view.tick > tick
+                {
+                    next = true;
+                    break;
+                }
+            }
+            assert!(next, "the acknowledged tick advances");
+        }
+        link.send(&ClientMsg::LeaveGame).unwrap();
+        drop(link);
+        server.wait();
+        let standalone = scratch("standalone_version.brp");
+        std::fs::copy(&replay, &standalone).unwrap();
+        // Retained as an untracked render input; the client opens exactly this recording.
+        let renders = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("temp/renders");
+        std::fs::create_dir_all(&renders).unwrap();
+        std::fs::copy(&standalone, renders.join("version.brp")).unwrap();
+        standalone
+    })
+    .clone()
+}
+
+#[test]
+fn a_recorded_bot_version_is_drawn_by_the_standalone_replay() {
+    let replay = recorded_version_match_for_menu();
+    assert!(
+        !replay.with_extension("meta").exists(),
+        "no external metadata source"
+    );
+    let mut client =
+        crate::e2e::harness::Client::run(&["--replay", replay.to_str().unwrap(), "--scoreboard"]);
+    if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
+        player.paused = true;
+    }
+    client.until(
+        "the standalone seat identity reaches the game UI",
+        |client| client.core().player_version(bota_proto::SlotId(0)) == Some("v1.0.0 (buster)"),
+    );
+    client.until("the replay finishes loading", |client| {
+        client.world().resource::<crate::loading::Loading>().done()
+    });
+    client.frames(12);
+    assert!(
+        client.core().over.is_none(),
+        "this assertion covers the in-game scoreboard"
+    );
+    crate::player_name::assert_drawn_version(&mut client, "engine", "v1.0.0 (buster)");
+    if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
+        player.paused = false;
+    }
+    client.until("the recorded match ends", |client| {
+        client.world().non_send::<super::PostGame>().visible()
+    });
+    client.frames(12);
+    crate::player_name::assert_drawn_version(&mut client, "engine", "v1.0.0 (buster)");
+    // The stored public identity also drives the results summary.
+    let bytes = bota_client_core::meta_in_replay(&mut std::fs::File::open(&replay).unwrap())
+        .unwrap()
+        .unwrap();
+    let meta = bota_replay::meta::decode(&bytes).unwrap();
+    let summary = MatchSummary::from_meta(&meta).unwrap();
+    assert_eq!(summary.rows[0].name.as_deref(), Some("engine"));
+    assert_eq!(summary.rows[0].version.as_deref(), Some("v1.0.0 (buster)"));
 }

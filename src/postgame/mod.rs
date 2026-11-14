@@ -10,7 +10,7 @@ pub mod summary;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-pub(crate) use tests::recorded_match_for_menu;
+pub(crate) use tests::{recorded_match_for_menu, recorded_version_match_for_menu};
 pub(crate) mod view;
 
 use std::sync::Arc;
@@ -213,6 +213,15 @@ fn from_stats(session: &Session) -> Option<MatchSummary> {
     // Ended from outside, a match is decided for nobody: not a draw.
     if session.0.aborted.is_some() {
         summary.winner = None;
+    }
+    for identity in &session.0.identities {
+        if let Some(row) = summary
+            .rows
+            .iter_mut()
+            .find(|row| row.slot == identity.slot)
+        {
+            row.identity(identity);
+        }
     }
     Some(summary)
 }

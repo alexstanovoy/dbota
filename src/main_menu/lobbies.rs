@@ -202,6 +202,16 @@ fn lobby_row(kit: &mut Kit, parent: Entity, lobby: &LobbyRow, selected: bool) {
     .enumerate()
     {
         let cell = cell(kit, row, index + 1);
+        if index == 1 {
+            kit.player_name(
+                cell,
+                text,
+                lobby.version.as_deref(),
+                theme::BODY,
+                theme::INK_2,
+            );
+            continue;
+        }
         kit.typed(
             cell,
             text,

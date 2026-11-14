@@ -206,6 +206,7 @@ fn draw_account_page(
             super::ladder_page::draw(kit, root, board, field);
         }
         PageView::Profile {
+            version,
             name,
             ratings,
             matches,
@@ -219,6 +220,7 @@ fn draw_account_page(
                 root,
                 super::account_page::Profile {
                     name,
+                    version: version.as_deref(),
                     ratings,
                     matches,
                     mode_names,
@@ -942,6 +944,8 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
         row,
         Node {
             flex_grow: 1.0,
+            min_width: px(0),
+            width: px(0),
             flex_direction: FlexDirection::Column,
             ..default()
         },
@@ -955,12 +959,12 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
         }
     };
     let (headline, line, colour) = match &replay.summary {
-        Summary::Read { sides, outcome } if outcome.is_empty() => (
+        Summary::Read { sides, outcome, .. } if outcome.is_empty() => (
             known(&sides.text(kit.texts)),
             replay.when.clone(),
             theme::INK_4,
         ),
-        Summary::Read { sides, outcome } => (
+        Summary::Read { sides, outcome, .. } => (
             known(&sides.text(kit.texts)),
             format!("{}  ·  {outcome}", replay.when),
             theme::INK_4,
@@ -976,7 +980,25 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
             theme::ERROR_TEXT,
         ),
     };
-    kit.bold(label, headline, 16.0, theme::INK_1);
+    if let Summary::Read { identities, .. } = &replay.summary
+        && !identities.is_empty()
+    {
+        for identity in identities.iter().take(bota_proto::limits::MAX_SEATS) {
+            kit.player_name(
+                label,
+                &identity.name,
+                identity.version.as_deref(),
+                theme::Type {
+                    size: 16.0,
+                    face: theme::Face::Bold,
+                    ..theme::BODY
+                },
+                theme::INK_1,
+            );
+        }
+    } else {
+        kit.bold(label, headline, 16.0, theme::INK_1);
+    }
     kit.text(label, line, 13.0, colour);
     kit.text(
         label,

@@ -200,27 +200,46 @@ fn names(kit: &mut Kit, row: Entity, at: At) {
         Node {
             flex_direction: FlexDirection::Column,
             margin: UiRect::left(d(8.0)),
+            width: px(0),
+            min_width: px(0),
+            flex_grow: 1.0,
+            overflow: Overflow::clip(),
             ..default()
         },
         Pickable::IGNORE,
         ChildOf(column),
     ));
     let both = both.id();
-    for (field, size) in [(Field::Name, 19.0), (Field::HeroName, 14.0)] {
-        kit.commands.spawn((
-            at,
-            field,
-            ui::text(
-                "",
-                &kit.fonts.bold,
-                font(size),
-                super::draw::name_color(field == Field::HeroName),
-            ),
-            ui::shadow(),
-            Pickable::IGNORE,
-            ChildOf(both),
-        ));
-    }
+    let label = crate::player_name::spawn(
+        kit.commands,
+        kit.fonts,
+        both,
+        "",
+        None,
+        crate::theme::Type {
+            size: font(19.0),
+            face: crate::theme::Face::Bold,
+            ..crate::theme::BODY
+        },
+        super::draw::name_color(false),
+    );
+    kit.commands.entity(label.name).insert((at, Field::Name));
+    kit.commands
+        .entity(label.version)
+        .insert((at, Field::Version));
+    kit.commands.spawn((
+        at,
+        Field::HeroName,
+        ui::text(
+            "",
+            &kit.fonts.bold,
+            font(14.0),
+            super::draw::name_color(true),
+        ),
+        ui::shadow(),
+        Pickable::IGNORE,
+        ChildOf(both),
+    ));
 }
 
 /// The talent tree in small: four tiers of two pips, the level-25 tier on

@@ -362,9 +362,10 @@ fn player_words(kit: &mut Kit, words: Entity, row: &Row) {
             ..default()
         },
     );
-    let name = kit.typed(
+    let name = kit.player_name(
         name_row,
         &row.name,
+        row.version.as_deref(),
         theme::LABEL,
         if row.connected {
             theme::INK_1
@@ -372,17 +373,10 @@ fn player_words(kit: &mut Kit, words: Entity, row: &Row) {
             theme::INK_3
         },
     );
-    kit.commands.entity(name).insert((
-        Node {
-            max_width: px(180),
-            overflow: Overflow::clip(),
-            ..default()
-        },
-        TextLayout {
-            linebreak: LineBreak::NoWrap,
-            ..default()
-        },
-    ));
+    kit.commands
+        .entity(name)
+        .entry::<Node>()
+        .and_modify(|mut node| node.max_width = px(240));
     if row.bot {
         kit.typed(name_row, "BOT", theme::CAPTION, theme::INK_4);
     }

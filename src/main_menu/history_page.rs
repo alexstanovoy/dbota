@@ -387,14 +387,42 @@ fn row(kit: &mut Kit, parent: Entity, game: &Match, y: f32, day: &str) {
             .entity(icon)
             .insert(ImageNode::new(kit.server.load(path)));
     }
-    words(
-        kit,
-        row,
-        game.hero_name(kit.texts),
-        at(187.0, 20.0),
-        bold(12.0),
-        theme::INK_1,
-    );
+    if game.players.is_empty() {
+        words(
+            kit,
+            row,
+            game.hero_name(kit.texts),
+            at(187.0, 20.0),
+            bold(12.0),
+            theme::INK_1,
+        );
+    } else {
+        words(
+            kit,
+            row,
+            game.hero_name(kit.texts),
+            at(187.0, 3.0),
+            body(10.0),
+            theme::INK_4,
+        );
+        let names = kit.node(
+            row,
+            Node {
+                flex_direction: FlexDirection::Column,
+                overflow: Overflow::clip(),
+                ..area(187.0, 17.0, 260.0, 32.0)
+            },
+        );
+        for player in game.players.iter().take(2) {
+            kit.inline_player_name(
+                names,
+                (&player.name, player.version.as_deref()),
+                bold(11.0),
+                theme::INK_1,
+                260.0,
+            );
+        }
+    }
     words(
         kit,
         row,
@@ -610,6 +638,7 @@ pub fn preview() -> View {
         matches: std::sync::Arc::new(
             (0..10)
                 .map(|index| Match {
+                    players: Vec::new(),
                     file: format!("preview-{index}.brp"),
                     when: [
                         1793976000, 1793962920, 1793898900, 1793808120, 1793729400, 1793640600,
@@ -993,6 +1022,7 @@ mod tests {
                 duration_ms: 2292000,
                 game_report: vec![255],
                 seats: vec![SeatResult {
+                    version: None,
                     slot: 0,
                     team: 0,
                     account,

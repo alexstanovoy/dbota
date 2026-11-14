@@ -69,6 +69,12 @@ pub struct Preview(pub MenuView);
 pub struct Trusted(pub Trust);
 
 pub fn plugin(app: &mut App) {
+    app.add_systems(
+        PostUpdate,
+        (crate::player_name::measure_inline, crate::player_name::fit)
+            .chain()
+            .after(bevy::ui::UiSystems::PostLayout),
+    );
     super::hero_stage::plugin(app);
     super::preview::plugin(app);
     app.init_resource::<super::lobby_scroll::Positions>()

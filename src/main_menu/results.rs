@@ -43,6 +43,7 @@ impl MenuCore {
         let mut context = self.saved_context(entry);
         if let Some(result) = &entry.result {
             summary.winner = winner(result.outcome);
+            result_identities(&mut summary, result);
             context.reason = reason(result.reason, summary.winner).to_owned();
         }
         self.result_request = Some(View::new(Arc::new(summary), context));
@@ -201,6 +202,7 @@ impl MenuCore {
                 recording: None,
             });
         summary.winner = winner(result.outcome);
+        result_identities(&mut summary, result);
         let mut context = self.event_context(result, entry.and_then(|entry| entry.owner));
         context.replay = self.result_replay(result.match_id.0);
         Some(View::new(Arc::new(summary), context))
@@ -344,6 +346,23 @@ impl WatchFailure {
         match self {
             Self::ActiveGame => "Leave the current game before watching this replay",
             Self::MissingFile => "That replay is no longer available",
+        }
+    }
+}
+
+fn result_identities(summary: &mut MatchSummary, result: &MatchResult) {
+    for seat in result.seats.iter().take(bota_proto::limits::MAX_SEATS) {
+        if let Some(row) = summary
+            .rows
+            .iter_mut()
+            .find(|row| row.slot.0 == seat.slot && row.name.is_none())
+        {
+            row.identity(&bota_proto::SeatIdentity {
+                slot: bota_proto::SlotId(seat.slot),
+                name: seat.nickname.clone(),
+                bot: seat.kind == bota_radovid::proto::AccountKind::Bot,
+                version: seat.version.clone(),
+            });
         }
     }
 }

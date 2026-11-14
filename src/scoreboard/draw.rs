@@ -96,6 +96,7 @@ pub enum Field {
     Hero,
     Respawn,
     Name,
+    Version,
     HeroName,
     /// A talent's pip: `TalentSlot(n)`.
     Pip(u8),

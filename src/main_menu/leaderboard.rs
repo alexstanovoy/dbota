@@ -295,11 +295,14 @@ impl Row {
             account: row.account.0,
             players: Players::from_kind(row.kind),
             rank: row.rank,
-            nickname: text::who(&row.nickname, row.account.0),
-            version: row
-                .bot_version
-                .as_deref()
-                .map(|value| text::line(value, 64)),
+            nickname: if row.kind == AccountKind::Bot {
+                text::line(&row.nickname, text::NAME)
+            } else {
+                text::who(&row.nickname, row.account.0)
+            },
+            version: row.version.as_deref().map(|value| {
+                crate::player_name::version_text(value, bota_radovid::proto::MAX_VERSION_LEN)
+            }),
             games: row.games,
             rating: rating(row.rating.rating)?,
         })
@@ -485,11 +488,12 @@ mod delayed_reply_tests {
     }
     fn row() -> bota_radovid::proto::LadderRow {
         bota_radovid::proto::LadderRow {
+            retired_bot_version: None,
             rank: 1,
             account: bota_radovid::proto::AccountId(3),
             nickname: "ember".to_owned(),
             kind: AccountKind::Human,
-            bot_version: None,
+            version: None,
             avatar: None,
             rating: bota_radovid::proto::Rating {
                 rating: 1811.0,

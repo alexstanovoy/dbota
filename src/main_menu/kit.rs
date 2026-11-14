@@ -187,6 +187,48 @@ impl Kit<'_, '_, '_> {
         self.typed(parent, s, role, color)
     }
 
+    pub fn player_name(
+        &mut self,
+        parent: Entity,
+        name: &str,
+        version: Option<&str>,
+        role: Type,
+        color: Color,
+    ) -> Entity {
+        crate::player_name::spawn(
+            &mut self.commands,
+            self.fonts,
+            parent,
+            name,
+            version,
+            role,
+            color,
+        )
+        .root
+    }
+
+    /// The name widget sized to its content, up to `maximum` pixels: for a name inside a sentence
+    /// or a centred caption, where [`Kit::player_name`] would fill the row.
+    pub fn inline_player_name(
+        &mut self,
+        parent: Entity,
+        (name, version): (&str, Option<&str>),
+        role: Type,
+        color: Color,
+        maximum: f32,
+    ) -> Entity {
+        crate::player_name::inline_within(
+            &mut self.commands,
+            self.fonts,
+            parent,
+            (name, version),
+            role,
+            color,
+            maximum,
+        )
+        .root
+    }
+
     /// Bold text of a size, for today's pages until their screens are redesigned (see
     /// [`Kit::text`]).
     pub fn bold(

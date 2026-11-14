@@ -110,9 +110,19 @@ fn host_label(kit: &mut Kit, parent: Entity, chat: &ChatView) {
         .iter()
         .find(|person| Some(person.account) == chat.owner)
     {
-        let text = kit.typed(
+        let text = kit.node(
             parent,
-            format!("hosted by {}", host.name),
+            Node {
+                align_items: AlignItems::Center,
+                column_gap: px(4),
+                ..default()
+            },
+        );
+        kit.typed(text, "hosted by", theme::BODY, theme::INK_4);
+        kit.player_name(
+            text,
+            &host.name,
+            host.version.as_deref(),
             theme::BODY,
             theme::INK_4,
         );
@@ -234,9 +244,10 @@ fn member(kit: &mut Kit, parent: Entity, member: &MemberRow, lobby: &LobbyView) 
     } else {
         member.name.clone()
     };
-    let text = kit.typed(
+    let text = kit.player_name(
         parent,
-        name,
+        &name,
+        member.version.as_deref(),
         theme::lobby::MEMBER,
         if member.me {
             theme::SELECT
@@ -247,6 +258,8 @@ fn member(kit: &mut Kit, parent: Entity, member: &MemberRow, lobby: &LobbyView) 
     kit.commands.entity(text).insert(Node {
         flex_grow: 1.0,
         min_width: px(0),
+        align_items: AlignItems::Center,
+        column_gap: px(6),
         overflow: Overflow::clip(),
         ..default()
     });
@@ -362,7 +375,13 @@ fn spectator_chip(kit: &mut Kit, parent: Entity, member: &MemberRow, lobby: &Lob
         BackgroundColor(theme::FIELD),
         BorderColor::all(theme::SECONDARY_EDGE),
     ));
-    kit.typed(person, &member.name, theme::lobby::MEMBER, theme::INK_1);
+    kit.inline_player_name(
+        person,
+        (&member.name, member.version.as_deref()),
+        theme::lobby::MEMBER,
+        theme::INK_1,
+        SPECTATOR_NAME_WIDTH,
+    );
     member_controls(kit, person, member, lobby);
 }
 
@@ -459,13 +478,29 @@ fn footer_status(kit: &mut Kit, parent: Entity, lobby: &LobbyView, seated: &[&Me
             .entity(line)
             .insert(CountdownText(STARTING_LINE));
     }
-    if let Some(name) = &lobby.moving {
-        kit.typed(
+    if let Some(moving) = &lobby.moving {
+        let prompt = kit.node(
             parent,
-            format!("Choose a free slot for {name}, or SPECTATE"),
+            Node {
+                align_items: AlignItems::Center,
+                column_gap: px(4),
+                ..default()
+            },
+        );
+        kit.typed(
+            prompt,
+            "Choose a free slot for",
             theme::SMALL_BODY,
             theme::GOLD,
         );
+        kit.inline_player_name(
+            prompt,
+            (&moving.name, moving.version.as_deref()),
+            theme::SMALL_BODY,
+            theme::GOLD,
+            SYSTEM_NAME_WIDTH,
+        );
+        kit.typed(prompt, ", or SPECTATE", theme::SMALL_BODY, theme::GOLD);
     }
 }
 
@@ -677,9 +712,10 @@ fn people(kit: &mut Kit, parent: Entity, chat: &ChatView) {
         } else {
             person.name.clone()
         };
-        let text = kit.typed(
+        let text = kit.player_name(
             people,
-            name,
+            &name,
+            person.version.as_deref(),
             theme::SMALL_BODY,
             if host { theme::GOLD } else { theme::INK_1 },
         );
@@ -716,9 +752,10 @@ fn chat_line(kit: &mut Kit, parent: Entity, line: &Line, chat: &ChatView) {
         },
     );
     if let Some(account) = line.account {
-        let name = kit.typed(
+        let name = kit.player_name(
             words,
-            format!("{}: ", line.name),
+            &line.name,
+            line.version.as_deref(),
             theme::lobby::CHAT_SPEAKER,
             if Some(account) == chat.owner {
                 theme::GOLD
@@ -726,11 +763,39 @@ fn chat_line(kit: &mut Kit, parent: Entity, line: &Line, chat: &ChatView) {
                 theme::INK_1
             },
         );
-        kit.commands
-            .entity(name)
-            .insert(Name::new(format!("lobby chat speaker {}", account.0)));
+        kit.commands.entity(name).insert((
+            Name::new(format!("lobby chat speaker {}", account.0)),
+            Node {
+                width: px(240),
+                max_width: percent(65),
+                min_width: px(0),
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+        ));
+        kit.typed(words, ": ", theme::lobby::CHAT_SPEAKER, theme::INK_2);
         kit.typed(words, &line.message, theme::BODY, theme::INK_1);
     } else {
+        if !line.name.is_empty() {
+            kit.commands.entity(words).insert(Node {
+                column_gap: px(4),
+                align_items: AlignItems::Center,
+                min_width: px(0),
+                flex_grow: 1.0,
+                flex_basis: px(0),
+                flex_wrap: FlexWrap::Wrap,
+                ..default()
+            });
+            kit.inline_player_name(
+                words,
+                (&line.name, line.version.as_deref()),
+                theme::BODY,
+                theme::INK_4,
+                SYSTEM_NAME_WIDTH,
+            );
+        }
         let text = kit.typed(words, &line.message, theme::BODY, theme::INK_4);
         kit.commands
             .entity(text)
@@ -738,6 +803,12 @@ fn chat_line(kit: &mut Kit, parent: Entity, line: &Line, chat: &ChatView) {
             .and_modify(|mut font| font.style = bevy::text::FontStyle::Italic);
     }
 }
+
+/// The widest a spectator's name may draw in its chip.
+const SPECTATOR_NAME_WIDTH: f32 = 180.0;
+
+/// The widest a name may draw in a line of the room itself.
+const SYSTEM_NAME_WIDTH: f32 = 260.0;
 
 fn chat_input(kit: &mut Kit, parent: Entity, chat: &ChatView) {
     let row = kit.node(

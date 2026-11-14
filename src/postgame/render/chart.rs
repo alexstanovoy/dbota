@@ -591,14 +591,12 @@ fn end_labels(
                 )
             },
         );
-        words(
-            kit,
+        let label = crate::player_name::spawn(
+            &mut kit.commands,
+            kit.fonts,
             content,
-            curve.name.clone(),
-            Node {
-                overflow: Overflow::clip(),
-                ..area(13.0, y, 85.0, 16.0)
-            },
+            &curve.name,
+            curve.version.as_deref(),
             if curve.slot.is_some()
                 && (curve.slot == view.context.owner || curve.slot == view.focus)
             {
@@ -608,6 +606,9 @@ fn end_labels(
             },
             theme::INK_2.with_alpha(colour.alpha()),
         );
+        kit.commands
+            .entity(label.root)
+            .insert(area(13.0, y, 85.0, 16.0));
         let value = words(
             kit,
             content,
@@ -850,14 +851,18 @@ fn hover_at(kit: &mut Kit, parent: Entity, plot: &Plot, second: u32) -> Vec<Enti
         let colour = Color::srgb_u8(curve.colour[0], curve.colour[1], curve.colour[2]);
         let y = 32.0 + index as f32 * 20.0;
         dot(kit, tooltip, Vec2::new(16.0, y + 5.0), 7.0, colour);
-        words(
-            kit,
+        let label = crate::player_name::spawn(
+            &mut kit.commands,
+            kit.fonts,
             tooltip,
-            curve.name.clone(),
-            area(28.0, y - 2.0, width - 128.0, 18.0),
+            &curve.name,
+            curve.version.as_deref(),
             body(13.0),
             theme::INK_3,
         );
+        kit.commands
+            .entity(label.root)
+            .insert(area(28.0, y - 2.0, width - 128.0, 18.0));
         let text = point.map_or_else(
             || "—".to_owned(),
             |point| {

@@ -37,6 +37,7 @@ pub struct Line {
     pub xp: i32,
     /// The name the player gave, empty when none.
     pub name: String,
+    pub version: Option<String>,
     /// Whether this is the seat being played or watched as.
     pub local: bool,
     /// Whether it plays for the other side than the one playing: Dota hides
@@ -96,6 +97,7 @@ fn line(core: &Core, view: &WorldView, p: &PlayerView, side: Option<Team>, rate:
         level: p.level,
         xp: p.xp,
         name: core.player_name(p.slot).unwrap_or_default().to_owned(),
+        version: core.player_version(p.slot).map(str::to_owned),
         local: core.my_slot == Some(p.slot),
         foe,
         kills: p.kills,

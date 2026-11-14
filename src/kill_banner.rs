@@ -84,6 +84,8 @@ fn spawn(mut commands: Commands, root: Single<Entity, With<HudRoot>>) {
 /// A hero as a message shows it.
 struct Hero {
     name: String,
+    /// The bot version of the seat, drawn dimmer beside the name by the shared name widget.
+    version: Option<String>,
     colour: Color,
     icon: Option<String>,
 }
@@ -106,7 +108,8 @@ fn hero(
         .or_else(|| core.freshest(id)?.owner);
     if let Some(player) = seat.and_then(|slot| view.player(slot)) {
         return Some(Hero {
-            name: crate::seat_name::seat_name(core, player.slot, Some(texts)),
+            name: crate::seat_name::base_seat_name(core, player.slot, Some(texts)),
+            version: core.player_version(player.slot).map(str::to_owned),
             colour: colours.of(view, player.slot),
             icon: manifest.hero_icon(player.hero.0),
         });
@@ -115,6 +118,7 @@ fn hero(
     let hero = unit.hero?;
     Some(Hero {
         name: texts.hero_name(hero).to_owned(),
+        version: None,
         colour: crate::overlay::team_color(unit.team),
         icon: manifest.hero_icon(hero.0),
     })
@@ -226,8 +230,11 @@ fn spawn_piece(
             }
             return;
         }
-        Piece::Argument(2) => (shown_name(&killer.name), killer.colour),
-        Piece::Argument(3) => (shown_name(&victim.name), victim.colour),
+        Piece::Argument(argument @ (2 | 3)) => {
+            let hero = if *argument == 2 { killer } else { victim };
+            spawn_name(commands, stage, row, hero);
+            return;
+        }
         Piece::Argument(_) => return,
         Piece::Words(words, lit) => (
             words.clone(),
@@ -246,6 +253,33 @@ fn spawn_piece(
         ChildOf(row),
     ));
 }
+
+/// A hero's name in a message through the shared name widget, its colour on the name and a dimmer
+/// one on the version; both fade with the message ([`Ink`]).
+fn spawn_name(commands: &mut Commands, stage: &Stage, row: Entity, hero: &Hero) {
+    let label = crate::player_name::inline_within(
+        commands,
+        stage.fonts,
+        row,
+        (&shown_name(&hero.name), hero.version.as_deref()),
+        crate::theme::Type {
+            size: TEXT_SIZE * ui::DOTA,
+            face: crate::theme::Face::Bold,
+            ..crate::theme::BODY
+        },
+        hero.colour,
+        NAME_WIDTH * ui::DOTA,
+    );
+    commands
+        .entity(label.name)
+        .insert((Ink(hero.colour), ui::shadow()));
+    commands
+        .entity(label.version)
+        .insert((Ink(crate::theme::version_color(hero.colour)), ui::shadow()));
+}
+
+/// The widest a name and its version draw in a message.
+const NAME_WIDTH: f32 = 330.0;
 
 /// The most columns of a hero's name a message shows: a letter takes one and a wide glyph two. It
 /// holds the longest name the game makes of a hero no player named ("Shadow Fiend (Radiant)"), and
@@ -329,6 +363,7 @@ fn pose(
     time: Res<Time>,
     mut messages: Query<(Entity, &mut Message, &mut UiTransform, &Children)>,
     mut parts: Query<(&Ink, Option<&mut TextColor>, Option<&mut ImageNode>)>,
+    nested: Query<&Children>,
 ) {
     for (entity, mut message, mut transform, children) in &mut messages {
         message.age += time.delta_secs();
@@ -339,7 +374,14 @@ fn pose(
         let (scale, tilt, opacity) = pose_at(message.banner, message.age);
         transform.scale = Vec2::splat(scale);
         transform.rotation = Rot2::degrees(tilt);
+        // The parts of a message are its children, and the name widgets' texts one level below.
+        let mut all: Vec<Entity> = children.to_vec();
         for child in children {
+            if let Ok(inner) = nested.get(*child) {
+                all.extend(inner.iter());
+            }
+        }
+        for child in &all {
             let Ok((Ink(ink), text, image)) = parts.get_mut(*child) else {
                 continue;
             };
@@ -359,17 +401,26 @@ fn pose(
 pub fn shown(world: &mut World) -> Vec<(String, Banner)> {
     let mut messages = world.query::<(&Message, &Children)>();
     let mut texts = world.query::<&Text>();
+    let mut inner = world.query::<&Children>();
     let rows: Vec<_> = messages
         .iter(world)
         .map(|(message, children)| (message.banner, children.to_vec()))
         .collect();
     rows.into_iter()
         .map(|(banner, children)| {
-            let said: String = children
-                .iter()
-                .filter_map(|child| texts.get(world, *child).ok())
-                .map(|text| text.0.as_str())
-                .collect();
+            // A part is a text, or a name widget whose name and version are two texts.
+            let mut said = String::new();
+            for child in children {
+                if let Ok(text) = texts.get(world, child) {
+                    said.push_str(&text.0);
+                } else if let Ok(parts) = inner.get(world, child) {
+                    for part in parts.iter() {
+                        if let Ok(text) = texts.get(world, part) {
+                            said.push_str(&text.0);
+                        }
+                    }
+                }
+            }
             (said, banner)
         })
         .collect()

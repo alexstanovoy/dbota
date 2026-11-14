@@ -87,6 +87,7 @@ mod particles;
 mod pick;
 mod pings;
 mod player_colour;
+mod player_name;
 mod portrait;
 mod postgame;
 mod pregame;

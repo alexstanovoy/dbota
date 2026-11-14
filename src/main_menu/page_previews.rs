@@ -119,6 +119,7 @@ pub fn matches(offline: bool) -> Vec<Match> {
         .enumerate()
         .map(
             |(index, (hero, won, seconds, kda, worth, mode, age))| Match {
+                players: Vec::new(),
                 file: format!("preview-{index}.brp"),
                 when: now - age,
                 mode: mode.to_owned(),
@@ -152,6 +153,7 @@ pub fn matches(offline: bool) -> Vec<Match> {
             .count();
         for index in 0..games - existing {
             matches.push(Match {
+                players: Vec::new(),
                 file: format!("preview-{}-{index}.brp", hero.0),
                 when: now - (5 + index as u64) * 86400,
                 mode: "solo_mid".to_owned(),
@@ -235,6 +237,7 @@ fn profile_fixture(name: &str) -> PageView {
         read_only: name.starts_with("profile_other"),
         notice: (name == "profile_other_unavailable")
             .then(|| "This player's profile is unavailable".into()),
+        version: None,
         name: if name == "profile_other_unavailable" {
             "Player #42"
         } else {
@@ -426,7 +429,11 @@ fn ladder_rows(bots: bool, allpick: bool, kind: Players) -> Vec<Row> {
             },
             players: kind,
             rank: index as u32 + 1,
-            nickname: name.to_owned(),
+            nickname: if bots {
+                name.split('#').next().unwrap_or(name).to_owned()
+            } else {
+                name.to_owned()
+            },
             version: bots.then(|| {
                 [
                     "v12", "v11", "v4.2", "v10", "v0.9", "v4.1", "v2", "v0.8", "v1", "v9", "v1.4",

@@ -20,7 +20,7 @@ use toast::toast;
 const ROWS: usize = 8;
 /// Icons and texts a line holds at most, alternating, an icon first: a kill's killer, kill icon
 /// and victim, and up to four assists.
-const SLOTS: usize = 7;
+const SLOTS: usize = 2 * bota_proto::limits::MAX_SEATS + 8;
 // The styles below are Dota's, copied from two of its stylesheets in the install (the manifest's
 // `style` lines read only `@define` colours, not rule values like these, nor gradients), in its
 // pixels, which `dota` scales:
@@ -157,7 +157,11 @@ impl Place {
 enum Slot {
     Icon(usize),
     Text(usize),
+    Identity(usize),
 }
+
+#[derive(Component, Clone, Copy)]
+struct IdentityLabel(crate::player_name::Label);
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Update, show);
@@ -323,11 +327,34 @@ fn spawn_pair(commands: &mut Commands, fonts: &Fonts, line: Entity, n: usize) {
         Pickable::IGNORE,
         ChildOf(line),
     ));
+    let label = crate::player_name::inline(
+        commands,
+        fonts,
+        line,
+        "",
+        None,
+        crate::theme::Type {
+            size: LABEL_SIZE * ui::DOTA,
+            face: crate::theme::Face::Bold,
+            ..crate::theme::BODY
+        },
+        Color::WHITE,
+    );
+    commands
+        .entity(label.root)
+        .insert((Slot::Identity(n), IdentityLabel(label)));
+    commands
+        .entity(label.root)
+        .entry::<Node>()
+        .and_modify(|mut node| {
+            node.display = Display::None;
+            node.margin = UiRect::horizontal(ui::dota(4.0));
+        });
 }
 
 /// A line laid out: up to [`SLOTS`] pairs of an icon (a cache file) and a
 /// text.
-type Laid = [(Option<String>, String); SLOTS];
+type Laid = [(Option<String>, String, Option<bota_proto::SeatIdentity>); SLOTS];
 
 /// How a pair of a line is drawn: the ink of its text, and whether its icon stands on a plate (the
 /// kind of the event).
@@ -432,6 +459,7 @@ struct Parts<'w, 's> {
             Option<&'static mut Text>,
             Option<&'static mut TextColor>,
             &'static mut Node,
+            Option<&'static IdentityLabel>,
         ),
         (
             Without<Row>,
@@ -441,6 +469,16 @@ struct Parts<'w, 's> {
         ),
     >,
     images: Query<'w, 's, &'static mut ImageNode>,
+    name_parts: Query<
+        'w,
+        's,
+        (
+            &'static mut Text,
+            &'static mut TextColor,
+            Option<&'static mut crate::player_name::VersionRun>,
+        ),
+        Without<Slot>,
+    >,
     slashes: Query<
         'w,
         's,
@@ -611,7 +649,8 @@ fn fill_slot(
     (laid, styles): (&Laid, &Styles),
     wanted: &Dress,
 ) {
-    let Ok((slot, holder, plate, text, colour, mut node)) = parts.slots.get_mut(child) else {
+    let Ok((slot, holder, plate, text, colour, mut node, label)) = parts.slots.get_mut(child)
+    else {
         return;
     };
     match (*slot, holder, text) {
@@ -657,9 +696,37 @@ fn fill_slot(
             }
         }
         (Slot::Text(n), _, Some(mut text)) => {
+            node.display = if laid[n].2.is_none() && !laid[n].1.is_empty() {
+                Display::Flex
+            } else {
+                Display::None
+            };
             text.set_if_neq(Text(laid[n].1.clone()));
             if let Some(mut colour) = colour {
                 colour.set_if_neq(TextColor(faded(styles[n].ink, wanted.opacity)));
+            }
+        }
+        (Slot::Identity(n), _, _) => {
+            node.display = if laid[n].2.is_some() {
+                Display::Flex
+            } else {
+                Display::None
+            };
+            if let (Some(identity), Some(label)) = (&laid[n].2, label) {
+                let ink = faded(styles[n].ink, wanted.opacity);
+                if let Ok((mut text, mut color, _)) = parts.name_parts.get_mut(label.0.name) {
+                    text.set_if_neq(Text(identity.name.clone()));
+                    color.set_if_neq(TextColor(ink));
+                }
+                if let Ok((mut text, mut color, Some(mut version))) =
+                    parts.name_parts.get_mut(label.0.version)
+                {
+                    version.set(identity.version.as_deref(), &mut text);
+                    color.set_if_neq(TextColor(faded(
+                        crate::theme::version_color(styles[n].ink),
+                        wanted.opacity,
+                    )));
+                }
             }
         }
         _ => {}
@@ -724,10 +791,7 @@ fn lay(
 fn lay_parts(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine) -> Laid {
     let mut laid: Laid = Default::default();
     let dota = texts.and_then(|texts| dota_parts(core, texts, &line.kind));
-    let Some(parts) = dota else {
-        laid[0].1 = localized_text(core, &line.kind, texts);
-        return laid;
-    };
+    let parts = dota.unwrap_or_else(|| fallback_parts(core, &line.kind, texts));
     // Icons and texts alternate, an icon first; a text with no icon before
     // it takes its pair's text, a second icon in a row the next pair's.
     let mut at = 0;
@@ -745,7 +809,23 @@ fn lay_parts(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &Fee
                 laid[at].0 = icon_path(core, manifest, &name, &line.kind);
             }
             Part::Text(text) => {
+                if laid[at].2.is_some() {
+                    at += 1;
+                }
+                if at == SLOTS {
+                    break;
+                }
                 laid[at].1.push_str(&text);
+                texted = true;
+            }
+            Part::Identity(identity) => {
+                if texted || laid[at].2.is_some() {
+                    at += 1;
+                }
+                if at == SLOTS {
+                    break;
+                }
+                laid[at].2 = Some(identity);
                 texted = true;
             }
         }
@@ -855,11 +935,25 @@ fn building_parts(texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
 /// The parts of Dota's feed line for an event the client words with the
 /// install's labels; none for any other, or without the labels.
 fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
+    let by = match *kind {
+        FeedKind::Loot { by, .. }
+        | FeedKind::ShrineActivated { by, .. }
+        | FeedKind::Rune { by, .. } => by,
+        FeedKind::BoughtBack { slot, .. } => Some(slot),
+        _ => None,
+    };
+    let identities: Vec<_> = by
+        .map(|slot| ("player_name", identity(core, slot, Some(texts))))
+        .into_iter()
+        .collect();
+    let label = |key: &str, values: &[(&str, String)]| {
+        texts.label_parts_with_identities(key, values, &identities)
+    };
     match *kind {
         FeedKind::StructureFell { .. } => building_parts(texts, kind),
         FeedKind::ItemPlaced { item, team } => {
             let keys = crate::faces::placed_labels(item)?;
-            texts.label_parts(keys[usize::from(team == Team::Dire)], &[])
+            label(keys[usize::from(team == Team::Dire)], &[])
         }
         FeedKind::Loot {
             item,
@@ -868,7 +962,7 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
             destroyed,
         } => {
             let labels = crate::faces::loot_labels(item)?;
-            texts.label_parts(
+            label(
                 labels[usize::from(destroyed)],
                 &[("player_name", activator(core, by, team, Some(texts)))],
             )
@@ -876,7 +970,7 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
         FeedKind::BossRoared {
             objective: bota_proto::ObjectiveKind::Roshan,
             team,
-        } => texts.label_parts(
+        } => label(
             if team == Team::Radiant {
                 "DOTA_HUD_RadiantRoshanRoar"
             } else {
@@ -887,7 +981,7 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
         FeedKind::BossFell {
             objective: bota_proto::ObjectiveKind::Roshan,
             team: Some(team),
-        } => texts.label_parts(
+        } => label(
             if team == Team::Radiant {
                 "DOTA_HUD_KilledRoshanGood"
             } else {
@@ -910,16 +1004,16 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
                     ],
                 ),
             };
-            texts.label_parts(key, &values)
+            label(key, &values)
         }
-        FeedKind::BoughtBack { slot, .. } => texts.label_parts(
+        FeedKind::BoughtBack { slot, .. } => label(
             "DOTA_HUD_BoughtBack",
             &[("player_name", seat_name(core, slot, Some(texts)))],
         ),
         FeedKind::ShrineActivated { by, team, xp } => {
             let rune = texts.label("DOTA_HUD_Rune_XP", &[("xp", xp.to_string())])?;
             let who = activator(core, by, team, Some(texts));
-            texts.label_parts(
+            label(
                 "DOTA_HUD_ActivatedRune",
                 &[
                     ("player_name", format!("{who} ")),
@@ -950,7 +1044,7 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
                     texts.label(&format!("DOTA_HUD_Rune_Deny{name}"), &[])?,
                 ),
             };
-            texts.label_parts(
+            label(
                 key,
                 &[
                     ("player_name", who),
@@ -1157,21 +1251,7 @@ fn death(
     texts: Option<&Texts>,
 ) -> String {
     let victim = fallen_name(core, victim, texts);
-    let by = killer.map(|killer| match killer {
-        Killer::Seat(slot) => seat_name(core, slot, texts),
-        Killer::Unit {
-            kind: UnitKind::Tower,
-            team,
-        } => format!("the {team:?} tower"),
-        Killer::Unit {
-            kind: UnitKind::Fountain,
-            team,
-        } => format!("the {team:?} fountain"),
-        Killer::Unit { kind, team } => format!(
-            "a {team:?} {}",
-            crate::game_names::resolve(texts, crate::game_names::kind_key(kind))
-        ),
-    });
+    let by = killer.map(|killer| killer_name(core, killer, texts));
     let helpers: Vec<String> = bota_proto::assisting_seats(assists)
         .map(|slot| seat_name(core, slot, texts))
         .collect();
@@ -1288,6 +1368,18 @@ pub fn shown(world: &mut World) -> Vec<(bool, Vec<String>, String)> {
                 (world.get::<Slot>(child), world.get::<Text>(child))
             {
                 text.push_str(&piece.0);
+            }
+            if let Some(label) = world.get::<IdentityLabel>(child)
+                && world
+                    .get::<Node>(child)
+                    .is_some_and(|node| node.display != Display::None)
+            {
+                text.push_str(&world.get::<Text>(label.0.name).expect("name").0);
+                let version = &world.get::<Text>(label.0.version).expect("version").0;
+                if !version.is_empty() {
+                    text.push(' ');
+                    text.push_str(version);
+                }
             }
         }
         rows.push((place == Place::Left, row, icons, text));
@@ -1604,5 +1696,214 @@ mod name_tests {
             localized_text(&core, &fallen(UnitKind::Ancient, None), Some(&texts)),
             "Installed Dire Core has fallen"
         );
+    }
+}
+
+fn identity(
+    core: &Core,
+    slot: bota_proto::SlotId,
+    texts: Option<&Texts>,
+) -> bota_proto::SeatIdentity {
+    core.seat_identity(slot)
+        .cloned()
+        .unwrap_or_else(|| bota_proto::SeatIdentity {
+            slot,
+            name: crate::seat_name::base_seat_name(core, slot, texts),
+            bot: false,
+            version: None,
+        })
+}
+
+fn fallback_parts(core: &Core, kind: &FeedKind, texts: Option<&Texts>) -> Vec<Part> {
+    if let FeedKind::Disconnected { seat } = *kind {
+        return vec![
+            Part::Identity(identity(core, seat, texts)),
+            Part::Text(" disconnected".into()),
+        ];
+    }
+    let named = match *kind {
+        FeedKind::Loot {
+            item,
+            by: Some(slot),
+            destroyed,
+            ..
+        } => Some((
+            slot,
+            format!(
+                " {} {}",
+                if destroyed { "denied" } else { "picked up" },
+                bota_core::item_def(item).map_or("the item", |_| crate::item_names::plain(item))
+            ),
+        )),
+        FeedKind::BoughtBack { slot, .. } => Some((slot, " bought back".to_owned())),
+        FeedKind::ShrineActivated {
+            by: Some(slot), xp, ..
+        } => Some((slot, format!(" activated Shrine of Wisdom ({xp} XP)"))),
+        FeedKind::Rune {
+            by: Some(slot),
+            kind,
+            act,
+            ..
+        } => {
+            let rune = crate::runes::text_name(kind);
+            let action = match act {
+                RuneAct::Activated { gold: Some(gold) } => {
+                    format!(" activated a {rune} rune ({gold} gold)")
+                }
+                RuneAct::Activated { gold: None } => format!(" activated a {rune} rune"),
+                RuneAct::Bottled => format!(" bottled a {rune} rune"),
+                RuneAct::Denied => format!(" denied a {rune} rune"),
+            };
+            Some((slot, action))
+        }
+        _ => None,
+    };
+    if let Some((slot, action)) = named {
+        return vec![
+            Part::Identity(identity(core, slot, texts)),
+            Part::Text(action),
+        ];
+    }
+    let FeedKind::HeroDied {
+        victim,
+        killer,
+        gold,
+        assists,
+    } = *kind
+    else {
+        return vec![Part::Text(localized_text(core, kind, texts))];
+    };
+    let mut parts = match victim {
+        Victim::Seat(slot) => vec![Part::Identity(identity(core, slot, texts))],
+        Victim::Hero(team) => vec![Part::Text(format!("a {team:?} hero"))],
+    };
+    let Some(killer) = killer else {
+        parts.push(Part::Text(" died".into()));
+        return parts;
+    };
+    parts.push(Part::Text(" was slain by ".into()));
+    match killer {
+        Killer::Seat(slot) => parts.push(Part::Identity(identity(core, slot, texts))),
+        _ => parts.push(Part::Text(killer_name(core, killer, texts))),
+    }
+    let helpers: Vec<_> = bota_proto::assisting_seats(assists)
+        .take(bota_proto::limits::MAX_SEATS)
+        .collect();
+    if !helpers.is_empty() {
+        parts.push(Part::Text(" (assisted by ".into()));
+        for (index, helper) in helpers.into_iter().enumerate() {
+            if index > 0 {
+                parts.push(Part::Text(", ".into()));
+            }
+            parts.push(Part::Identity(identity(core, helper, texts)));
+        }
+        parts.push(Part::Text(")".into()));
+    }
+    if gold > 0 {
+        parts.push(Part::Text(format!(" for {gold} gold")));
+    }
+    parts
+}
+
+fn killer_name(core: &Core, killer: Killer, texts: Option<&Texts>) -> String {
+    match killer {
+        Killer::Seat(slot) => seat_name(core, slot, texts),
+        Killer::Unit {
+            kind: UnitKind::Tower,
+            team,
+        } => format!("the {team:?} tower"),
+        Killer::Unit {
+            kind: UnitKind::Fountain,
+            team,
+        } => format!("the {team:?} fountain"),
+        Killer::Unit { kind, team } => format!(
+            "a {team:?} {}",
+            crate::game_names::resolve(texts, crate::game_names::kind_key(kind))
+        ),
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn a_bot_version_in_a_feed_identity_uses_the_shared_dimmer_name_widget() {
+        let path = crate::postgame::recorded_version_match_for_menu();
+        let mut client = crate::e2e::harness::Client::run(&["--replay", path.to_str().unwrap()]);
+        client.until("recorded bot identity", |client| {
+            client
+                .core()
+                .player_version(bota_proto::SlotId(0))
+                .is_some()
+        });
+        client.until("the replay is loaded", |client| {
+            client.world().resource::<crate::loading::Loading>().done()
+        });
+        client.core_mut().feed.clear();
+        client.core_mut().feed.push(FeedLine {
+            kind: FeedKind::Disconnected {
+                seat: bota_proto::SlotId(0),
+            },
+            age: 0.2,
+            told: None,
+        });
+        client.frames(12);
+        let world = client.world_mut();
+        let labels: Vec<_> = world
+            .query::<&IdentityLabel>()
+            .iter(world)
+            .map(|label| label.0)
+            .collect();
+        let label = labels
+            .into_iter()
+            .find(|label| {
+                world
+                    .get::<Text>(label.name)
+                    .is_some_and(|text| text.0 == "engine")
+            })
+            .expect("feed has a structured identity widget");
+        assert_eq!(
+            world.get::<Text>(label.version).unwrap().0,
+            "v1.0.0 (buster)",
+            "{}",
+            crate::player_name::describe(world, label)
+        );
+        assert!(world.get::<ComputedNode>(label.root).unwrap().size().x > 0.0);
+        assert_eq!(
+            world.get::<TextFont>(label.name),
+            world.get::<TextFont>(label.version)
+        );
+        let name = world.get::<TextColor>(label.name).unwrap().0;
+        let version = world.get::<TextColor>(label.version).unwrap().0;
+        assert!(LinearRgba::from(version).red < LinearRgba::from(name).red);
+    }
+
+    #[test]
+    fn a_bot_version_in_a_toast_uses_the_shared_dimmer_name_widget() {
+        let path = crate::postgame::recorded_version_match_for_menu();
+        let mut client = crate::e2e::harness::Client::run(&["--replay", path.to_str().unwrap()]);
+        client.until("recorded bot identity", |client| {
+            client
+                .core()
+                .player_version(bota_proto::SlotId(0))
+                .is_some()
+        });
+        client.until("the replay is loaded", |client| {
+            client.world().resource::<crate::loading::Loading>().done()
+        });
+        client.core_mut().feed.clear();
+        client.core_mut().feed.push(FeedLine {
+            kind: FeedKind::Rune {
+                by: Some(bota_proto::SlotId(0)),
+                team: Team::Radiant,
+                kind: RuneKind::Haste,
+                act: RuneAct::Denied,
+            },
+            age: 0.2,
+            told: None,
+        });
+        client.frames(12);
+        crate::player_name::assert_drawn_version(&mut client, "engine", "v1.0.0 (buster)");
     }
 }

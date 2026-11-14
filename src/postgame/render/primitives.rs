@@ -57,9 +57,17 @@ pub fn profile_name(
     node: Node,
     role: theme::Type,
     colour: Color,
+    maximum: f32,
 ) -> Entity {
+    let name = row.display_name();
     let Some(target) = view.profile_target(row.slot) else {
-        return words(kit, parent, row.display_name(), node, role, colour);
+        return kit.inline_player_name(
+            parent,
+            (&name, row.version.as_deref()),
+            role,
+            colour,
+            maximum,
+        );
     };
     let link = button(
         kit,
@@ -80,13 +88,12 @@ pub fn profile_name(
             over: theme::RESULT_HOVER_ROW,
         },
     ));
-    words(
-        kit,
+    kit.inline_player_name(
         link,
-        row.display_name(),
-        Node::default(),
+        (&name, row.version.as_deref()),
         role,
         theme::LINK.1,
+        maximum,
     );
     link
 }

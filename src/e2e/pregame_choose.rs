@@ -28,6 +28,40 @@ fn on_the_pick_screen(pick_secs: &str, extra: &[&str]) -> (Server, Client) {
     (server, client)
 }
 
+#[test]
+fn a_bot_version_on_the_pick_bar_is_drawn_dimmer_beside_the_name() {
+    let server = Server::start(2, &["--pick-secs", "600", "--tactical-secs", "600"]);
+    let mut link = bota_client_core::Link::connect(&server.address, Duration::from_secs(30))
+        .expect("connect")
+        .with_redial(bota_client_core::Redial::OFF);
+    let seated = bota_client_core::join_on_with_version(
+        &mut link,
+        bota_core::WIRE_FINGERPRINT,
+        "engine",
+        Some("v1.0.0 (buster)"),
+        HeroId::PUDGE,
+        None,
+    )
+    .expect("a versioned seat");
+    std::thread::spawn(move || {
+        let _ = bota_client_core::play(&mut link, seated, &mut (), |_| Vec::new());
+    });
+    let mut client = Client::run(&["--addr", &server.address]);
+    client.until("the selection clock running", |c| {
+        c.core().lobby.pick != PickPhase::Waiting
+    });
+    wait_for_loading(&mut client);
+    client.until("the bar names the versioned seat", |c| {
+        c.core()
+            .lobby
+            .slots
+            .iter()
+            .any(|slot| c.core().player_version(slot.slot) == Some("v1.0.0 (buster)"))
+    });
+    client.frames(12);
+    crate::player_name::assert_drawn_version(&mut client, "engine", "v1.0.0 (buster)");
+}
+
 /// Waits until no loading screen blocks the interface.
 fn wait_for_loading(client: &mut Client) {
     client.within(PATIENCE, "the loading screen lifted", |client| {

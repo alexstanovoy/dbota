@@ -58,6 +58,8 @@ struct Notices(std::collections::VecDeque<Notice>);
 
 /// One of the game's own lines.
 struct Notice {
+    prefix: String,
+    identity: Option<bota_proto::SeatIdentity>,
     text: String,
     event: EventKind,
     /// Seconds since it came.
@@ -82,9 +84,16 @@ struct Row(usize);
 /// A coloured piece of a row.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum Piece {
-    Name,
+    Tag,
+    Colon,
     Body,
 }
+
+#[derive(Component, Clone, Copy)]
+struct SpeakerLabel(crate::player_name::Label);
+
+#[derive(Component)]
+struct ChatName;
 
 /// The line being typed.
 #[derive(Component)]
@@ -392,37 +401,63 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
     spawn_prompt(&mut commands, &fonts, log);
 }
 
-/// A row: the tag as its own text, then the speaker's name and the words as
-/// spans.
+/// Each row uses the shared name widget; its version can shrink before the body wraps.
 fn spawn_row(commands: &mut Commands, fonts: &Fonts, log: Entity, row: usize) {
-    let text = commands
+    let root = commands
         .spawn((
             Row(row),
-            ui::text("", &fonts.regular, SIZE, ui::INK_DIM),
-            ui::shadow(),
             Node {
                 display: Display::None,
+                flex_wrap: FlexWrap::Wrap,
+                align_items: AlignItems::Center,
+                max_width: percent(100),
                 ..default()
             },
             ChildOf(log),
         ))
         .id();
-    for (piece, font) in [(Piece::Name, &fonts.bold), (Piece::Body, &fonts.regular)] {
-        commands.spawn((
-            piece,
-            TextSpan::new(""),
-            TextFont {
-                font: font.clone().into(),
-                font_size: FontSize::Px(SIZE),
-                ..default()
-            },
-            TextColor(ui::INK),
-            ChildOf(text),
-        ));
-    }
+    commands.spawn((
+        Piece::Tag,
+        ui::text("", &fonts.regular, SIZE, ui::INK_DIM),
+        ui::shadow(),
+        ChildOf(root),
+    ));
+    let label = crate::player_name::inline(
+        commands,
+        fonts,
+        root,
+        "",
+        None,
+        crate::theme::Type {
+            size: SIZE,
+            face: crate::theme::Face::Bold,
+            ..crate::theme::BODY
+        },
+        ui::INK,
+    );
+    commands.entity(label.root).insert(SpeakerLabel(label));
+    commands.entity(label.name).insert(ChatName);
+    commands.entity(label.version).insert(ChatName);
+    commands.spawn((
+        Piece::Colon,
+        ui::text("", &fonts.bold, SIZE, ui::INK),
+        ui::shadow(),
+        ChildOf(root),
+    ));
+    commands.spawn((
+        Piece::Body,
+        ui::text("", &fonts.regular, SIZE, ui::INK),
+        ui::shadow(),
+        Node {
+            max_width: percent(100),
+            min_width: px(0),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        ChildOf(root),
+    ));
 }
 
-/// What a line shows before the speaker's name, as Dota's strings do.
 fn tag(line: &ChatLine) -> String {
     let dead = if line.dead { "*DEAD*" } else { "" };
     match (&line.heard.from, line.heard.line.to) {
@@ -492,13 +527,15 @@ fn notices(
         if !sight.allows(event, crate::fog::EventSubject::Event) {
             continue;
         }
-        let Some(text) = notice_text(core, texts.as_deref(), event) else {
+        let Some((prefix, identity, text)) = notice_text(core, texts.as_deref(), event) else {
             continue;
         };
         if notices.0.len() == ROWS {
             notices.0.pop_front();
         }
         notices.0.push_back(Notice {
+            prefix,
+            identity,
             text,
             event: event.clone(),
             age: 0.0,
@@ -507,7 +544,11 @@ fn notices(
 }
 
 /// The log's line of a game's event, if it has one.
-fn notice_text(core: &Core, texts: Option<&Texts>, event: &EventKind) -> Option<String> {
+fn notice_text(
+    core: &Core,
+    texts: Option<&Texts>,
+    event: &EventKind,
+) -> Option<(String, Option<bota_proto::SeatIdentity>, String)> {
     let seat = |hero| core.view()?.unit(hero)?.owner;
     let (key, own, who) = match *event {
         EventKind::ShrineActivated { team, by, .. } => {
@@ -515,7 +556,7 @@ fn notice_text(core: &Core, texts: Option<&Texts>, event: &EventKind) -> Option<
                 || crate::feed::side_name(team).to_owned(),
                 |slot| crate::seat_name::seat_name(core, slot, texts),
             );
-            let own = format!("{who} activated a Shrine of Wisdom.");
+            let own = "%s1 activated a Shrine of Wisdom.".to_owned();
             ("DOTA_Chat_Rune_XP".to_owned(), own, who)
         }
         EventKind::RuneActivated { unit, kind, .. } | EventKind::RuneBottled { unit, kind } => {
@@ -528,23 +569,33 @@ fn notice_text(core: &Core, texts: Option<&Texts>, event: &EventKind) -> Option<
             match event {
                 EventKind::RuneBottled { .. } => (
                     format!("DOTA_Chat_Rune_Bottle_{name}"),
-                    format!("{who} has bottled a {name} rune."),
+                    format!("%s1 has bottled a {name} rune."),
                     who,
                 ),
                 _ => (
                     format!("DOTA_Chat_Rune_{name}"),
-                    format!("{who} activated a {name} rune."),
+                    format!("%s1 activated a {name} rune."),
                     who,
                 ),
             }
         }
         _ => return None,
     };
-    match texts.filter(|texts| texts.has_labels()) {
-        // The install's words, or none where it has none.
-        Some(texts) => Some(texts.label(&key, &[])?.replace("%s1", &who)),
-        None => Some(own),
+    let template = match texts.filter(|texts| texts.has_labels()) {
+        Some(texts) => texts.label(&key, &[])?,
+        None => own,
+    };
+    let slot = match *event {
+        EventKind::ShrineActivated { by, .. } => by.and_then(seat),
+        EventKind::RuneActivated { unit, .. } | EventKind::RuneBottled { unit, .. } => seat(unit),
+        _ => None,
+    };
+    if let Some(identity) = slot.and_then(|slot| core.seat_identity(slot)).cloned()
+        && let Some((prefix, suffix)) = template.split_once("%s1")
+    {
+        return Some((prefix.to_owned(), Some(identity), suffix.to_owned()));
     }
+    Some((String::new(), None, template.replace("%s1", &who)))
 }
 
 /// One line of the log: a player's, or the game's own.
@@ -572,8 +623,17 @@ fn show_log(
     typing: Res<Typing>,
     notices: Res<Notices>,
     preview: Option<Res<crate::main_menu::Preview>>,
-    mut rows: Query<(&Row, &mut Text, &mut TextColor, &mut Node, &Children)>,
-    mut pieces: Query<(&Piece, &mut TextSpan, &mut TextColor), Without<Row>>,
+    mut rows: Query<(&Row, &mut Node, &Children)>,
+    mut pieces: Query<(&Piece, &mut Text, &mut TextColor), Without<Row>>,
+    mut labels: Query<(&SpeakerLabel, &mut Node), (Without<Row>, Without<Piece>)>,
+    mut name_parts: Query<
+        (
+            &mut Text,
+            &mut TextColor,
+            Option<&mut crate::player_name::VersionRun>,
+        ),
+        (Without<Row>, Without<Piece>),
+    >,
 ) {
     let core = sight.core();
     // A ping marks the map and says nothing in the log.
@@ -586,7 +646,7 @@ fn show_log(
         log_lines(core, &notices, &sight)
     };
     let shown = &shown[shown.len().saturating_sub(ROWS)..];
-    for (Row(row), mut text, mut color, mut node, children) in &mut rows {
+    for (Row(row), mut node, children) in &mut rows {
         let line = row
             .checked_sub(ROWS - shown.len())
             .and_then(|i| shown.get(i));
@@ -594,15 +654,41 @@ fn show_log(
         let Some(line) = line.filter(|_| alpha > 0.0) else {
             continue;
         };
-        let (tag, name, name_tint, words) = chat_words(core, line, &texts);
-        text.set_if_neq(Text(tag));
-        color.set_if_neq(TextColor(ui::INK_DIM.with_alpha(alpha)));
+        let (tag, name, version, name_tint, words, colon) = chat_words(core, line, &texts);
         for child in children {
+            if let Ok((label, mut node)) = labels.get_mut(*child) {
+                node.display = if name.is_empty() {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+                if let Ok((mut text, mut tint, _)) = name_parts.get_mut(label.0.name) {
+                    text.set_if_neq(Text(name.clone()));
+                    tint.set_if_neq(TextColor(name_tint.with_alpha(alpha)));
+                }
+                if let Ok((mut text, mut tint, Some(mut source))) =
+                    name_parts.get_mut(label.0.version)
+                {
+                    source.set(version.as_deref(), &mut text);
+                    tint.set_if_neq(TextColor(
+                        crate::theme::version_color(name_tint).with_alpha(alpha),
+                    ));
+                }
+                continue;
+            }
             let Ok((piece, mut span, mut tint)) = pieces.get_mut(*child) else {
                 continue;
             };
             let (s, c) = match piece {
-                Piece::Name => (name.clone(), name_tint),
+                Piece::Tag => (tag.clone(), ui::INK_DIM),
+                Piece::Colon => (
+                    if colon {
+                        ": ".to_owned()
+                    } else {
+                        String::new()
+                    },
+                    name_tint,
+                ),
                 Piece::Body => (words.to_owned(), ui::INK),
             };
             if span.0 != s {
@@ -765,11 +851,14 @@ fn loading_faces(
     loading: Res<crate::loading::Loading>,
     preview: Option<Res<crate::main_menu::Preview>>,
     fonts: Res<Fonts>,
-    mut faces: Query<(&mut TextFont, Option<&Piece>), Or<(With<Row>, With<Piece>)>>,
+    mut faces: Query<
+        (&mut TextFont, Option<&Piece>, Has<ChatName>),
+        Or<(With<ChatName>, With<Piece>)>,
+    >,
 ) {
     let shown = loading.shown || preview.is_some_and(|p| p.0.loading());
-    for (mut face, piece) in &mut faces {
-        let bold = piece == Some(&Piece::Name);
+    for (mut face, piece, name) in &mut faces {
+        let bold = name || piece == Some(&Piece::Colon);
         let handle = if shown {
             fonts.face(if bold {
                 crate::theme::Face::Bold
@@ -836,19 +925,45 @@ fn chat_words<'a>(
     core: &Core,
     line: &'a Shown<'a>,
     texts: &Texts,
-) -> (String, String, Color, &'a str) {
+) -> (String, String, Option<String>, Color, &'a str, bool) {
     match line {
-        Shown::Heard(line, words) => (
-            tag(line),
-            format!(
-                "{}: ",
-                crate::seat_name::speaker_name(core, &line.heard.from, Some(texts))
-            ),
-            name_color(core, line),
-            *words,
+        Shown::Heard(line, words) => {
+            let (name, version) = match &line.heard.from {
+                bota_proto::Speaker::Seat(slot) => (
+                    crate::seat_name::base_seat_name(core, *slot, Some(texts)),
+                    core.player_version(*slot),
+                ),
+                speaker => (
+                    crate::seat_name::speaker_name(core, speaker, Some(texts)),
+                    None,
+                ),
+            };
+            (
+                tag(line),
+                name,
+                version.map(str::to_owned),
+                name_color(core, line),
+                *words,
+                true,
+            )
+        }
+        Shown::Notice(notice) => (
+            notice.prefix.clone(),
+            notice
+                .identity
+                .as_ref()
+                .map_or_else(String::new, |identity| identity.name.clone()),
+            notice
+                .identity
+                .as_ref()
+                .and_then(|identity| identity.version.clone()),
+            ui::INK,
+            notice.text.as_str(),
+            false,
         ),
-        Shown::Notice(notice) => (String::new(), String::new(), ui::INK, notice.text.as_str()),
-        Shown::Preview(name, tint, words) => (String::new(), format!("{name}: "), *tint, *words),
+        Shown::Preview(name, tint, words) => {
+            (String::new(), (*name).to_owned(), None, *tint, *words, true)
+        }
     }
 }
 
@@ -882,4 +997,85 @@ fn row_visibility(line: Option<&Shown<'_>>, reading: bool, node: &mut Node) -> f
         node.display = display;
     }
     alpha
+}
+
+/// The composed text actually drawn by each visible chat row, including its shared name widget.
+#[cfg(test)]
+pub(crate) fn shown_lines(world: &mut World) -> Vec<String> {
+    let rows: Vec<_> = world
+        .query::<(&Row, &Node, &Children, &InheritedVisibility)>()
+        .iter(world)
+        .filter(|(_, node, _, shown)| node.display != Display::None && shown.get())
+        .map(|(row, _, children, _)| (row.0, children.to_vec()))
+        .collect();
+    let mut output = Vec::new();
+    for (row, children) in rows {
+        let mut line = String::new();
+        for child in children {
+            if let Some(label) = world.get::<SpeakerLabel>(child) {
+                let name = world.get::<Text>(label.0.name).unwrap();
+                let version = world.get::<Text>(label.0.version).unwrap();
+                line.push_str(&name.0);
+                if !version.0.is_empty() {
+                    line.push(' ');
+                    line.push_str(&version.0);
+                }
+            } else if let Some(text) = world.get::<Text>(child) {
+                line.push_str(&text.0);
+            }
+        }
+        output.push((row, line));
+    }
+    output.sort_by_key(|(row, _)| *row);
+    output.into_iter().map(|(_, line)| line).collect()
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn a_recorded_bot_version_is_drawn_in_the_chat_speaker() {
+        let path = crate::postgame::recorded_version_match_for_menu();
+        let mut client = crate::e2e::harness::Client::run(&["--replay", path.to_str().unwrap()]);
+        client.until("the bot's recorded chat arrives", |client| {
+            client
+                .core()
+                .chat_lines()
+                .any(|line| matches!(&line.heard.line.body, Body::Text(text) if text == "hello"))
+        });
+        client.until("the replay is loaded", |client| {
+            client.world().resource::<crate::loading::Loading>().done()
+        });
+        client.frames(12);
+        let world = client.world_mut();
+        let labels: Vec<_> = world
+            .query::<&SpeakerLabel>()
+            .iter(world)
+            .map(|label| label.0)
+            .collect();
+        let label = labels
+            .into_iter()
+            .find(|label| {
+                world
+                    .get::<Text>(label.name)
+                    .is_some_and(|text| text.0 == "engine")
+            })
+            .expect("chat has a structured speaker widget");
+        assert_eq!(
+            world.get::<Text>(label.version).unwrap().0,
+            "v1.0.0 (buster)",
+            "{}",
+            crate::player_name::describe(world, label)
+        );
+        assert!(world.get::<ComputedNode>(label.root).unwrap().size().x > 0.0);
+        assert_eq!(
+            world.get::<TextFont>(label.name),
+            world.get::<TextFont>(label.version)
+        );
+        assert_eq!(
+            world.get::<TextColor>(label.version).unwrap().0,
+            crate::theme::version_color(world.get::<TextColor>(label.name).unwrap().0)
+        );
+    }
 }

@@ -112,6 +112,7 @@ pub struct LobbyRow {
     pub locked: bool,
     pub members: u8,
     pub seats: u8,
+    pub version: Option<String>,
 }
 
 /// A ruleset a lobby may be made for.
@@ -122,6 +123,13 @@ pub struct ModeRow {
     pub chosen: bool,
 }
 
+/// The member the owner is moving, named as the name widget draws a player.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MovingMember {
+    pub name: String,
+    pub version: Option<String>,
+}
+
 /// One member of a lobby, in a slot or looking on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemberRow {
@@ -130,6 +138,7 @@ pub struct MemberRow {
     pub name: String,
     pub ready: bool,
     pub me: bool,
+    pub version: Option<String>,
 }
 
 /// A slot of a team: free, or held by a member.
@@ -223,7 +232,7 @@ pub struct LobbyView {
     pub spectators: Vec<MemberRow>,
     pub owner: bool,
     /// The member the owner is moving: their next click on a slot puts them there.
-    pub moving: Option<String>,
+    pub moving: Option<MovingMember>,
     pub settings: SettingsView,
     pub me_ready: bool,
     /// Why the owner cannot start yet, as Dota's lobby says it.
@@ -242,6 +251,7 @@ pub struct SeatRow {
     /// `1512 (+12)` for a rated match.
     pub rating: String,
     pub mine: bool,
+    pub version: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -324,6 +334,7 @@ pub enum PageView {
     /// Ratings per ruleset and the ladder's head.
     Profile {
         name: String,
+        version: Option<String>,
         ratings: Vec<super::account_page::Rating>,
         read_only: bool,
         notice: Option<String>,
@@ -801,10 +812,16 @@ impl MenuCore {
     }
 
     fn profile_view(&self) -> PageView {
-        let name = self
-            .account_profile
-            .as_ref()
-            .map_or_else(|| self.name(), |p| text::who(&p.nickname, p.id.0));
+        let name = self.account_profile.as_ref().map_or_else(
+            || self.name(),
+            |p| {
+                if p.kind == bota_radovid::proto::AccountKind::Bot {
+                    text::line(&p.nickname, text::NAME)
+                } else {
+                    text::who(&p.nickname, p.id.0)
+                }
+            },
+        );
         let ratings = self.profile_ratings();
         let local = self.local_history.cards(self.library.records());
         let mut matches = local.as_ref().clone();
@@ -822,6 +839,10 @@ impl MenuCore {
         matches.sort_by_key(|row| std::cmp::Reverse(row.when));
         matches.truncate(50);
         PageView::Profile {
+            version: self
+                .account_profile
+                .as_ref()
+                .and_then(|profile| profile.version.clone()),
             name,
             ratings,
             avatar: self.avatar.view.clone(),
@@ -916,7 +937,12 @@ impl MenuCore {
             .seats
             .iter()
             .map(|s| SeatRow {
-                name: text::who(&s.nickname, s.account.0),
+                name: if s.kind == bota_radovid::proto::AccountKind::Bot {
+                    text::line(&s.nickname, text::NAME)
+                } else {
+                    text::who(&s.nickname, s.account.0)
+                },
+                version: s.version.clone(),
                 team: s.team,
                 hero_key: hero(s.slot),
                 rating: rating_change(s.before, s.after),
@@ -1091,6 +1117,7 @@ fn lobby_row(
         id: l.id,
         name: text::line(&l.name, text::NAME),
         owner: text::line(&l.owner_nickname, text::NAME),
+        version: l.version.clone(),
         ruleset: l.ruleset.clone(),
         mode: catalogue
             .iter()
@@ -1151,7 +1178,10 @@ fn lobby_view(
         settings: lobby_settings(state, catalogue, owner),
         moving: moving
             .and_then(|id| state.members.iter().take(256).find(|m| m.account == id))
-            .map(|m| text::line(&m.nickname, text::NAME)),
+            .map(|m| MovingMember {
+                name: text::line(&m.nickname, text::NAME),
+                version: m.version.clone(),
+            }),
         spectators,
         teams,
         starting_in_secs: Countdown(
@@ -1167,6 +1197,7 @@ fn lobby_member(member: &bota_radovid::proto::LobbyMember, me: Option<AccountId>
         account: member.account,
         bot: member.kind == bota_radovid::proto::AccountKind::Bot,
         name: text::line(&member.nickname, text::NAME),
+        version: member.version.clone(),
         ready: member.ready,
         me: Some(member.account) == me,
     }

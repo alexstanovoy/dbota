@@ -611,6 +611,29 @@ fn box_of(client: &mut Client, name: &str) -> bevy::math::Rect {
     bevy::math::Rect::from_center_size(at, size)
 }
 
+/// The killer's bot version stands beside its name in the banner, dimmer, drawn by the shared name
+/// widget like every other player name.
+#[test]
+fn a_bot_version_in_a_kill_banner_is_drawn_dimmer_beside_the_name() {
+    let (_server, mut client, sends) = arena(true);
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(100),
+        ));
+    let me = client.core().my_slot.expect("a seat");
+    client.core_mut().names = vec![(me, "engine".to_owned())];
+    client.core_mut().identities = vec![bota_proto::SeatIdentity {
+        slot: me,
+        name: "engine".to_owned(),
+        bot: true,
+        version: Some("v1.0.0 (buster)".to_owned()),
+    }];
+    kill_foe(&mut client, &sends);
+    client.frames(3);
+    crate::player_name::assert_drawn_version(&mut client, "engine", "v1.0.0 (buster)");
+}
+
 /// Names a server lets through (32 bytes, no control or bidi characters) that are as wide as
 /// names get, wide glyphs, right to left, or like markup, never push a message out of its
 /// column nor up under the top bar; they are cut with an ellipsis.

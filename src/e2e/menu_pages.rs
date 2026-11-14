@@ -1950,7 +1950,9 @@ fn profile_timeout_throttle_malformed_and_late_replies_keep_the_visitor_isolated
             nickname: nickname.into(),
             kind: AccountKind::Human,
             online: false,
-            bot_version: None,
+            retired_bot_version: None,
+            version: None,
+            main_account: None,
             ratings: Vec::new(),
             avatar: None,
         },
@@ -2012,7 +2014,9 @@ fn a_profile_reply_with_a_different_account_id_is_rejected() {
                     nickname: "wrong_player".into(),
                     kind: AccountKind::Human,
                     online: false,
-                    bot_version: None,
+                    retired_bot_version: None,
+                    version: None,
+                    main_account: None,
                     ratings: Vec::new(),
                     avatar: None,
                 },
@@ -2866,6 +2870,138 @@ fn the_served_long_mode_name_fits_with_visible_horizontal_padding() {
 }
 
 #[test]
+fn bot_version_is_next_to_the_name_in_the_same_font_and_a_dimmer_colour() {
+    use crate::main_menu::{PageView, Preview};
+    use bevy::prelude::*;
+    let mut client = design_preview("leaderboard");
+    let mut view = crate::main_menu::preview("leaderboard").unwrap();
+    let PageView::Leaderboard { board, .. } = &mut view.body else {
+        panic!("board")
+    };
+    board.query.players = crate::main_menu::LeaderboardPlayers::Bots;
+    board.rows.truncate(1);
+    board.own = None;
+    board.rows[0].nickname = "engine".into();
+    board.rows[0].version = Some("v1.0.0 (buster)".into());
+    client.world_mut().insert_resource(Preview(view));
+    client.frames(8);
+    let world = client.world_mut();
+    let runs: Vec<_> = world
+        .query::<(&Text, &TextFont, &TextColor, &UiGlobalTransform)>()
+        .iter(world)
+        .filter(|(text, _, _, _)| text.0 == "engine" || text.0 == "v1.0.0 (buster)")
+        .map(|(text, font, color, position)| {
+            (text.0.clone(), font.clone(), color.0, position.translation)
+        })
+        .collect();
+    assert_eq!(runs.len(), 2, "the name and version are separate text runs");
+    let name = runs.iter().find(|run| run.0 == "engine").unwrap();
+    let version = runs.iter().find(|run| run.0 == "v1.0.0 (buster)").unwrap();
+    assert_eq!(name.1, version.1, "version uses the name font");
+    assert_eq!(name.3.y, version.3.y, "runs occupy the same line");
+    assert_ne!(name.2, version.2);
+    assert!(LinearRgba::from(version.2).red < LinearRgba::from(name.2).red);
+    assert!(version.3.x > name.3.x);
+}
+
+#[test]
+fn bot_version_in_a_found_match_reaches_the_drawn_loading_roster() {
+    use bevy::prelude::*;
+    use bota_radovid::proto::*;
+    let mut client = local_menu();
+    let handoff = Handoff {
+        match_id: MatchId(77),
+        ruleset: RulesetId("solo_mid".into()),
+        rated: true,
+        game: "bota".into(),
+        game_url: "tcp://127.0.0.1:1".into(),
+        ticket: Ticket([1; 32]),
+        slot: 0,
+        team: 0,
+        game_fingerprint: bota_core::WIRE_FINGERPRINT,
+        seats: vec![SeatInfo {
+            retired_bot_version: None,
+            slot: 0,
+            team: 0,
+            account: AccountId(2),
+            nickname: "engine".into(),
+            kind: AccountKind::Bot,
+            version: Some("v1.0.0 (buster)".into()),
+            rating: None,
+        }],
+    };
+    let view = client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .bot_version_found_match_view(handoff);
+    client
+        .world_mut()
+        .insert_resource(crate::main_menu::Preview(view));
+    client.frames(8);
+    let world = client.world_mut();
+    let runs: Vec<_> = world
+        .query::<(
+            &Text,
+            &TextFont,
+            &TextColor,
+            &InheritedVisibility,
+            &ComputedNode,
+        )>()
+        .iter(world)
+        .filter(|(text, _, _, shown, node)| {
+            shown.get()
+                && node.size().x > 0.0
+                && (text.0 == "engine" || text.0 == "v1.0.0 (buster)")
+        })
+        .map(|(text, font, color, _, _)| (text.0.clone(), font.clone(), color.0))
+        .collect();
+    assert_eq!(runs.len(), 2, "a found bot match draws both name runs");
+    assert_eq!(runs[0].1, runs[1].1);
+    assert_ne!(runs[0].2, runs[1].2);
+}
+
+#[test]
+fn a_long_bot_version_uses_an_ellipsis_without_shrinking_the_name() {
+    use crate::main_menu::{PageView, Preview};
+    use bevy::prelude::*;
+    let mut client = design_preview("leaderboard-bots");
+    let mut view = crate::main_menu::preview("leaderboard-bots").unwrap();
+    let PageView::Leaderboard { board, .. } = &mut view.body else {
+        panic!("board")
+    };
+    board.rows.truncate(1);
+    board.own = None;
+    board.rows[0].nickname = "W".repeat(20);
+    board.rows[0].version = Some("W".repeat(32));
+    client.world_mut().insert_resource(Preview(view));
+    client.frames(12);
+    let world = client.world_mut();
+    assert!(
+        world
+            .query::<(&Text, &ComputedNode)>()
+            .iter(world)
+            .any(|(text, node)| text.0 == "W".repeat(20) && node.size().x > 0.0)
+    );
+    let runs: Vec<_> = world
+        .query::<(
+            &Text,
+            &ComputedNode,
+            &bevy::text::ComputedTextBlock,
+            &crate::player_name::VersionRun,
+        )>()
+        .iter(world)
+        .map(|(text, node, layout, _)| {
+            (text.0.clone(), node.size().x, layout.buffer().full_width())
+        })
+        .collect();
+    assert!(
+        runs.iter()
+            .any(|(text, _, _)| text.starts_with('W') && text.ends_with('…')),
+        "the available version width produces a real ellipsis: {runs:?}"
+    );
+}
+
+#[test]
 fn own_and_public_profile_headers_keep_the_player_identity_inside_the_header() {
     use bevy::prelude::*;
     for preview in ["profile", "profile_other"] {
@@ -2918,4 +3054,43 @@ fn own_and_public_profile_headers_keep_the_player_identity_inside_the_header() {
             "{preview}: the name is not clipped out of its identity block: {title_bounds:?}"
         );
     }
+}
+
+#[test]
+fn the_human_game_ui_never_sends_a_bot_version() {
+    let server = super::harness::Server::start(1, &[]);
+    let mut client = super::harness::Client::join(&server, bota_proto::HeroId::SHADOW_FIEND, &[]);
+    client.until(
+        "the game server identifies the human UI connection",
+        |client| client.core().seat_identity(bota_proto::SlotId(0)).is_some(),
+    );
+    let identity = client.core().seat_identity(bota_proto::SlotId(0)).unwrap();
+    assert!(!identity.bot);
+    assert_eq!(identity.version, None);
+}
+
+#[test]
+fn bot_versions_from_the_real_service_reach_the_drawn_leaderboard() {
+    let service = crate::main_menu::tests::service();
+    service.rated_bot_versions();
+    let mut client = super::menu::signed_up(&service, "version_viewer");
+    act(&mut client, Act::Go(Page::Leaderboard));
+    act(
+        &mut client,
+        Act::LeaderboardPlayers(crate::main_menu::LeaderboardPlayers::Bots),
+    );
+    client.until(
+        "both rated identities arrive through the leaderboard reply",
+        |client| {
+            let crate::main_menu::PageView::Leaderboard { board, .. } =
+                client.world().non_send::<MenuCore>().view().body
+            else {
+                return false;
+            };
+            board.rows.len() == 2
+        },
+    );
+    client.frames(12);
+    crate::player_name::assert_drawn_version(&mut client, "engine", "v1.0.0 (buster)");
+    crate::player_name::assert_drawn_version(&mut client, "engine", "v2");
 }

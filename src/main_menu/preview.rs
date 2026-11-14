@@ -105,7 +105,7 @@ fn hover_preview(
 }
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 56] = [
+pub const NAMES: [&str; 57] = [
     "service",
     "login",
     "register",
@@ -120,6 +120,7 @@ pub const NAMES: [&str; 56] = [
     "lobby-password",
     "lobby",
     "lobby-owner",
+    "lobby-moving",
     "lobby-edit",
     "lobby-start",
     "result",
@@ -319,7 +320,9 @@ pub fn view(name: &str) -> Option<MenuView> {
         "my-games" => preview_my_games(),
         "lobbies" => lobby::browser(false),
         "lobby-password" => lobby::browser(true),
-        "lobby" | "lobby-owner" | "lobby-edit" | "lobby-start" => lobby::room(name),
+        "lobby" | "lobby-owner" | "lobby-moving" | "lobby-edit" | "lobby-start" => {
+            lobby::room(name)
+        }
         "result" => preview_result(),
         "direct" => preview_direct(),
         "quit" => preview_quit(),
@@ -351,6 +354,7 @@ fn loading() -> crate::loading::Details {
             .into_iter()
             .enumerate()
             .map(|(at, name)| crate::loading::Row {
+                version: None,
                 slot: at as u8,
                 team: if at < 5 {
                     bota_proto::Team::Radiant
@@ -530,6 +534,7 @@ fn preview_result() -> MenuView {
             detail: "Match 40 · 14:21 · rated".to_owned(),
             seats: vec![
                 SeatRow {
+                    version: None,
                     name: "alice#12".to_owned(),
                     team: 0,
                     hero_key: "npc_dota_hero_nevermore".to_owned(),
@@ -537,6 +542,7 @@ fn preview_result() -> MenuView {
                     mine: true,
                 },
                 SeatRow {
+                    version: None,
                     name: "bob#7".to_owned(),
                     team: 1,
                     hero_key: "npc_dota_hero_pudge".to_owned(),

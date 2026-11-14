@@ -386,7 +386,7 @@ fn loading_chat_stays_in_the_lower_left_and_sends_through_the_real_game_connecti
     let world = client.world_mut();
     assert!(
         world
-            .query::<(&TextSpan, &ChildOf)>()
+            .query::<(&Text, &ChildOf)>()
             .iter(world)
             .any(|(text, parent)| {
                 text.0 == "gl hf"

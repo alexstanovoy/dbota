@@ -14,6 +14,7 @@ pub struct Row {
     pub slot: u8,
     pub team: Team,
     pub name: String,
+    pub version: Option<String>,
     pub bot: bool,
     pub connected: bool,
     pub me: bool,
@@ -39,15 +40,18 @@ impl Details {
 pub fn rows(core: &Core, texts: &crate::dota_text::Texts) -> Vec<Row> {
     let row = |slot: SlotId, team: Team, given: &str, role: Option<Role>| {
         let name = if given.is_empty() {
-            crate::seat_name::seat_name(core, slot, Some(texts))
+            crate::seat_name::base_seat_name(core, slot, Some(texts))
         } else {
             given.to_owned()
         };
         Row {
             slot: slot.0,
+            version: core.player_version(slot).map(str::to_owned),
             team,
             name: crate::main_menu::line(&name, crate::main_menu::text::NAME),
-            bot: role == Some(Role::Bot),
+            bot: core
+                .seat_identity(slot)
+                .map_or(role == Some(Role::Bot), |identity| identity.bot),
             connected: role.is_some(),
             me: core.my_slot == Some(slot),
         }

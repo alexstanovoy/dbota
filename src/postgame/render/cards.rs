@@ -154,6 +154,7 @@ pub fn mvp(kit: &mut Kit, parent: Entity, view: &View) {
         Node::default(),
         bold(48.0),
         theme::INK_1,
+        width - 140.0,
     );
     if mvp.bot == Some(true) {
         bot(kit, identity, Node::default());
@@ -437,6 +438,7 @@ fn card(
         Node::default(),
         bold(16.0),
         if own { theme::LINK.1 } else { theme::INK_1 },
+        width + 16.0,
     );
     if row.bot == Some(true) {
         bot(kit, identity, Node::default());

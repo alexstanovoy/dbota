@@ -582,17 +582,7 @@ fn team_pings_and_team_chat_follow_the_replay_pov() {
             );
         }
         let world = client.world_mut();
-        let shown = world
-            .query::<(&TextSpan, &ChildOf)>()
-            .iter(world)
-            .filter(|(_, parent)| {
-                world
-                    .get::<Node>(parent.parent())
-                    .is_some_and(|node| node.display != Display::None)
-            })
-            .map(|(span, _)| span.0.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let shown = crate::chat::shown_lines(world).join("\n");
         assert_eq!(shown.contains("radiant-private-marker"), pov != Some(1));
         assert_eq!(shown.contains("dire-private-marker"), pov != Some(0));
     }

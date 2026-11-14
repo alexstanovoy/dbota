@@ -24,6 +24,7 @@ pub enum Summary {
     Read {
         /// `Player (Shadow Fiend) vs Bot (Shadow Fiend)`.
         sides: Sides,
+        identities: Vec<bota_proto::SeatIdentity>,
         /// `Dire victory, 1:43`, or `unfinished, 0:52`.
         outcome: String,
     },
@@ -60,6 +61,7 @@ pub fn read(path: &Path) -> Summary {
     // No waiting on the recorded clock: everything is due at once.
     player.advance_ticks(f64::from(u32::MAX));
     let mut seats: Vec<bota_proto::LobbySlot> = Vec::new();
+    let mut identities = Vec::new();
     let mut picks: Vec<bota_proto::Pick> = Vec::new();
     let mut tick_rate = 30u32;
     let mut pregame = 0u32;
@@ -73,6 +75,11 @@ pub fn read(path: &Path) -> Summary {
         }
         for msg in batch {
             match msg {
+                ServerMsg::SeatIdentity(identity) => {
+                    identities
+                        .retain(|current: &bota_proto::SeatIdentity| current.slot != identity.slot);
+                    identities.push(identity);
+                }
                 ServerMsg::LobbyState { slots, .. } => seats = slots,
                 ServerMsg::MatchStart { info } => {
                     tick_rate = u32::from(info.tick_rate).max(1);
@@ -129,6 +136,7 @@ pub fn read(path: &Path) -> Summary {
     // The lobby's names where the replay has them; the match's picks else.
     let named = seats.iter().any(|s| !s.name.is_empty());
     Summary::Read {
+        identities,
         sides: Sides {
             players: String::new(),
             heroes: if named {

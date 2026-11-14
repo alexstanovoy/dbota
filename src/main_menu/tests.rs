@@ -201,7 +201,7 @@ args = ["--map", "0", "--mode", "lockstep", "--ack-timeout-ticks", "900",
         "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
         "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
-env = {{ BOTA_SEATS = "{{seats}}" }}
+env = {{ BOTA_SEATS = "{{seats_with_versions}}" }}
 
 [[ruleset]]
 id = "{RULESET}"
@@ -221,7 +221,7 @@ args = ["--map", "2", "--heroes", "1", "--mode", "lockstep", "--ack-timeout-tick
         "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
         "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
-env = {{ BOTA_SEATS = "{{seats}}" }}
+env = {{ BOTA_SEATS = "{{seats_with_versions}}" }}
 artifact = "{artifacts}/replay-{{match_id}}.brp"
 artifact_args = ["--replay", "{{artifact}}"]
 # The match's metadata, kept whether or not replays are.
@@ -246,7 +246,7 @@ public_url = "ws://127.0.0.1:{{port}}"
 version_probe = ["--wire-fingerprint"]
 args = ["--map", "2", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}"]
-env = {{ BOTA_SEATS = "{{seats}}" }}
+env = {{ BOTA_SEATS = "{{seats_with_versions}}" }}
 
 # Two against two: another ruleset to choose in a lobby.
 [[ruleset]]
@@ -263,7 +263,7 @@ public_url = "ws://127.0.0.1:{{port}}"
 version_probe = ["--wire-fingerprint"]
 args = ["--map", "0", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}"]
-env = {{ BOTA_SEATS = "{{seats}}" }}
+env = {{ BOTA_SEATS = "{{seats_with_versions}}" }}
 
 # Practice: the full Dota map, free pick. Lobbies of it start alone: the match has the host's seat and nobody against it.
 [[ruleset]]
@@ -284,7 +284,7 @@ args = ["--map", "0", "--mode", "lockstep", "--ack-timeout-ticks", "900",
         "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
         "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
-env = {{ BOTA_SEATS = "{{seats}}" }}
+env = {{ BOTA_SEATS = "{{seats_with_versions}}" }}
 artifact = "{artifacts}/replay-{{match_id}}.brp"
 artifact_args = ["--replay", "{{artifact}}"]
 
@@ -309,7 +309,7 @@ args = ["--map", "0", "--cheats", "--mode", "lockstep", "--ack-timeout-ticks", "
         "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}", "--abandon-unjoined", "--empty-after-secs", "{PATIENCE}",
         "--pick-secs", "1", "--tactical-secs", "0"]
-env = {{ BOTA_SEATS = "{{seats}}" }}
+env = {{ BOTA_SEATS = "{{seats_with_versions}}" }}
 "#,
         db = dir.join("radovid.db").display(),
         artifacts = dir.join("artifacts").display(),
@@ -710,7 +710,7 @@ fn both_keep_the_replay(alice: &mut Player, bob: &mut Player) {
         };
         assert_eq!(list.len(), 1);
         assert!(shelf.keeping && shelf.folder.ends_with("replays"));
-        let super::replay_info::Summary::Read { sides, outcome } = &list[0].summary else {
+        let super::replay_info::Summary::Read { sides, outcome, .. } = &list[0].summary else {
             panic!("{:?}", list[0].summary);
         };
         let sides = sides.text(&crate::dota_text::Texts::default());
@@ -3028,11 +3028,13 @@ pub(crate) fn service_with_two_rated_modes() -> Service {
 pub(crate) fn profile_with_only_one_mode(core: &mut MenuCore) {
     use bota_radovid::proto::{AccountId, AccountKind, PublicAccount, Rating, RatingSummary};
     core.account_profile = Some(PublicAccount {
+        retired_bot_version: None,
+        main_account: None,
         id: AccountId(1),
         nickname: "rated_player".to_owned(),
         kind: AccountKind::Human,
         online: false,
-        bot_version: None,
+        version: None,
         avatar: None,
         ratings: vec![(
             RulesetId("solo_mid".to_owned()),
@@ -3573,8 +3575,8 @@ pub(crate) fn portable_service() -> Service {
     service_with(|config| {
         format!("public_identity = \"wss://match.example/control\"\n{config}")
             .replace(
-                "BOTA_SEATS = \"{seats}\"",
-                "BOTA_SEATS = \"{seats}\", BOTA_PROFILE_ACCOUNTS = \"{accounts}\"",
+                "BOTA_SEATS = \"{seats_with_versions}\"",
+                "BOTA_SEATS = \"{seats_with_versions}\", BOTA_PROFILE_ACCOUNTS = \"{accounts}\"",
             )
             .replace(
                 "artifact_args = [\"--replay\", \"{artifact}\"]",
@@ -3905,4 +3907,80 @@ fn the_menu_bar_over_a_match_that_ended_does_not_offer_to_return_to_it() {
         None,
         "an ended one is not"
     );
+}
+
+#[test]
+fn replay_cards_retain_the_recorded_bot_version_as_an_identity() {
+    let replay = crate::postgame::recorded_version_match_for_menu();
+    let super::replay_info::Summary::Read { identities, .. } = super::replay_info::read(&replay)
+    else {
+        panic!("a complete replay");
+    };
+    assert_eq!(identities.len(), 1);
+    assert_eq!(identities[0].name, "engine");
+    assert_eq!(identities[0].version.as_deref(), Some("v1.0.0 (buster)"));
+}
+
+impl Service {
+    /// Seed real rating transactions; the client then reads these rows over the service protocol.
+    pub(crate) fn rated_bot_versions(&self) {
+        use bota_radovid::proto::{AccountKind, EndReason, Outcome};
+        use radovid::db::{Db, Finish, NewSeat};
+        self.runtime.block_on(async {
+            let db = Db::open(&self._dir.0.join("radovid.db")).unwrap();
+            let owner = db
+                .create_account(
+                    "engine".into(),
+                    "unused-fixture-hash".into(),
+                    AccountKind::Bot,
+                )
+                .await
+                .unwrap();
+            let opponent = db
+                .create_account(
+                    "opponent".into(),
+                    "unused-fixture-hash".into(),
+                    AccountKind::Human,
+                )
+                .await
+                .unwrap();
+            let ruleset = RulesetId("solo_mid".into());
+            for version in ["v1.0.0 (buster)", "v2"] {
+                let version = db
+                    .select_version(owner, version.into())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let seats = vec![
+                    NewSeat {
+                        account: version.id,
+                        slot: 0,
+                        team: 0,
+                    },
+                    NewSeat {
+                        account: opponent,
+                        slot: 1,
+                        team: 1,
+                    },
+                ];
+                let match_id = db
+                    .create_match(ruleset.clone(), true, seats.clone())
+                    .await
+                    .unwrap();
+                db.finish_match(Finish {
+                    match_id,
+                    ruleset: ruleset.clone(),
+                    rate: true,
+                    outcome: Outcome::Winner { team: 0 },
+                    reason: EndReason::Decided,
+                    duration_ms: 1000,
+                    report: Vec::new(),
+                    seats,
+                    finished_at: radovid::db::now_ms(),
+                })
+                .await
+                .unwrap();
+            }
+        });
+    }
 }

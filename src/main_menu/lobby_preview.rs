@@ -71,6 +71,7 @@ fn browser_rows() -> Vec<LobbyRow> {
     .enumerate()
     .map(
         |(index, (name, host, id, mode, locked, members, seats))| LobbyRow {
+            version: None,
             id: LobbyId(index as u32 + 1),
             name: name.into(),
             owner: host.into(),
@@ -114,6 +115,7 @@ pub(super) fn browser(password: bool) -> MenuView {
 
 fn member(account: u64, name: &str, ready: bool, me: bool) -> MemberRow {
     MemberRow {
+        version: None,
         bot: false,
         account: AccountId(account),
         name: name.into(),
@@ -173,7 +175,10 @@ pub(super) fn room(name: &str) -> MenuView {
             member(4, "hookline#4", false, false),
         ],
         owner,
-        moving: None,
+        moving: (name == "lobby-moving").then(|| crate::main_menu::view::MovingMember {
+            name: "quartz#55".into(),
+            version: Some("v3.1".into()),
+        }),
         settings: SettingsView {
             mode: "All Pick".into(),
             audience: "Humans and bots",
@@ -247,20 +252,23 @@ fn chat() -> ChatView {
     ]
     .into_iter()
     .map(|(id, name)| Person {
+        version: None,
         account: AccountId(id),
         name: name.into(),
     })
     .collect();
     let lines = [
-        (1262, None, "", "tamsin#3311 joined the lobby."),
+        (1262, None, "tamsin#3311", "joined the lobby."),
         (1262, Some(118), "kestrel#118", "two more and we start"),
         (1263, Some(90), "owlbear#90", "I'll take Dire 2"),
-        (1263, None, "", "kestrel#118 set the mode to All Pick."),
+        (1263, None, "kestrel#118", "set the mode to All Pick."),
         (1264, Some(2207), "mira#2207", "ready when you are"),
         (1264, Some(3311), "tamsin#3311", "gl hf"),
     ]
     .into_iter()
     .map(|(minute, account, name, message)| Line {
+        // The joiner is a bot: its line shows the version dimmer beside the name.
+        version: (account.is_none() && name == "tamsin#3311").then(|| "v3.1".to_owned()),
         minute,
         account: account.map(AccountId),
         name: name.into(),

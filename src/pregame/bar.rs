@@ -53,9 +53,12 @@ struct SeatPicture {
 /// The tint of a hero that is only chosen.
 const PREVIEW: Color = Color::srgba(0.42, 0.47, 0.54, 0.55);
 
-/// The name of a seat's player.
+/// The widest a seat's name and version may draw, in the screenshot's pixels.
+const SEAT_NAME_WIDTH: f32 = 320.0;
+
+/// The name widget of a seat's player: its name and, dimmer, its bot version.
 #[derive(Component)]
-struct SeatName(SlotId);
+struct SeatName(SlotId, crate::player_name::Label);
 
 /// What a bar is built for: who sits where. A bar is built again when it changes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -249,33 +252,38 @@ fn spawn_seat(
         ));
     }
     let ink = if local { theme::INK_1 } else { theme::INK_4 };
-    commands.spawn((
-        SeatName(slot),
-        shot.text(
-            kit,
-            "",
-            (
-                if local {
-                    theme::Face::Bold
-                } else {
-                    theme::Face::Regular
-                },
-                r::SEAT_NAME[1],
-                0.0,
-            ),
-            ink,
-        ),
-        Node {
-            margin: UiRect::top(shot.val(r::SEAT_NAME[0] - height)),
-            ..default()
+    let label = crate::player_name::inline_within(
+        commands,
+        kit.fonts,
+        column,
+        ("", None),
+        theme::Type {
+            face: if local {
+                theme::Face::Bold
+            } else {
+                theme::Face::Regular
+            },
+            size: shot.size(r::SEAT_NAME[1]),
+            tracking: 0.0,
+            figures: false,
         },
-        TextShadow {
+        ink,
+        shot.size(SEAT_NAME_WIDTH),
+    );
+    commands
+        .entity(label.root)
+        .insert(SeatName(slot, label))
+        .entry::<Node>()
+        .and_modify(move |mut node| {
+            node.margin = UiRect::top(shot.val(r::SEAT_NAME[0] - height));
+            node.column_gap = shot.val(6.0);
+        });
+    for part in [label.name, label.version] {
+        commands.entity(part).insert(TextShadow {
             offset: Vec2::new(0.0, 1.0),
             color: Color::BLACK,
-        },
-        Pickable::IGNORE,
-        ChildOf(column),
-    ));
+        });
+    }
 }
 
 /// The ground of a seat before its hero is known.
@@ -300,7 +308,8 @@ fn refresh(
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     mut pictures: Query<(&mut SeatPicture, &mut ImageNode)>,
-    mut names: Query<(&SeatName, &mut Text)>,
+    names: Query<&SeatName>,
+    mut parts: Query<(&mut Text, Option<&mut crate::player_name::VersionRun>)>,
 ) {
     let core = &session.0;
     for (mut seat, mut image) in &mut pictures {
@@ -326,14 +335,13 @@ fn refresh(
             None => ImageNode::default().with_color(Color::NONE),
         };
     }
-    for (SeatName(slot), mut text) in &mut names {
-        let name = core
-            .lobby
-            .slots
-            .iter()
-            .find(|s| s.slot == *slot)
-            .map(|s| s.name.as_str())
-            .unwrap_or_default();
-        text.set_if_neq(Text::new(name));
+    for SeatName(slot, label) in &names {
+        let seat = core.lobby.slots.iter().find(|s| s.slot == *slot);
+        if let Ok((mut text, _)) = parts.get_mut(label.name) {
+            text.set_if_neq(Text::new(seat.map(|s| s.name.as_str()).unwrap_or_default()));
+        }
+        if let Ok((mut text, Some(mut version))) = parts.get_mut(label.version) {
+            version.set(core.player_version(*slot), &mut text);
+        }
     }
 }

@@ -1252,6 +1252,75 @@ fn a_large_mode_catalogue_keeps_bounded_rows_and_scrolls_to_the_last_choice() {
 }
 
 #[test]
+fn a_room_line_about_a_bot_draws_its_version_dimmer_beside_the_name() {
+    let mut client = Client::run(&["--menu-preview", "lobby-owner"]);
+    client.frames(12);
+    let world = client.world_mut();
+    let mut texts = world.query::<(&Text, &TextColor, &UiGlobalTransform, &InheritedVisibility)>();
+    let drawn: Vec<_> = texts
+        .iter(world)
+        .filter(|(_, _, _, shown)| shown.get())
+        .collect();
+    let find = |wanted: &str| {
+        drawn
+            .iter()
+            .find(|(text, ..)| text.0 == wanted)
+            .unwrap_or_else(|| panic!("{wanted:?} is drawn"))
+    };
+    let (_, _, rest_at, _) = find("joined the lobby.");
+    let on_the_line = |wanted: &str| {
+        drawn
+            .iter()
+            .find(|(text, _, at, _)| {
+                text.0 == wanted && (at.translation.y - rest_at.translation.y).abs() < 1.0
+            })
+            .unwrap_or_else(|| panic!("{wanted:?} is drawn on the room line"))
+    };
+    let (_, name_ink, name_at, _) = on_the_line("tamsin#3311");
+    let (_, version_ink, version_at, _) = on_the_line("v3.1");
+    assert!(name_at.translation.x < version_at.translation.x);
+    assert!(version_at.translation.x < rest_at.translation.x);
+    assert!(
+        LinearRgba::from(version_ink.0).red < LinearRgba::from(name_ink.0).red,
+        "the version is dimmer than the name"
+    );
+}
+
+#[test]
+fn the_move_prompt_draws_the_member_version_dimmer_beside_the_name() {
+    let mut client = Client::run(&["--menu-preview", "lobby-moving"]);
+    client.frames(12);
+    let world = client.world_mut();
+    let mut texts = world.query::<(&Text, &TextColor, &UiGlobalTransform, &InheritedVisibility)>();
+    let drawn: Vec<_> = texts
+        .iter(world)
+        .filter(|(_, _, _, shown)| shown.get())
+        .collect();
+    let (_, _, lead_at, _) = *drawn
+        .iter()
+        .find(|(text, ..)| text.0 == "Choose a free slot for")
+        .expect("the prompt is drawn");
+    let on_the_line = |wanted: &str| {
+        *drawn
+            .iter()
+            .find(|(text, _, at, _)| {
+                text.0 == wanted && (at.translation.y - lead_at.translation.y).abs() < 1.0
+            })
+            .unwrap_or_else(|| panic!("{wanted:?} is drawn on the prompt line"))
+    };
+    let (_, name_ink, name_at, _) = on_the_line("quartz#55");
+    let (_, version_ink, version_at, _) = on_the_line("v3.1");
+    let (_, _, tail_at, _) = on_the_line(", or SPECTATE");
+    assert!(lead_at.translation.x < name_at.translation.x);
+    assert!(name_at.translation.x < version_at.translation.x);
+    assert!(version_at.translation.x < tail_at.translation.x);
+    assert!(
+        LinearRgba::from(version_ink.0).red < LinearRgba::from(name_ink.0).red,
+        "the version is dimmer than the name"
+    );
+}
+
+#[test]
 fn the_room_fits_its_two_spectators_and_aligns_the_dire_heading_to_the_right() {
     let mut client = Client::run(&["--menu-preview", "lobby-owner"]);
     client.frames(8);
@@ -1584,6 +1653,7 @@ fn hostile_lobby_lists_are_bounded_before_storage_keyboard_or_drawing() {
     act(&mut alice, Act::Go(Page::Lobbies));
     let mut list: Vec<_> = (0..1000)
         .map(|id| LobbySummary {
+            version: None,
             id: LobbyId(id),
             name: format!("Room {id}"),
             ruleset: RulesetId("full".into()),
@@ -1791,6 +1861,7 @@ fn a_late_password_refusal_cannot_close_a_different_lobby_dialog() {
     let mut alice = signed_up(&service, "alice");
     let list = (1..=2)
         .map(|id| LobbySummary {
+            version: None,
             id: LobbyId(id),
             name: format!("Locked {id}"),
             ruleset: RulesetId("full".into()),

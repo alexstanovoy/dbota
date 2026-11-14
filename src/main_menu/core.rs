@@ -2870,6 +2870,10 @@ pub fn error_text(error: &Error) -> String {
         Error::BadLogin => "A login is 3 to 20 characters: a-z, 0-9 and _".to_owned(),
         Error::WeakPassword => "A password is 8 to 128 characters".to_owned(),
         Error::BadSession => "Your login has expired: log in again".to_owned(),
+        Error::VersionRequired => "A bot account must choose a version".to_owned(),
+        Error::VersionNotAllowed => "Human accounts cannot choose a bot version".to_owned(),
+        Error::BadVersion => error.to_string(),
+        Error::VersionLimit => error.to_string(),
         Error::TooManySessions => "This account is logged in in too many places".to_owned(),
         Error::Throttled { retry_after_ms } | Error::RateLimited { retry_after_ms } => {
             format!("Too many attempts: try again in {} s", secs(retry_after_ms))
@@ -3101,6 +3105,7 @@ impl MenuCore {
                         bota_proto::Team::Dire
                     },
                     name: text::line(&seat.nickname, text::NAME),
+                    version: seat.version.clone(),
                     bot: seat.kind == AccountKind::Bot,
                     connected: false,
                     me: seat.slot == handoff.slot,
@@ -3333,7 +3338,9 @@ mod identity_alias_tests {
             nickname: "stranger".into(),
             kind: bota_radovid::proto::AccountKind::Human,
             online: false,
-            bot_version: None,
+            retired_bot_version: None,
+            version: None,
+            main_account: None,
             ratings: Vec::new(),
             avatar: None,
         };
@@ -3373,5 +3380,14 @@ impl MenuCore {
     }
     pub(crate) fn list_clock_for_test(&mut self, now: Instant) {
         self.list_cache.now = Some(now);
+    }
+
+    pub(crate) fn bot_version_found_match_view(
+        &mut self,
+        handoff: Handoff,
+    ) -> super::view::MenuView {
+        self.event(Event::MatchFound { handoff });
+        self.take_launch().expect("the found match starts loading");
+        self.view()
     }
 }

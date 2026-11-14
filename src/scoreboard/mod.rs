@@ -238,10 +238,20 @@ fn rows(
 fn texts(
     labels: Res<crate::dota_text::Texts>,
     lines: Res<Rows>,
-    mut texts: Query<(&At, &Field, &mut Text, &mut TextColor)>,
+    mut texts: Query<(
+        &At,
+        &Field,
+        &mut Text,
+        &mut TextColor,
+        Option<&mut crate::player_name::VersionRun>,
+    )>,
 ) {
-    for (at, field, mut text, mut color) in &mut texts {
+    for (at, field, mut text, mut color, version) in &mut texts {
         let line = line_at(&lines.0, at);
+        if let Some(mut version) = version {
+            version.set(line.and_then(|line| line.version.as_deref()), &mut text);
+            continue;
+        }
         let s = line
             .map(|l| text_of(l, *field, &labels))
             .unwrap_or_default();

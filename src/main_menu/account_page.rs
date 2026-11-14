@@ -19,6 +19,8 @@ pub struct Rating {
 
 pub struct Profile<'a> {
     pub name: &'a str,
+    /// The version of a bot account, drawn dimmer beside the name.
+    pub version: Option<&'a str>,
     pub connected: bool,
     pub read_only: bool,
     pub ratings: &'a [Rating],
@@ -28,6 +30,9 @@ pub struct Profile<'a> {
     pub avatar: &'a super::avatar::View,
     pub notice: Option<&'a str>,
 }
+
+/// The widest the profile's name may draw.
+const PROFILE_NAME_WIDTH: f32 = 560.0;
 
 pub fn profile(kit: &mut Kit, root: Entity, data: Profile<'_>, clock: super::page_time::Clock) {
     let page = kit.node(
@@ -102,11 +107,17 @@ fn profile_header(kit: &mut Kit, parent: Entity, data: &Profile<'_>) {
             ..default()
         },
     );
-    let title = kit.bold(name, data.name, 28.0, theme::INK_1);
-    kit.commands.entity(title).insert(TextLayout {
-        linebreak: LineBreak::NoWrap,
-        ..default()
-    });
+    kit.inline_player_name(
+        name,
+        (data.name, data.version),
+        theme::Type {
+            size: 28.0,
+            face: theme::Face::Bold,
+            ..theme::BODY
+        },
+        theme::INK_1,
+        PROFILE_NAME_WIDTH,
+    );
     kit.typed(name, "MATCHES", theme::CAPTION, theme::INK_4);
     if data.connected {
         header_ratings(kit, header, data.ratings);

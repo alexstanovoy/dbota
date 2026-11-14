@@ -13,10 +13,14 @@ use super::{
 use crate::dota_text::{Part, Texts};
 use crate::manifest::Manifest;
 use crate::player_colour::PlayerColours;
-use crate::seat_name::seat_name;
 
 /// One pair of a message: an icon (a cache path), a text and how they are drawn.
-type Pair = (Option<String>, String, Style);
+type Pair = (
+    Option<String>,
+    String,
+    Style,
+    Option<bota_proto::SeatIdentity>,
+);
 
 /// The message of a line that goes in the toast column, drawn with Dota's words where the cache
 /// has them and the client's own otherwise.
@@ -63,8 +67,8 @@ pub(super) fn toast(
 fn arrange(pairs: Vec<Pair>) -> (Laid, Styles) {
     let mut laid: Laid = Default::default();
     let mut styles = Styles::default();
-    for (at, (icon, text, style)) in pairs.into_iter().take(SLOTS).enumerate() {
-        laid[at] = (icon, text);
+    for (at, (icon, text, style, identity)) in pairs.into_iter().take(SLOTS).enumerate() {
+        laid[at] = (icon, text, identity);
         styles[at] = style;
     }
     (laid, styles)
@@ -88,13 +92,14 @@ fn actor(
     match by {
         Some(slot) => (
             hero_icon(core, manifest, slot),
-            seat_name(core, slot, texts),
+            String::new(),
             Style {
                 ink: core
                     .view()
                     .map_or(bevy::color::Color::WHITE, |view| colours.of(view, slot)),
                 plate: false,
             },
+            Some(super::identity(core, slot, texts)),
         ),
         None => (
             None,
@@ -103,6 +108,7 @@ fn actor(
                 ink: crate::overlay::team_color(team),
                 plate: false,
             },
+            None,
         ),
     }
 }
@@ -116,11 +122,12 @@ fn mark(manifest: &Manifest, icon: Option<String>) -> Pair {
             plate: true,
             ..Style::default()
         },
+        None,
     )
 }
 
 fn words(text: impl Into<String>) -> Pair {
-    (None, text.into(), Style::default())
+    (None, text.into(), Style::default(), None)
 }
 
 /// A hero's streak ended: the fallen hero by its icon and its name, and Dota's words of the streak
@@ -156,12 +163,18 @@ fn number(figure: impl ToString) -> Pair {
             ink: NUMBER_INK,
             plate: false,
         },
+        None,
     )
 }
 
 /// The gold coin before a word that follows a sum.
 fn coin(manifest: &Manifest, then: &str) -> Pair {
-    (manifest.file("hud.gold"), then.to_owned(), Style::default())
+    (
+        manifest.file("hud.gold"),
+        then.to_owned(),
+        Style::default(),
+        None,
+    )
 }
 
 /// A tower or a barracks that fell: its destroyer when a seat, the sword of the side that struck it,
@@ -187,7 +200,7 @@ fn structure(
         .into_iter()
         .filter_map(|part| match part {
             Part::Text(text) => Some(text),
-            Part::Icon(_) => None,
+            Part::Icon(_) | Part::Identity(_) => None,
         })
         .collect();
     let sword = icon_file(core, "killed_icon", kind).and_then(|logical| manifest.file(logical));

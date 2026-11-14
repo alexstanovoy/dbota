@@ -93,6 +93,7 @@ fn identity(kit: &mut Kit, parent: Entity, view: &View, row: &Row) {
         Node::default(),
         bold(28.0),
         if own { theme::LINK.1 } else { theme::INK_1 },
+        252.0,
     );
     if row.bot == Some(true) {
         bot(kit, identity, Node::default());
@@ -432,22 +433,54 @@ fn kills(kit: &mut Kit, parent: Entity, view: &View, row: &Row) {
         );
         let other =
             if killed { event.victim } else { event.killer }.and_then(|slot| view.row(slot));
-        let who = other.map_or_else(
-            || "Other unit".to_owned(),
-            |other| format!("{} · {}", other.hero_name(kit.texts), other.display_name()),
-        );
-        let text = words(
-            kit,
+        let line = kit.node(
             content,
-            format!("{} {who}", if killed { "Killed" } else { "Died to" }),
             Node {
+                column_gap: px(4),
+                align_items: AlignItems::Center,
                 overflow: Overflow::clip(),
-                ..area(96.0, y + 8.0, 275.0, 18.0)
+                ..area(96.0, y + 8.0, 265.0, 18.0)
             },
+        );
+        words(
+            kit,
+            line,
+            if killed { "Killed" } else { "Died to" },
+            Node::default(),
             body(13.0),
             theme::INK_1,
         );
-        kit.commands.entity(text).insert(TextLayout::no_wrap());
+        if let Some(other) = other {
+            words(
+                kit,
+                line,
+                format!("{} ·", other.hero_name(kit.texts)),
+                Node {
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                body(13.0),
+                theme::INK_1,
+            );
+            crate::player_name::inline(
+                &mut kit.commands,
+                kit.fonts,
+                line,
+                &other.display_name(),
+                other.version.as_deref(),
+                body(13.0),
+                theme::INK_1,
+            );
+        } else {
+            words(
+                kit,
+                line,
+                "Other unit",
+                Node::default(),
+                body(13.0),
+                theme::INK_1,
+            );
+        }
         if killed && event.gold > 0 {
             let value = words(
                 kit,
