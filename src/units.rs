@@ -1700,6 +1700,7 @@ pub(crate) mod tests {
             forced: None,
             channel: None,
             creep_tier: None,
+            action_phase: None,
             seen_by: None,
             attack_range: fixed(150),
             attack_time: 1700,
