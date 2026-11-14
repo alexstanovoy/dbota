@@ -1472,24 +1472,17 @@ fn matchmaking_snapshot(
 
 fn matchmaking_switch_is_on(client: &mut Client) -> bool {
     let world = client.world_mut();
-    let track = world
-        .query_filtered::<(&Name, &Children), With<Button>>()
+    let row = world
+        .query_filtered::<(Entity, &Name), With<Button>>()
         .iter(world)
-        .find(|(name, _)| name.as_str() == "allow matchmaking with bots")
-        .and_then(|(_, children)| children.first().copied())
-        .expect("the drawn switch track");
-    let knob = world
-        .get::<Children>(track)
-        .and_then(|children| children.first().copied())
-        .expect("the drawn knob");
-    let centre = |entity| {
-        world
-            .get::<UiGlobalTransform>(entity)
-            .expect("the switch is laid out")
-            .translation
-            .x
-    };
-    centre(knob) > centre(track)
+        .find(|(_, name)| name.as_str() == "allow matchmaking with bots")
+        .map(|(entity, _)| entity)
+        .expect("the drawn bots checkbox");
+    super::harness::subtree(world, row)
+        .into_iter()
+        .find_map(|entity| world.get::<crate::ui::checkbox::State>(entity))
+        .expect("the shared checkbox in the row")
+        .checked
 }
 
 fn assert_matchmaking_preference_survives_reload(
@@ -1806,6 +1799,13 @@ fn play_stacks_custom_lobbies_ranked_and_unranked_with_one_section_open() {
             && !shown.iter().any(|text| text == "1X1 MID ONLY"),
         "opening Unranked closes Ranked: {shown:?}"
     );
+    for once in ["UNRANKED MID", "Allow matchmaking with bots"] {
+        assert_eq!(
+            shown.iter().filter(|text| *text == once).count(),
+            1,
+            "one open section lists its queues once, not one body per section: {shown:?}"
+        );
+    }
     click_menu_button(&mut client, "custom lobbies");
     let shown = drawer_texts(&mut client);
     assert!(

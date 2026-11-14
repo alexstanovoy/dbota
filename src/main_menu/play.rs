@@ -208,14 +208,29 @@ fn matchmaking(kit: &mut Kit, parent: Entity, view: &MenuView, rulesets: &[Rules
     kit.commands
         .entity(body)
         .insert(BackgroundColor(theme::PLAY_BODY));
-    kit.typed(
+    let meaning = kit.node(
         body,
+        Node {
+            align_items: AlignItems::Center,
+            column_gap: px(6),
+            ..default()
+        },
+    );
+    kit.typed(
+        meaning,
         match view.play.section {
             Section::Unranked => "Matches by rating, more loosely, and never changes it.",
             _ => "Changes your rating for the mode.",
         },
         theme::BODY,
         theme::INK_3,
+    );
+    info(
+        kit,
+        meaning,
+        "About ranked and unranked",
+        "Ranked changes your rating for the mode. Unranked also matches by rating, more loosely, and never changes it.",
+        false,
     );
     let available: Vec<_> = rulesets
         .iter()
@@ -273,65 +288,25 @@ fn queue_row(
 }
 
 fn bots(kit: &mut Kit, parent: Entity, on: bool) {
-    let button = kit.node(
+    let row = super::lobby_widgets::check(
+        kit,
         parent,
-        Node {
-            min_height: px(44),
-            align_items: AlignItems::Center,
-            column_gap: px(10),
-            padding: UiRect::left(px(8)),
-            margin: UiRect::top(px(2)),
-            border: UiRect::top(px(1)),
-            ..default()
-        },
-    );
-    kit.commands.entity(button).insert((
-        Button,
-        Pickable::default(),
-        MenuButton(Act::Play(PlayAction::Bots)),
-        Name::new("allow matchmaking with bots"),
-        BorderColor::all(theme::DIVIDER),
-    ));
-    let track = kit.node(
-        button,
-        Node {
-            width: px(40),
-            height: px(22),
-            padding: UiRect::all(px(3)),
-            align_items: AlignItems::Center,
-            justify_content: if on {
-                JustifyContent::FlexEnd
-            } else {
-                JustifyContent::FlexStart
-            },
-            border_radius: BorderRadius::all(px(12)),
-            border: UiRect::all(px(1)),
-            flex_shrink: 0.0,
-            ..default()
-        },
-    );
-    kit.commands.entity(track).insert((
-        BackgroundColor(if on { theme::GO.1 } else { theme::FIELD }),
-        BorderColor::all(theme::FIELD_EDGE),
-    ));
-    let knob = kit.node(
-        track,
-        Node {
-            width: px(16),
-            height: px(16),
-            border_radius: BorderRadius::all(px(8)),
-            ..default()
-        },
+        "Allow matchmaking with bots",
+        on,
+        Act::Play(PlayAction::Bots),
     );
     kit.commands
-        .entity(knob)
-        .insert(BackgroundColor(theme::INK_1));
-    kit.typed(
-        button,
-        "Allow matchmaking with bots",
-        theme::BODY,
-        theme::INK_1,
-    );
+        .entity(row)
+        .entry::<Node>()
+        .and_modify(|mut n| {
+            n.min_height = px(44);
+            n.padding = UiRect::left(px(8));
+            n.margin = UiRect::top(px(2));
+            n.border = UiRect::top(px(1));
+        });
+    kit.commands
+        .entity(row)
+        .insert(BorderColor::all(theme::DIVIDER));
 }
 
 fn lobby_links(kit: &mut Kit, parent: Entity, online: bool, can_host: bool) {
