@@ -44,6 +44,8 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
   caption and its three links (Windows, Linux, macOS) pointing where `native.js` says.
 * `--served-page` (any build): with `?cache=http` the page fetches the served cache's index.txt and
   publishes it to the client; a missing or invalid index ends startup with an error.
+* `--launch-page` (any build): the WebGL2 client starts and draws its first frames with no panic; a panic fails
+  at once with its message.
 * `--startup-page` (any build): the page loads the WebGPU client, or the WebGL2 one with
   `?gpu=webgl2`, and each draws; a browser without graphics, a renderer that cannot be made (the
   page then offers the WebGL2 client, which runs) and a client out of memory each end with a
@@ -1113,6 +1115,27 @@ def check_startup_page(directory):
         print("out of memory: said on the page")
 
 
+def check_launch_page(directory):
+    """The client starts and draws its first frames on the browser's own clock and storage: a panic on
+    the way (a wall-clock read the browser's wasm does not have, say) fails at once with its message,
+    not after the long wait for a first frame that never comes."""
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        page.goto(base + "?cache=http&gpu=webgl2")
+        deadline = time.time() + 600
+        while time.time() < deadline and not any("dbota: running" in c for c in console):
+            panics = [c for c in console if "panicked at" in c]
+            assert not panics and not problems, (panics, problems)
+            page.wait_for_timeout(250)
+        assert any("dbota: running" in c for c in console), "the client never drew a first frame"
+        page.wait_for_timeout(3000)
+        panics = [c for c in console if "panicked at" in c]
+        assert not panics and not problems, (panics, problems)
+        print("launch: the client draws its first frames, no panic")
+        browser.close()
+    server.shutdown()
+
+
 def check_boot_page(directory):
     """The page never spins for ever: each way the start can go wrong ends on the failure screen or the
     asset screen, saying which stage failed. A part of the page that does not load, a page that never
@@ -1980,6 +2003,7 @@ def main():
     ap.add_argument("--served-page", type=pathlib.Path, help="any build: ?cache=http publishes the served cache's index")
     ap.add_argument("--fonts-page", type=pathlib.Path, help="any build: the page holds its interface fonts")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
+    ap.add_argument("--launch-page", type=pathlib.Path, help="any build: the client starts and draws without a panic")
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
     ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
     ap.add_argument("--cursor-input-page", type=pathlib.Path, help="a replay build: the cursor with a real mouse (X server)")
@@ -2007,6 +2031,8 @@ def main():
         check_start_page(args.start_page)
     if args.served_page:
         check_served_cache(args.served_page)
+    if args.launch_page:
+        check_launch_page(args.launch_page)
     if args.startup_page:
         check_startup_page(args.startup_page)
     if args.fonts_page:
