@@ -247,7 +247,7 @@ impl EventSight<'_> {
         let told = view.viewer.is_some();
         let shown = |default| self.shown(subject, told, default);
         match *event {
-            EventKind::ItemState { .. } => shown(false),
+            EventKind::RetiredItemState { .. } => shown(false),
             EventKind::Landed { at, .. }
             | EventKind::TreeFelled { at, .. }
             | EventKind::TreeGrew { at }

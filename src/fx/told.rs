@@ -61,6 +61,7 @@ fn follow(
 }
 
 /// What an event says happened, in the terms the lines are keyed by.
+#[derive(Clone)]
 struct Fact {
     trigger: Trigger,
     /// The ability or item the event is about.
@@ -134,13 +135,21 @@ impl Fact {
                 target,
                 inflictor,
                 ..
-            } => Fact {
-                trigger: Trigger::Hit,
-                by: *inflictor,
-                caster: *source,
-                unit: Some(*target),
-                ..blank
-            },
+            } => {
+                if inflictor.is_some_and(|by| {
+                    matches!(by, Inflictor::Item(item)
+                    if recovery(item).is_some())
+                }) {
+                    return None;
+                }
+                Fact {
+                    trigger: Trigger::Hit,
+                    by: *inflictor,
+                    caster: *source,
+                    unit: Some(*target),
+                    ..blank
+                }
+            }
             EventKind::Died { unit, .. } => Fact {
                 trigger: Trigger::Died,
                 named: Some(*unit),
@@ -195,6 +204,59 @@ impl Fact {
             _ => return None,
         })
     }
+}
+
+fn recovery(item: ItemId) -> Option<bota_core::AreaSupport> {
+    match bota_core::item_def(item)?.effect {
+        bota_core::UseSpec::Support(support)
+            if (support.health > 0 || support.mana > 0)
+                && support.reaches == bota_core::Reach::Combatants =>
+        {
+            Some(support)
+        }
+        _ => None,
+    }
+}
+
+// Recovery cues describe the visible use area even when no pool needed restoring.
+fn presentation_facts(event: &EventKind, views: &Views) -> Vec<Fact> {
+    let mut facts: Vec<_> = Fact::of(event, views).into_iter().collect();
+    let EventKind::ItemUsed {
+        caster: Some(caster),
+        item,
+        ..
+    } = event
+    else {
+        return facts;
+    };
+    let Some(support) = recovery(*item) else {
+        return facts;
+    };
+    let Some(source) = views.now.unit(*caster) else {
+        return facts;
+    };
+    let radius = bota_core::rules::units(bota_core::widened(
+        support.radius,
+        bota_client_core::carried_of(source).aoe_bonus,
+    ));
+    let Some(used) = facts.first().cloned() else {
+        return facts;
+    };
+    for target in &views.now.units {
+        let kind = bota_core::kind_def(target.kind);
+        if target.hp > 0
+            && target.team == source.team
+            && (target.kind == bota_proto::UnitKind::Hero || kind.creep)
+            && target.pos.within(source.pos, radius)
+        {
+            facts.push(Fact {
+                trigger: Trigger::Hit,
+                unit: Some(target.id),
+                ..used.clone()
+            });
+        }
+    }
+    facts
 }
 
 /// The views the places of a fact are read from.
@@ -282,88 +344,89 @@ fn told(
         before: core.prev_view(),
     };
     for (n, event) in core.told.iter().enumerate() {
-        let Some(fact) = Fact::of(event, &views) else {
-            continue;
-        };
-        let seed = now.tick.wrapping_mul(31).wrapping_add(n as u32);
-        for (_, rule) in rules
-            .of(fact.trigger)
-            .filter(|(_, r)| about(r, &fact, &views))
-        {
-            let fx = &rule.fx;
-            let unit = match fx.at {
-                At::Caster => fact.caster.and_then(|id| now.unit(id)),
-                At::CasterBefore => fact.caster.and_then(|id| core.before_event(n, id)),
-                At::Unit => fact.unit.and_then(|id| views.find(id)),
-                _ => None,
-            };
-            // A use can have a visible start and a fogged end (a blink, for example).
-            let subject = match unit {
-                Some(unit) => EventSubject::Unit(unit),
-                None if fx.at == At::Point => {
-                    fact.point.map_or(EventSubject::Event, EventSubject::Point)
+        for fact in presentation_facts(event, &views) {
+            let seed = now.tick.wrapping_mul(31).wrapping_add(n as u32);
+            for (_, rule) in rules
+                .of(fact.trigger)
+                .filter(|(_, r)| about(r, &fact, &views))
+            {
+                let fx = &rule.fx;
+                let unit = match fx.at {
+                    At::Caster => fact.caster.and_then(|id| now.unit(id)),
+                    At::CasterBefore => fact.caster.and_then(|id| core.before_event(n, id)),
+                    At::Unit => fact.unit.and_then(|id| views.find(id)),
+                    _ => None,
+                };
+                // A use can have a visible start and a fogged end (a blink, for example).
+                let subject = match unit {
+                    Some(unit) => EventSubject::Unit(unit),
+                    None if fx.at == At::Point => {
+                        fact.point.map_or(EventSubject::Event, EventSubject::Point)
+                    }
+                    None => EventSubject::Event,
+                };
+                if !sight.allows(event, subject) {
+                    continue;
                 }
-                None => EventSubject::Event,
-            };
-            if !sight.allows(event, subject) {
-                continue;
-            }
-            let at = match unit {
-                Some(unit) => Some(event_point(&ground, &bodies, unit, &fx.attach, fx.at)),
-                None if fx.at == At::Point => fact.point.map(|spot| on_ground(&ground, spot)),
-                None => None,
-            };
-            if let Some(at) = at {
-                let place = |attach: &Attach| match unit {
-                    Some(unit) => event_point(&ground, &bodies, unit, attach, fx.at),
-                    None => at,
+                let at = match unit {
+                    Some(unit) => Some(event_point(&ground, &bodies, unit, &fx.attach, fx.at)),
+                    None if fx.at == At::Point => fact.point.map(|spot| on_ground(&ground, spot)),
+                    None => None,
                 };
-                let feeds = Feeds {
-                    caster: fact
-                        .caster
-                        .and_then(|id| {
-                            if fx.at == At::CasterBefore {
-                                core.before_event(n, id)
-                            } else {
-                                sight.visible_unit(id)
-                            }
-                        })
-                        .map(|u| attach_point(&ground, &bodies, u, &Attach::Origin)),
-                    ..item_state(&fact, &views)
-                };
-                let with = (library.as_deref(), &mut *playing);
-                let permission = match (unit, event) {
-                    (None, EventKind::ItemUsed { caster, .. })
-                        if sight
-                            .aim_knowledge(*caster)
-                            .is_some_and(|seen| !sight.fog().hides(Some(seen))) =>
-                    {
-                        crate::particles::EffectSight::Witnessed(
-                            sight.aim_knowledge(*caster).unwrap_or_default(),
-                        )
-                    }
-                    (_, EventKind::Died { .. }) => crate::particles::EffectSight::Witnessed(
-                        sight.knowledge(sight.death_witness(event).and_then(|unit| unit.seen_by)),
-                    ),
-                    (Some(unit), _) => {
-                        crate::particles::EffectSight::KnownPoint(sight.knowledge(unit.seen_by))
-                    }
-                    (
-                        None,
-                        EventKind::ItemUsed {
-                            target: Some(id), ..
-                        },
-                    ) => crate::particles::EffectSight::KnownPoint(
-                        sight.knowledge(now.unit(*id).and_then(|unit| unit.seen_by)),
-                    ),
-                    _ => crate::particles::EffectSight::Point,
-                };
-                let emitter = unit
-                    .map(|unit| unit.id)
-                    .or(fact.caster)
-                    .or(fact.unit)
-                    .or(fact.named);
-                stage.play(fx, (at, seed), with, (&feeds, &place), permission, emitter);
+                if let Some(at) = at {
+                    let place = |attach: &Attach| match unit {
+                        Some(unit) => event_point(&ground, &bodies, unit, attach, fx.at),
+                        None => at,
+                    };
+                    let feeds = Feeds {
+                        caster: fact
+                            .caster
+                            .and_then(|id| {
+                                if fx.at == At::CasterBefore {
+                                    core.before_event(n, id)
+                                } else {
+                                    sight.visible_unit(id)
+                                }
+                            })
+                            .map(|u| attach_point(&ground, &bodies, u, &Attach::Origin)),
+                        ..item_state(&fact, &views)
+                    };
+                    let with = (library.as_deref(), &mut *playing);
+                    let permission = match (unit, event) {
+                        (None, EventKind::ItemUsed { caster, .. })
+                            if sight
+                                .aim_knowledge(*caster)
+                                .is_some_and(|seen| !sight.fog().hides(Some(seen))) =>
+                        {
+                            crate::particles::EffectSight::Witnessed(
+                                sight.aim_knowledge(*caster).unwrap_or_default(),
+                            )
+                        }
+                        (_, EventKind::Died { .. }) => {
+                            crate::particles::EffectSight::Witnessed(sight.knowledge(
+                                sight.death_witness(event).and_then(|unit| unit.seen_by),
+                            ))
+                        }
+                        (Some(unit), _) => {
+                            crate::particles::EffectSight::KnownPoint(sight.knowledge(unit.seen_by))
+                        }
+                        (
+                            None,
+                            EventKind::ItemUsed {
+                                target: Some(id), ..
+                            },
+                        ) => crate::particles::EffectSight::KnownPoint(
+                            sight.knowledge(now.unit(*id).and_then(|unit| unit.seen_by)),
+                        ),
+                        _ => crate::particles::EffectSight::Point,
+                    };
+                    let emitter = unit
+                        .map(|unit| unit.id)
+                        .or(fact.caster)
+                        .or(fact.unit)
+                        .or(fact.named);
+                    stage.play(fx, (at, seed), with, (&feeds, &place), permission, emitter);
+                }
             }
         }
     }
