@@ -79,6 +79,13 @@ fn every_fx_line_reads_and_names_what_the_manifest_has() {
     }
 }
 
+// Exact periodic cues await the shared item presentation facts follow-up. A cast or a
+// collection heal cannot stand in for a zero-heal automatic caster/target pulse.
+const DEFERRED_PERIODIC_SUPPORT: &[(&str, &str)] = &[(
+    "crellas_crozier",
+    "Automatic caster/target pulse particles and sound are deferred to the client periodic-effect presentation follow-up; derive timing from the effect timeline and imported data, never a server pulse event.",
+)];
+
 /// Whether an item of bota's catalogue is used for nothing and procs nothing: it carries stats
 /// alone (a recipe or a retired id nothing at all), and Dota draws no effect for it.
 fn carries_stats_alone(id: u16) -> bool {
@@ -95,7 +102,9 @@ fn carries_stats_alone(id: u16) -> bool {
             && def.on_attack.is_none()
             && def.reincarnation.is_none()
             && def.expiry_recovery.is_none()
+            && def.attack_break.is_none()
             && def.magic_block.is_none()
+            && def.auras.is_empty()
             && matches!(def.effect, bota_core::UseSpec::None)
             && procs_nothing(&def.carried)
             && def.ranged.as_ref().is_none_or(procs_nothing)
@@ -126,6 +135,24 @@ const NO_LINE: &[(&str, &str)] = &[
         "the placed unit owns its ambient effect, ending it when the unit is removed",
     ),
     // Items
+    (
+        "headdress",
+        "the aura has a modifier icon; no current world-particle attachment was verified",
+    ),
+    (
+        "ring_of_basilius",
+        "the aura has a modifier icon; no current world-particle attachment was verified",
+    ),
+    // The old castable Buckler buff was removed in 7.23; its retained activation art is not a passive binding.
+    // https://www.dota2.com/outlanders
+    (
+        "buckler",
+        "the aura has a modifier icon; no current world-particle attachment was verified",
+    ),
+    (
+        "tranquil_boots",
+        "the breakable passive has item-state icons; no current world-particle attachment was verified",
+    ),
     (
         "bfury",
         "its Cleave's ring plays once a swing at the attacker, which the server tells only as a blow on each unit \
@@ -375,6 +402,46 @@ fn every_item_and_ability_has_an_fx_line_or_a_reason_for_none() {
         derived.is_empty(),
         "listed, but bota's data already says it carries stats alone: {derived:?}"
     );
+    // A normal activation/worn line does not cover recurring support pulses.
+    for item in bota_core::ITEMS.iter().filter(|item| {
+        item.modifiers
+            .iter()
+            .any(|template| template.movement_steal.is_some())
+    }) {
+        let key = item.key.strip_prefix("item_").expect("item key");
+        assert!(
+            DEFERRED_PERIODIC_SUPPORT
+                .iter()
+                .any(|(pending, _)| *pending == key),
+            "{key}: recurring support needs client timeline presentation or an explicit exemption"
+        );
+    }
+    for (key, why) in DEFERRED_PERIODIC_SUPPORT {
+        assert!(!why.is_empty());
+        let item = bota_core::ITEMS
+            .iter()
+            .find(|item| item.key.strip_prefix("item_") == Some(*key))
+            .expect("deferred item exists");
+        assert!(
+            item.modifiers
+                .iter()
+                .any(|template| template.movement_steal.is_some()),
+            "stale periodic-support exemption: {key}"
+        );
+        let particle = format!("item.{key}.pulse");
+        let sound = format!("sound.item.{key}.pulse");
+        assert!(
+            !lines.iter().any(|line| line
+                .particle
+                .as_ref()
+                .is_some_and(|name| name.starts_with(&particle))
+                || line
+                    .sound
+                    .as_ref()
+                    .is_some_and(|name| name.starts_with(&sound))),
+            "{key}: pulse bindings exist; remove the resolved presentation-facts exemption"
+        );
+    }
     for (key, why) in NO_LINE {
         assert!(!why.is_empty());
         assert!(

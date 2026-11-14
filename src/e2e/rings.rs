@@ -379,3 +379,54 @@ fn an_aether_lens_lengthens_the_drawn_reach_of_an_aimed_salve() {
         "none at the salve's own"
     );
 }
+
+#[test]
+fn hovering_support_items_draws_their_imported_area_around_the_drawn_hero() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(bota_proto::Cheat::CreepSpawning { on: false });
+    client.cheat(bota_proto::Cheat::StartGame);
+    for (key, radius_key) in [
+        ("item_headdress", "aura_radius"),
+        ("item_ring_of_basilius", "aura_radius"),
+        ("item_buckler", "bonus_aoe_radius"),
+        ("item_mekansm", "heal_radius"),
+        ("item_arcane_boots", "replenish_radius"),
+        ("item_ancient_janggo", "radius"),
+        ("item_pipe", "barrier_radius"),
+        ("item_guardian_greaves", "replenish_radius"),
+        ("item_assault", "aura_radius"),
+        ("item_vladmir", "aura_radius"),
+        ("item_radiance", "aura_radius"),
+        ("item_shivas_guard", "blast_radius"),
+        ("item_boots_of_bearing", "radius"),
+        ("item_crellas_crozier", "active_radius"),
+    ] {
+        client.cheat(bota_proto::Cheat::ResetHero);
+        client.stand_at(MID);
+        let def = bota_core::ITEMS
+            .iter()
+            .find(|def| def.key == key)
+            .expect("catalogue item");
+        client.cheat(bota_proto::Cheat::Item { item: def.id });
+        let slot = client.slot_of(def.id).expect("item in inventory");
+        let radius = bota_core::widened(
+            def.value(radius_key).expect("imported radius")[0].int(),
+            bota_client_core::carried_of(client.me()).aoe_bonus,
+        ) as f32;
+        let item_box = client.item_box(slot).expect("item box");
+        client.hover_ui(item_box, std::time::Duration::from_secs(30));
+        client.step_frames(2);
+        let circles = rings_of(&client, crate::overlay::ARCANE, radius);
+        let body = client.body(client.me().id).expect("drawn hero");
+        let drawn = client
+            .world()
+            .get::<crate::units::Unit>(body)
+            .expect("unit")
+            .at;
+        assert!(
+            circles.len() == 1 && circles[0].distance(drawn) < 0.5,
+            "{key}: area {radius} around {drawn:?}, drawn circles {circles:?}"
+        );
+    }
+}

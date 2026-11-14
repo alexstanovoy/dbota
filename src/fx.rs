@@ -243,6 +243,15 @@ impl Stage<'_, '_> {
         if let Some(name) = &fx.particle {
             let handle = crate::effects::play_once(library, playing, name, at, seed, sight);
             feed(fx, handle, playing, feeds, place);
+            if fx.follow
+                && let (Some(handle), Some(unit)) = (handle, emitter)
+            {
+                self.commands.spawn(told::Following {
+                    handle,
+                    unit,
+                    attach: fx.attach.clone(),
+                });
+            }
         }
         if let Some(prefix) = &fx.sound {
             self.sound(prefix, at, seed, Owner::None, emitter);
@@ -253,6 +262,7 @@ impl Stage<'_, '_> {
 /// What a line can feed its particle from the fact it plays for.
 #[derive(Default, Clone, Copy)]
 struct Feeds {
+    item_wave: Vec3,
     /// The worn unit's imported render-bounds radius.
     model_radius: Option<f32>,
     /// How many are held of the effect worn.
@@ -313,6 +323,7 @@ fn feed(
     };
     for (point, what) in &fx.feeds {
         let value = match what {
+            Feed::ItemWave => feeds.item_wave,
             Feed::Stacks => Vec3::new(feeds.stacks, 0.0, 0.0),
             Feed::Seconds => Vec3::new(feeds.seconds, 0.0, 0.0),
             Feed::Mode => Vec3::new(feeds.mode, 0.0, 0.0),

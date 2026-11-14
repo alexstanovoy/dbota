@@ -1,7 +1,7 @@
 //! The lines the events of the last pump fire: an item used, an ability cast, a throw come down,
 //! a blow dealt or a mending given, a unit dead.
 
-use bevy::prelude::*;
+use bevy::{prelude::*, transform::TransformSystems};
 use bota_proto::{
     EntityId, EventKind, Inflictor, ItemId, RuneKind, UnitView, Vec2 as Spot, WorldView,
 };
@@ -18,7 +18,46 @@ pub(super) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
         told.after(crate::units::Placed).in_set(super::PresentFacts),
+    )
+    .add_systems(
+        PostUpdate,
+        follow
+            .after(TransformSystems::Propagate)
+            .before(dbota_particles::Step),
     );
+}
+
+/// One event-started effect whose origin continues to follow a unit.
+#[derive(Component)]
+pub(super) struct Following {
+    pub handle: crate::particles::Handle,
+    pub unit: EntityId,
+    pub attach: Attach,
+}
+
+fn follow(
+    sight: crate::fog::EventSight,
+    following: Query<(Entity, &Following)>,
+    bodies: Shooters,
+    ground: Res<Ground>,
+    mut playing: ResMut<Playing>,
+    mut commands: Commands,
+) {
+    for (entity, binding) in &following {
+        let Some(instance) = playing.get_mut(binding.handle) else {
+            commands.entity(entity).despawn();
+            continue;
+        };
+        if let Some(unit) = sight.visible_unit(binding.unit) {
+            let at = attach_point(&ground, &bodies, unit, &binding.attach);
+            instance.bind_control_point(
+                super::PLACE,
+                super::place_of(at),
+                super::attach_basis(&bodies, unit, &binding.attach),
+                bodies.object_scale(unit.id),
+            );
+        }
+    }
 }
 
 /// What an event says happened, in the terms the lines are keyed by.
@@ -201,7 +240,23 @@ fn item_state(fact: &Fact, views: &Views) -> Feeds {
         caster.zip(views.before).and_then(|(id, v)| v.unit(id)),
         item,
     );
+    let item_wave = bota_core::item_def(item)
+        .and_then(|def| match def.effect {
+            bota_core::UseSpec::Wave(wave) => {
+                let bonus = caster
+                    .and_then(|id| views.find(id))
+                    .map_or(0, |unit| bota_client_core::carried_of(unit).aoe_bonus);
+                Some(Vec3::new(
+                    bota_core::widened(wave.radius, bonus) as f32,
+                    0.0,
+                    wave.speed as f32,
+                ))
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
     Feeds {
+        item_wave,
         mode: item_feeds(now.or(before)).0,
         charges: item_feeds(before.or(now)).1,
         ..Feeds::default()

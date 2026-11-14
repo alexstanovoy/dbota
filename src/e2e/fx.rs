@@ -227,3 +227,255 @@ fn a_blink_sounds_the_daggers_activation_in_a_muted_client() {
         heard(c, "sound.blink.activate") > 0
     });
 }
+
+#[test]
+fn support_item_particles_follow_data_and_end_when_the_carrier_disables_them() {
+    use bevy::prelude::*;
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_secs_f32(1.0 / 30.0),
+        ));
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::StartGame);
+    client.stand_at(MID);
+    let radiance = bota_core::ITEMS
+        .iter()
+        .find(|item| item.key == "item_radiance")
+        .expect("Radiance")
+        .id;
+    client.cheat(Cheat::Item { item: radiance });
+    let slot = client.slot_of(radiance).expect("Radiance held");
+    client.until("enabled burn owner effect", |c| {
+        started(c, "item.radiance.owner") > 0
+    });
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Item(slot),
+        ctrl: false,
+    });
+    client.until("burn disabled", |c| {
+        !c.core().session().expect("session").item_active(
+            c.me().id,
+            bota_proto::ItemSlot(slot),
+            radiance,
+        )
+    });
+    client.step_frames(2);
+    let library = client.world().resource::<Library>();
+    let effect = library.effect("item.radiance.owner").expect("owner effect");
+    assert!(
+        client
+            .world()
+            .resource::<Playing>()
+            .instances_of(effect)
+            .all(|instance| instance.ending()),
+        "disabling the item ends its held emission"
+    );
+    client.cheat(Cheat::ResetHero);
+    client.stand_at(MID);
+    let shiva = bota_core::ITEMS
+        .iter()
+        .find(|item| item.key == "item_shivas_guard")
+        .expect("Shiva");
+    client.cheat(Cheat::Item { item: shiva.id });
+    let slot = client.slot_of(shiva.id).expect("Shiva held");
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Item(slot),
+        ctrl: false,
+    });
+    client.until("arctic blast effect and sound", |c| {
+        started(c, "item.shivas_guard.wave") > 0 && heard(c, "sound.item.shivas_guard") > 0
+    });
+    let expected = Vec3::new(
+        bota_core::widened(
+            shiva.value("blast_radius").expect("radius")[0].int(),
+            shiva.value("bonus_aoe").expect("area bonus")[0].int(),
+        ) as f32,
+        0.0,
+        shiva.value("blast_speed").expect("speed")[0].int() as f32,
+    );
+    let origin = client.me().pos;
+    client
+        .core_mut()
+        .act(Intent::MoveTo((MID.0 as f32 + 200.0, MID.1 as f32)));
+    let mut samples = 0;
+    for _ in 0..10 {
+        client.step_frames(1);
+        let body = client.body(client.me().id).expect("drawn hero");
+        let drawn = client
+            .world()
+            .get::<crate::units::Unit>(body)
+            .expect("unit")
+            .at;
+        let library = client.world().resource::<Library>();
+        let effect = library
+            .effect("item.shivas_guard.wave")
+            .expect("blast effect");
+        for instance in client.world().resource::<Playing>().instances_of(effect) {
+            assert!(
+                instance.nodes[0].control_points[1]
+                    .position
+                    .distance(expected)
+                    < 0.1,
+                "imported area and speed feed the wave"
+            );
+            let origin = instance.nodes[0].control_points[0].position;
+            assert!(
+                Vec2::new(origin.x, origin.y).distance(drawn) < 0.5,
+                "the wave follows the drawn caster"
+            );
+            samples += 1;
+        }
+    }
+    assert!(samples > 0, "the moving wave was inspected");
+    assert!(
+        !client
+            .me()
+            .pos
+            .within(origin, bota_proto::Fixed::from_int(10)),
+        "the caster moved while the wave was inspected"
+    );
+}
+
+#[test]
+fn support_activations_show_their_imported_particles_and_sounds_at_full_pools() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::StartGame);
+    for (key, particle, sound) in [
+        ("item_mekansm", "item.mekansm.cast", "sound.item.mekansm"),
+        (
+            "item_arcane_boots",
+            "item.arcane_boots.cast",
+            "sound.item.arcane_boots",
+        ),
+        (
+            "item_ancient_janggo",
+            "item.ancient_janggo.buff",
+            "sound.item.ancient_janggo",
+        ),
+        ("item_pipe", "item.pipe.barrier", "sound.item.pipe"),
+        (
+            "item_guardian_greaves",
+            "item.guardian_greaves.cast",
+            "sound.item.guardian_greaves",
+        ),
+        (
+            "item_boots_of_bearing",
+            "item.boots_of_bearing.cast",
+            "sound.item.ancient_janggo",
+        ),
+    ] {
+        client.cheat(Cheat::ResetHero);
+        client.stand_at(MID);
+        let id = bota_core::ITEMS
+            .iter()
+            .find(|item| item.key == key)
+            .expect("support item")
+            .id;
+        client.cheat(Cheat::Item { item: id });
+        let slot = client.slot_of(id).expect("held item");
+        let shown = started(&client, particle);
+        let sounded = heard(&client, sound);
+        client.core_mut().act(Intent::Press {
+            slot: Slot::Item(slot),
+            ctrl: false,
+        });
+        client.until(&format!("{key} activation particle and sound"), |c| {
+            started(c, particle) > shown && heard(c, sound) > sounded
+        });
+        if let bota_core::UseSpec::Support(support) =
+            bota_core::item_def(id).expect("support data").effect
+            && let Some(index) = support.lockout
+        {
+            let effect =
+                bota_core::item_def(id).expect("support data").modifiers[usize::from(index)].effect;
+            client.until("the receiver timer is drawn in the buff row", |c| {
+                let world = c.world_mut();
+                world
+                    .query::<(&crate::buffs::BuffChip, &bevy::prelude::InheritedVisibility)>()
+                    .iter(world)
+                    .any(|(chip, seen)| {
+                        seen.get()
+                            && chip.shown.is_some_and(|shown| {
+                                shown.id == effect.0
+                                    && shown.ticks_left.is_some_and(|ticks| ticks > 0)
+                            })
+                    })
+            });
+        }
+        if key == "item_mekansm" || key == "item_guardian_greaves" {
+            let target = if key == "item_mekansm" {
+                "item.mekansm.target"
+            } else {
+                "item.guardian_greaves.target"
+            };
+            assert!(
+                started(&client, target) > 0,
+                "full-health recipient still shows its recovery effect"
+            );
+        }
+    }
+}
+
+#[test]
+fn crozier_shows_its_shared_ghost_and_movement_effects_and_collection_heal() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::StartGame);
+    client.stand_at(MID);
+    let at = client.me().pos + bota_proto::Vec2::from_ints(400, 0);
+    client.cheat(Cheat::CreateHero {
+        hero: HeroId::SHADOW_FIEND,
+        enemy: true,
+        at,
+    });
+    let enemy = client
+        .view()
+        .units
+        .iter()
+        .find(|unit| unit.kind == UnitKind::Hero && unit.team != client.me().team)
+        .expect("enemy")
+        .id;
+    client.cheat(Cheat::Damage {
+        target: Target::Unit(enemy),
+        amount: 100,
+        kind: bota_proto::DamageKind::Pure,
+    });
+    let item = bota_core::ITEMS
+        .iter()
+        .find(|item| item.key == "item_crellas_crozier")
+        .expect("item")
+        .id;
+    client.cheat(Cheat::Item { item });
+    client.cheat(Cheat::SetPools {
+        health: 25,
+        mana: 100,
+    });
+    let slot = client.slot_of(item).expect("held item");
+    let ghost = started(&client, "item.ghost.form");
+    let source = started(&client, "item.crellas_crozier.buff");
+    let target = started(&client, "item.crellas_crozier.debuff");
+    let healed = started(&client, "item.magic_stick");
+    let cast = heard(&client, "sound.item.crellas_crozier.cast");
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Item(slot),
+        ctrl: false,
+    });
+    client.until(
+        "the shared ghost and movement effects are shown with the cast sound",
+        |c| {
+            started(c, "item.ghost.form") > ghost
+                && started(c, "item.crellas_crozier.buff") > source
+                && started(c, "item.crellas_crozier.debuff") > target
+                && heard(c, "sound.item.crellas_crozier.cast") > cast
+        },
+    );
+    client.until("positive collection shows the native heal particle", |c| {
+        started(c, "item.magic_stick") > healed
+    });
+}

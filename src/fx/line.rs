@@ -106,6 +106,8 @@ pub enum Feed {
     Gathered(Vec3, Vec3),
     /// The worn unit's imported render-bounds radius, in x.
     ModelRadius,
+    /// An item wave's widened radius in x and expansion speed in z.
+    ItemWave,
 }
 
 /// Whose effect a worn line is about.
@@ -144,6 +146,8 @@ pub struct Fx {
     /// The side whose look the wearer must take on (its own side's, or the one the map gives a
     /// neutral building), for a worn line that asks.
     pub look: Option<Team>,
+    /// Keep the effect's origin attached to its unit while it lives.
+    pub follow: bool,
 }
 
 impl Fx {
@@ -191,6 +195,7 @@ impl Fx {
             stacks: (0, u32::MAX),
             side: None,
             look: None,
+            follow: false,
         };
         let mut at = None;
         for word in rest {
@@ -203,6 +208,13 @@ impl Fx {
                 "particle" => fx.particle = Some(value.to_owned()),
                 "sound" => fx.sound = Some(value.to_owned()),
                 "whose" => fx.whose = whose_of(value)?,
+                "follow" => {
+                    fx.follow = match value {
+                        "true" => true,
+                        "false" => false,
+                        _ => return Err("follow wants true or false".to_owned()),
+                    }
+                }
                 "stacks" => fx.stacks = stacks_of(value)?,
                 "side" => fx.side = Some(side_of(value)?),
                 "look" => fx.look = Some(side_of(value)?),
@@ -331,6 +343,7 @@ fn stacks_of(value: &str) -> Result<(u32, u32), String> {
 
 fn feed_of(value: &str) -> Result<Feed, String> {
     Ok(match value {
+        "item_wave" => Feed::ItemWave,
         "stacks" => Feed::Stacks,
         "seconds" => Feed::Seconds,
         "mode" => Feed::Mode,

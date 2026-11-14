@@ -11,8 +11,8 @@ use bota_proto::{EntityId, Fixed, Team, UnitView};
 use super::line::{Attach, Fx, Trigger, Whose};
 use super::rules::{Rule, Rules, Subject};
 use super::{
-    Feeds, PLACE, Stage, attach_basis, attach_point, carried, feed, item_feeds, nodes_ready,
-    on_ground, place_of,
+    Feeds, PLACE, Stage, attach_basis, attach_point, feed, item_feeds, nodes_ready, on_ground,
+    place_of,
 };
 use crate::effects::Shooters;
 use crate::map::Ground;
@@ -58,7 +58,8 @@ struct Hold {
 
 /// What the frame tells of the units beyond their own views: the map objectives heroes channel
 /// at.
-struct Facts {
+struct Facts<'a> {
+    core: &'a bota_client_core::App,
     channelled: HashSet<EntityId>,
 }
 
@@ -106,19 +107,31 @@ fn holding(rule: &Rule, unit: &UnitView, facts: &Facts) -> Option<Hold> {
             .and_then(|cast| cast.ability)
             .is_some_and(|ability| ids.contains(&ability))
             .then(|| held(0, None, Feeds::default())),
-        (Subject::Items(ids), Trigger::Held) => ids.iter().find_map(|id| {
-            let item = carried(Some(unit), *id)?;
-            let (mode, charges) = item_feeds(Some(item));
-            Some(held(
-                0,
-                None,
-                Feeds {
-                    mode,
-                    charges,
-                    ..Feeds::default()
-                },
-            ))
-        }),
+        (Subject::Items(ids), Trigger::Held) => unit
+            .items
+            .iter()
+            .take(super::ACTIVE_SLOTS)
+            .enumerate()
+            .find_map(|(slot, item)| {
+                let item = item
+                    .as_ref()
+                    .filter(|item| ids.contains(&item.id) && item.mute_left == 0)?;
+                if !facts.core.session().is_none_or(|session| {
+                    session.item_active(unit.id, bota_proto::ItemSlot(slot as u8), item.id)
+                }) {
+                    return None;
+                }
+                let (mode, charges) = item_feeds(Some(item));
+                Some(held(
+                    0,
+                    None,
+                    Feeds {
+                        mode,
+                        charges,
+                        ..Feeds::default()
+                    },
+                ))
+            }),
         _ => unit.effects.iter().find_map(|effect| {
             let on = match &rule.subject {
                 Subject::Effects(ids) => ids.contains(&effect.id),
@@ -242,6 +255,7 @@ fn worn(
         return;
     }
     let facts = Facts {
+        core: sight.core(),
         channelled: channels.objectives(view),
     };
     worn.0.retain(|(id, rule), wearing| {
@@ -310,7 +324,7 @@ fn wear_runes(
 
 /// What the effects worn are placed with.
 struct Scene<'a> {
-    facts: &'a Facts,
+    facts: &'a Facts<'a>,
     ground: &'a Ground,
     bodies: &'a Shooters<'a, 'a>,
     library: Option<&'a Library>,

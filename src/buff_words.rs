@@ -89,6 +89,10 @@ mod tests {
     /// These effects use presentation outside the buff asset catalogue.
     const NO_BUFF_LINE: &[(EffectId, &str)] = &[
         (
+            EffectId(122),
+            "hidden setup-only spell-immunity predicate has no Dota modifier alias or buff-bar presentation",
+        ),
+        (
             EffectId::TIMED_LIFE,
             "effect_listed excludes unit lifetimes; the health bar shows time left",
         ),

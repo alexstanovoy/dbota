@@ -221,3 +221,134 @@ fn another_heros_power_treads_are_drawn_by_their_state() {
         });
     }
 }
+
+#[test]
+fn support_items_draw_their_installed_icons_and_radiance_switches_its_face() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::StartGame);
+    for key in [
+        "headdress",
+        "ring_of_basilius",
+        "buckler",
+        "mekansm",
+        "arcane_boots",
+        "ancient_janggo",
+        "pipe",
+        "guardian_greaves",
+        "assault",
+        "vladmir",
+        "radiance",
+        "shivas_guard",
+        "tranquil_boots",
+        "boots_of_bearing",
+        "crellas_crozier",
+    ] {
+        client.cheat(Cheat::ResetHero);
+        let id = bota_core::ITEMS
+            .iter()
+            .find(|item| item.key.strip_prefix("item_") == Some(key))
+            .expect("catalogue item")
+            .id;
+        client.cheat(Cheat::Item { item: id });
+        let slot = client.slot_of(id).expect("held item");
+        client.step_frames(2);
+        let installed = file(&client, &format!("icon.item.{key}"));
+        assert_eq!(
+            icon_of(&mut client, slot),
+            Some(installed.clone()),
+            "{key}: installed item icon"
+        );
+        if key == "tranquil_boots" {
+            client.stand_at(super::harness::MID);
+            let at = client.me().pos + Spot::from_ints(400, 0);
+            client.cheat(Cheat::CreateHero {
+                hero: HeroId::SHADOW_FIEND,
+                enemy: true,
+                at,
+            });
+            let enemy = client
+                .view()
+                .units
+                .iter()
+                .find(|unit| unit.kind == UnitKind::Hero && unit.team != client.me().team)
+                .expect("created enemy")
+                .clone();
+            client.core_mut().act(Intent::AttackAt {
+                at: (enemy.pos.x.to_f32(), enemy.pos.y.to_f32()),
+                unit: Some(enemy.id),
+            });
+            client.until("landed attack breaks boots", |c| {
+                !c.core()
+                    .session()
+                    .expect("session")
+                    .item_active(c.me().id, ItemSlot(slot), id)
+            });
+            client.core_mut().act(Intent::Stop);
+            client.step_frames(2);
+            let broken = file(&client, "icon.item.tranquil_boots_active");
+            assert_eq!(
+                icon_of(&mut client, slot),
+                Some(broken.clone()),
+                "broken boots use their installed state icon"
+            );
+            let passive = bota_core::item_def(id)
+                .expect("boots data")
+                .attack_break
+                .as_ref()
+                .expect("breakable passive");
+            let carried = client.core().carried_of(client.me());
+            assert_eq!(
+                carried.move_speed, passive.broken.move_speed,
+                "client reads the broken movement bonus"
+            );
+            assert_eq!(
+                carried.hp_regen, passive.broken.hp_regen,
+                "client reads the broken regeneration bonus"
+            );
+            client.cheat(Cheat::Refresh);
+            client.step_frames(2);
+            assert_eq!(
+                icon_of(&mut client, slot),
+                Some(broken),
+                "refresh does not repair the passive icon"
+            );
+        }
+        if key == "radiance" {
+            client.core_mut().act(Intent::Press {
+                slot: Slot::Item(slot),
+                ctrl: false,
+            });
+            client.until("burn disabled", |c| {
+                !c.core()
+                    .session()
+                    .expect("session")
+                    .item_active(c.me().id, ItemSlot(slot), id)
+            });
+            client.step_frames(2);
+            let disabled = file(&client, "icon.item.radiance_inactive");
+            assert_eq!(
+                icon_of(&mut client, slot),
+                Some(disabled),
+                "the disabled icon is drawn"
+            );
+            client.core_mut().act(Intent::Press {
+                slot: Slot::Item(slot),
+                ctrl: false,
+            });
+            client.until("burn enabled", |c| {
+                c.core()
+                    .session()
+                    .expect("session")
+                    .item_active(c.me().id, ItemSlot(slot), id)
+            });
+            client.step_frames(2);
+            assert_eq!(
+                icon_of(&mut client, slot),
+                Some(installed),
+                "the enabled icon returns"
+            );
+        }
+    }
+}

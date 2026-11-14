@@ -148,6 +148,11 @@ fn draw(
     ground: Res<Ground>,
     index: Res<UnitIndex>,
     units: Query<&'static Unit>,
+    items: Query<(
+        &crate::hud::ItemBox,
+        &bevy::picking::hover::DirectlyHovered,
+        &InheritedVisibility,
+    )>,
     fired: Res<Fired>,
     cursor: Res<CursorGround>,
     hover: Res<crate::pick::Hover>,
@@ -184,6 +189,11 @@ fn draw(
     }
     rings.0 = ranges;
     shots.0 = tower_shots(&mut gizmos, &ctx);
+    if let Some((item, _, _)) = items.iter().find(|(item, hover, visible)| {
+        item.0 < bota_proto::INVENTORY_SLOTS as u8 && hover.get() && visible.get()
+    }) {
+        item_area(&mut gizmos, &ctx, item.0);
+    }
     aggro(&mut gizmos, &ctx);
     orders(&mut gizmos, &ctx);
     queue(&mut gizmos, &ctx);
@@ -210,6 +220,29 @@ fn base_blocker_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             (x, y),
             bota_core::BASE_BLOCKER_VISION as f32,
             team_color(gate.team).with_alpha(0.6),
+            false,
+        );
+    }
+}
+
+/// An inventory hover previews a passive aura or a use centred on its bearer.
+fn item_area(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, at: u8) {
+    let core = ctx.core;
+    let slot = bota_client_core::Slot::Item(at);
+    if core.aiming.is_some() || core.aim_in(slot).is_some_and(|aim| aim != Aim::Own) {
+        return;
+    }
+    let radius = core.area_of(slot);
+    if radius <= 0 {
+        return;
+    }
+    if let Some(caster) = core.commanded().and_then(|id| ctx.at(id)) {
+        ring(
+            gizmos,
+            ctx,
+            (caster.at.x, caster.at.y),
+            radius as f32,
+            ARCANE,
             false,
         );
     }
@@ -317,7 +350,7 @@ fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
             gizmos,
             ctx,
             spot,
-            raze_radius(bota_client_core::carried_of(me).aoe_bonus),
+            raze_radius(ctx.core.carried_of(me).aoe_bonus),
             SOUL_RED.with_alpha(a),
             false,
         );
@@ -479,7 +512,7 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             Telegraph::Raze { reach } => {
                 let k = (elapsed / point).clamp(0.0, 1.0);
                 let spot = raze_spot(u, body, reach);
-                let radius = raze_radius(bota_client_core::carried_of(u).aoe_bonus);
+                let radius = raze_radius(core.carried_of(u).aoe_bonus);
                 ring(gizmos, ctx, spot, radius, SOUL_RED, false);
                 for f in [0.25, 0.5, 0.75, 1.0] {
                     if f <= k {
@@ -497,7 +530,7 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             Telegraph::Requiem => {
                 let k = (elapsed / point).clamp(0.0, 1.0);
                 let at = (body.at.x, body.at.y);
-                let reach = requiem_reach(bota_client_core::carried_of(u).aoe_bonus);
+                let reach = requiem_reach(core.carried_of(u).aoe_bonus);
                 ring(gizmos, ctx, at, reach, SOUL_VIOLET, true);
                 ring(
                     gizmos,

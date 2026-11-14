@@ -2345,3 +2345,70 @@ sound sound.global.mega_horn.dire sounds/ambient/mega_horn_dire.vsnd_c sounds/me
 # Account/catalogue controls from the player's install.
 texture hud.universal panorama/images/primary_attribute_icons/primary_attribute_icon_all_psd.vtex_c hud/primary_attribute_icon_all_psd.png
 texture menu.edit panorama/images/control_icons/edit_pencil_psd.vtex_c menu/edit_pencil_psd.png
+
+# Physical support-item states.
+texture icon.item.radiance_inactive panorama/images/items/radiance_inactive_png.vtex_c icons/items/radiance_inactive.png
+texture icon.item.tranquil_boots_active panorama/images/items/tranquil_boots_active_png.vtex_c icons/items/tranquil_boots_active.png
+state item.radiance toggle=off icon=icon.item.radiance_inactive
+state item.tranquil_boots toggle=off icon=icon.item.tranquil_boots_active
+
+# Support-item particles and their fact bindings.
+# cp1=item_wave feeds (widened radius, 0, expansion speed); follow=true keeps the origin on the drawn unit.
+particle item.mekansm.cast particles/items2_fx/mekanism.vpcf_c particles/item_mekansm_cast.json
+particle item.mekansm.target particles/items2_fx/mekanism_recipient.vpcf_c particles/item_mekansm_target.json
+particle item.arcane_boots.cast particles/items_fx/arcane_boots.vpcf_c particles/item_arcane_boots_cast.json
+particle item.arcane_boots.target particles/items_fx/arcane_boots_recipient.vpcf_c particles/item_arcane_boots_target.json
+particle item.ancient_janggo.buff particles/items_fx/drum_of_endurance_buff.vpcf_c particles/item_ancient_janggo_buff.json
+particle item.pipe.barrier particles/items2_fx/pipe_of_insight_v2.vpcf_c particles/item_pipe_barrier.json
+particle item.assault.aura particles/items_fx/aura_assault.vpcf_c particles/item_assault_aura.json
+particle item.vladmir.aura particles/items_fx/aura_vlads.vpcf_c particles/item_vladmir_aura.json
+particle item.radiance.owner particles/items2_fx/radiance_owner.vpcf_c particles/item_radiance_owner.json
+particle item.radiance.target particles/items2_fx/radiance.vpcf_c particles/item_radiance_target.json
+particle item.shivas_guard.aura particles/items_fx/aura_shivas.vpcf_c particles/item_shivas_guard_aura.json
+particle item.shivas_guard.wave particles/items2_fx/shivas_guard_active.vpcf_c particles/item_shivas_guard_wave.json
+particle item.shivas_guard.impact particles/items2_fx/shivas_guard_impact.vpcf_c particles/item_shivas_guard_impact.json
+particle item.boots_of_bearing.cast particles/items_fx/aoe_item_caster_additive_boots_of_bearing_base.vpcf_c particles/item_boots_of_bearing_cast.json
+particle item.boots_of_bearing.buff particles/items_fx/drum_of_endurance_buff.vpcf_c particles/item_boots_of_bearing_buff.json
+sound sound.item.mekansm sounds/items/mek_cast.vsnd_c sounds/items/mek_cast.wav event=DOTA_Item.Mekansm.Activate
+sound sound.item.mekansm.target sounds/items/mek_target01.vsnd_c sounds/items/mek_target01.wav event=DOTA_Item.Mekansm.Target
+sound sound.item.mekansm.target sounds/items/mek_target02.vsnd_c sounds/items/mek_target02.wav event=DOTA_Item.Mekansm.Target
+sound sound.item.mekansm.target sounds/items/mek_target03.vsnd_c sounds/items/mek_target03.wav event=DOTA_Item.Mekansm.Target
+sound sound.item.arcane_boots sounds/items/dota_item_arcane_boots.vsnd_c sounds/items/dota_item_arcane_boots.wav event=DOTA_Item.ArcaneBoots.Activate
+sound sound.item.ancient_janggo sounds/items/item_drum.vsnd_c sounds/items/item_drum.wav event=DOTA_Item.DoE.Activate
+sound sound.item.pipe sounds/items/pipe.vsnd_c sounds/items/pipe.wav event=DOTA_Item.Pipe.Activate
+sound sound.item.guardian_greaves sounds/items/guardian_greaves.vsnd_c sounds/items/guardian_greaves.wav event=Item.GuardianGreaves.Activate
+sound sound.item.guardian_greaves.target sounds/items/mek_target01.vsnd_c sounds/items/greaves_target01.wav event=Item.GuardianGreaves.Target
+sound sound.item.guardian_greaves.target sounds/items/mek_target02.vsnd_c sounds/items/greaves_target02.wav event=Item.GuardianGreaves.Target
+sound sound.item.guardian_greaves.target sounds/items/mek_target03.vsnd_c sounds/items/greaves_target03.wav event=Item.GuardianGreaves.Target
+sound sound.item.radiance.target sounds/items/radiance_loop.vsnd_c sounds/items/radiance_loop.wav event=DOTA_Item.Radiance.Target.Loop
+sound sound.item.shivas_guard sounds/items/shivas_guard.vsnd_c sounds/items/shivas_guard.wav event=DOTA_Item.ShivasGuard.Activate
+fx item.mekansm.use at=caster particle=item.mekansm.cast sound=sound.item.mekansm
+fx item.mekansm.hit at=unit particle=item.mekansm.target sound=sound.item.mekansm.target
+fx item.arcane_boots.use at=caster particle=item.arcane_boots.cast sound=sound.item.arcane_boots
+fx item.arcane_boots.hit at=unit particle=item.arcane_boots.target
+fx item.ancient_janggo.use at=caster sound=sound.item.ancient_janggo
+fx modifier.modifier_item_ancient_janggo_active.worn at=unit particle=item.ancient_janggo.buff
+fx item.pipe.use at=caster sound=sound.item.pipe
+fx modifier.modifier_item_pipe_barrier.worn at=unit particle=item.pipe.barrier
+fx item.guardian_greaves.use at=caster particle=item.guardian_greaves.cast sound=sound.item.guardian_greaves
+fx item.guardian_greaves.hit at=unit particle=item.guardian_greaves.target sound=sound.item.guardian_greaves.target
+fx modifier.modifier_item_assault_positive_armor.worn at=unit particle=item.assault.aura whose=own
+fx modifier.modifier_item_vladmir_aura.worn at=unit particle=item.vladmir.aura whose=own
+fx item.radiance.held at=unit particle=item.radiance.owner
+fx modifier.modifier_item_radiance_debuff.worn at=unit particle=item.radiance.target sound=sound.item.radiance.target
+fx item.shivas_guard.held at=unit particle=item.shivas_guard.aura
+fx item.shivas_guard.use at=caster particle=item.shivas_guard.wave sound=sound.item.shivas_guard cp1=item_wave follow=true
+fx item.shivas_guard.hit at=unit particle=item.shivas_guard.impact
+fx item.boots_of_bearing.use at=caster particle=item.boots_of_bearing.cast sound=sound.item.ancient_janggo
+fx modifier.modifier_item_boots_of_bearing_active.worn at=unit particle=item.boots_of_bearing.buff
+
+particle item.guardian_greaves.cast particles/items3_fx/warmage.vpcf_c particles/item_guardian_greaves_cast.json
+particle item.guardian_greaves.target particles/items3_fx/warmage_recipient.vpcf_c particles/item_guardian_greaves_target.json
+
+particle item.crellas_crozier.buff particles/items8_fx/crellas_crozier_buff.vpcf_c particles/item_crellas_crozier_buff.json
+particle item.crellas_crozier.debuff particles/items8_fx/crellas_crozier_debuff.vpcf_c particles/item_crellas_crozier_debuff.json
+sound sound.item.crellas_crozier.cast sounds/items/item_crozier_cast.vsnd_c sounds/items/item_crellas_crozier_cast.wav event=item_crozier.cast
+fx item.crellas_crozier.use at=caster sound=sound.item.crellas_crozier.cast
+fx modifier.modifier_item_crellas_crozier_movespeed_buff.worn at=unit particle=item.crellas_crozier.buff
+fx modifier.modifier_item_crellas_crozier_movespeed_debuff.worn at=unit particle=item.crellas_crozier.debuff
+fx item.crellas_crozier.hit at=unit particle=item.magic_stick

@@ -449,3 +449,93 @@ ability 87 twin_gate_portal_warp
 effect 99 icon.ability.twin_gate_portal_warp
 modifier 99 modifier_twin_gate_fx
 modifier 100 modifier_pudge_meat_hook_followthrough
+
+# Support items and their modifier icons.
+item 130 headdress
+item 131 recipe
+text item 131 item_recipe_headdress
+item 132 ring_of_basilius
+item 133 recipe
+text item 133 item_recipe_ring_of_basilius
+item 134 buckler
+item 135 recipe
+text item 135 item_recipe_buckler
+item 136 mekansm
+item 137 recipe
+text item 137 item_recipe_mekansm
+item 138 arcane_boots
+item 139 recipe
+text item 139 item_recipe_arcane_boots
+item 140 ancient_janggo
+item 141 recipe
+text item 141 item_recipe_ancient_janggo
+item 142 pipe
+item 143 recipe
+text item 143 item_recipe_pipe
+item 144 guardian_greaves
+item 145 recipe
+text item 145 item_recipe_guardian_greaves
+item 146 assault
+item 147 recipe
+text item 147 item_recipe_assault
+item 148 vladmir
+item 149 radiance
+item 150 shivas_guard
+item 151 recipe
+text item 151 item_recipe_shivas_guard
+item 152 tranquil_boots
+item 153 boots_of_bearing
+effect 101 icon.item.headdress
+modifier 101 modifier_item_headdress_aura
+effect 102 icon.item.ring_of_basilius
+modifier 102 modifier_item_ring_of_basilius_aura
+effect 103 icon.item.buckler
+modifier 103 modifier_item_buckler_effect
+effect 104 icon.item.mekansm
+modifier 104 modifier_item_mekansm_aura
+effect 105 icon.item.mekansm
+modifier 105 modifier_item_mekansm_noheal
+effect 106 icon.item.ancient_janggo
+modifier 106 modifier_item_ancient_janggo_aura
+effect 107 icon.item.ancient_janggo
+modifier 107 modifier_item_ancient_janggo_active
+effect 108 icon.item.pipe
+modifier 108 modifier_item_pipe_aura
+effect 109 icon.item.pipe
+modifier 109 modifier_item_pipe_barrier
+effect 110 icon.item.pipe
+modifier 110 modifier_item_pipe_debuff
+effect 111 icon.item.guardian_greaves
+modifier 111 modifier_item_guardian_greaves_aura
+effect 112 icon.item.guardian_greaves
+modifier 112 modifier_item_guardian_greaves_bonus
+effect 113 icon.item.assault
+modifier 113 modifier_item_assault_positive_armor
+effect 114 icon.item.assault
+modifier 114 modifier_item_assault_negative_armor
+effect 115 icon.item.vladmir
+modifier 115 modifier_item_vladmir_aura
+effect 116 icon.item.radiance
+modifier 116 modifier_item_radiance_debuff
+effect 117 icon.item.shivas_guard
+modifier 117 modifier_item_shivas_guard_aura
+effect 118 icon.item.shivas_guard
+modifier 118 modifier_item_shivas_guard_blast
+effect 119 icon.item.boots_of_bearing
+modifier 119 modifier_item_boots_of_bearing_aura
+effect 120 icon.item.boots_of_bearing
+modifier 120 modifier_item_boots_of_bearing_active
+effect 121 icon.item.boots_of_bearing
+modifier 121 modifier_item_boots_of_bearing_active_bonus
+
+item 154 crellas_crozier
+item 155 recipe
+text item 155 item_recipe_crellas_crozier
+effect 123 icon.item.crellas_crozier
+modifier 123 modifier_item_crellas_crozier_debuff
+effect 124 icon.item.crellas_crozier
+modifier 124 modifier_item_crellas_crozier_active
+effect 125 icon.item.crellas_crozier
+modifier 125 modifier_item_crellas_crozier_movespeed_debuff
+effect 126 icon.item.crellas_crozier
+modifier 126 modifier_item_crellas_crozier_movespeed_buff

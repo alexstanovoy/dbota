@@ -208,6 +208,8 @@ pub enum StateWhen {
     Ward { sentry: bool },
     /// It has this many charges left (`charges=<n>`).
     Charges(u8),
+    /// The physical item's active state (`toggle=on|off`).
+    Toggle(bool),
 }
 
 /// The name Dota's art gives a kind of rune: its model, glow, sound, Bottle icon and the hero
@@ -248,6 +250,8 @@ fn state_line(rest: &[&str]) -> Result<ItemState, String> {
         Some(("mode", "intelligence")) => StateWhen::Mode(Attribute::Intelligence),
         Some(("ward", "sentry")) => StateWhen::Ward { sentry: true },
         Some(("ward", "observer")) => StateWhen::Ward { sentry: false },
+        Some(("toggle", "on")) => StateWhen::Toggle(true),
+        Some(("toggle", "off")) => StateWhen::Toggle(false),
         Some(("charges", n)) => StateWhen::Charges(
             n.parse()
                 .map_err(|_| format!("charges '{n}' is no count"))?,
@@ -844,6 +848,19 @@ mod tests {
 
     const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
     const IDS: &str = include_str!("../../../assets-manifest/ids.txt");
+
+    #[test]
+    fn toggle_states_accept_on_and_off_and_reject_unknown_state_values() {
+        for state in ["toggle=on", "toggle=off"] {
+            let line = state_line(&["item.radiance", state, "icon=icon.item.radiance"]);
+            assert!(line.is_ok(), "{state}: {line:?}");
+        }
+        assert_eq!(
+            state_line(&["item.radiance", "toggle=maybe", "icon=icon.item.radiance"])
+                .expect_err("invalid toggle"),
+            "no state 'toggle=maybe'"
+        );
+    }
 
     /// The committed files read with no error, and an injected typo is told with its line.
     #[test]
