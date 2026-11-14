@@ -177,14 +177,7 @@ fn follow(
     ghost.0.left = px(cursor.x / scale - size.x / 2.0);
     ghost.0.top = px(cursor.y / scale - size.y / 2.0);
     let icon = held
-        .and_then(|item| {
-            crate::item_look::icon(
-                &item,
-                &manifest,
-                core.held_item
-                    .is_none_or(|slot| crate::hud::subject_item_active(core, slot, item.id)),
-            )
-        })
+        .and_then(|item| crate::item_look::icon(&item, &manifest))
         .or_else(|| shop_drag.item().and_then(|item| manifest.item_icon(item)))
         .map(|p| server.load(p));
     let handle = icon.clone().unwrap_or_default();

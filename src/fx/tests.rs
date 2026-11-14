@@ -79,7 +79,7 @@ fn every_fx_line_reads_and_names_what_the_manifest_has() {
     }
 }
 
-// Exact periodic cues await the shared item presentation facts follow-up. A cast or a
+// Exact periodic cues await the client periodic-effect presentation follow-up. A cast or a
 // collection heal cannot stand in for a zero-heal automatic caster/target pulse.
 const DEFERRED_PERIODIC_SUPPORT: &[(&str, &str)] = &[(
     "crellas_crozier",
@@ -439,7 +439,7 @@ fn every_item_and_ability_has_an_fx_line_or_a_reason_for_none() {
                     .sound
                     .as_ref()
                     .is_some_and(|name| name.starts_with(&sound))),
-            "{key}: pulse bindings exist; remove the resolved presentation-facts exemption"
+            "{key}: pulse bindings exist; remove the resolved periodic-presentation exemption"
         );
     }
     for (key, why) in NO_LINE {

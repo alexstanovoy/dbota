@@ -15,7 +15,7 @@ use bota_client_core::{
     item_look,
 };
 use bota_proto::{
-    AbilityId, AbilityView, HeroId, ItemId, ItemView, Kit, PlayerView, Team, UnitKind, UnitView,
+    AbilityId, AbilityView, HeroId, ItemView, Kit, PlayerView, Team, UnitKind, UnitView,
 };
 
 use crate::config::Settings;
@@ -1634,25 +1634,6 @@ pub(crate) fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, O
     (Some(p), unit, p.kit.as_ref())
 }
 
-/// Item-instance facts cover the same global slots as inventory commands, including dead kits.
-pub(crate) fn subject_item_active(core: &Core, slot: u8, item: ItemId) -> bool {
-    let (player, unit, _) = subject(core);
-    let holder = if usize::from(slot) >= usize::from(BAG_SLOTS) && slot != TOWN_PORTAL_SLOT {
-        core.view()
-            .and_then(|view| view.player(core.my_slot?))
-            .and_then(|player| player.unit)
-    } else {
-        unit.map(|unit| unit.id)
-            .or_else(|| player.and_then(|player| player.unit))
-    };
-    holder
-        .and_then(|holder| {
-            core.session()
-                .map(|session| session.item_active(holder, bota_proto::ItemSlot(slot), item))
-        })
-        .unwrap_or(true)
-}
-
 /// The hero the bottom panel is about: the seat's, the unit's, or the one
 /// picked for the match to come.
 pub(crate) fn subject_hero(core: &Core) -> Option<HeroId> {
@@ -1977,9 +1958,7 @@ pub(crate) fn slot_icons(
         .chain([(Action::TownPortal, TOWN_PORTAL_SLOT)]);
     for (action, slot) in items {
         let item = subject_item(core, bag, unit, kit, slot);
-        if let Some(icon) = item.and_then(|item| {
-            crate::item_look::icon(&item, manifest, subject_item_active(core, slot, item.id))
-        }) {
+        if let Some(icon) = item.and_then(|item| crate::item_look::icon(&item, manifest)) {
             icons.push((action, icon));
         }
     }
@@ -2153,7 +2132,7 @@ fn item_face(
         } else {
             String::new()
         },
-        icon: crate::item_look::icon(&item, manifest, subject_item_active(core, slot, item.id)),
+        icon: crate::item_look::icon(&item, manifest),
         look,
         sweep: unit.map_or(0.0, |u| {
             core.derived.wait_left(

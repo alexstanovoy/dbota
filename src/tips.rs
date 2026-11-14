@@ -497,12 +497,8 @@ fn item_tip(
     }
     // The state it is in, in Dota's words (the attribute Power Treads are set to, the rune a
     // Bottle keeps), and the seconds before a kept rune takes effect by itself.
-    if let Some(line) = crate::item_look::state_text(
-        i,
-        look.manifest,
-        crate::hud::subject_item_active(core, slot, i.id),
-    )
-    .and_then(|key| look.texts.label(key, &[]))
+    if let Some(line) =
+        crate::item_look::state_text(i, look.manifest).and_then(|key| look.texts.label(key, &[]))
     {
         content.hints.push(match i.rune {
             Some(rune) => format!("{line} ({} s)", rune.ticks_left.div_ceil(rate)),

@@ -2394,7 +2394,6 @@ fx item.guardian_greaves.use at=caster particle=item.guardian_greaves.cast sound
 fx item.guardian_greaves.hit at=unit particle=item.guardian_greaves.target sound=sound.item.guardian_greaves.target
 fx modifier.modifier_item_assault_positive_armor.worn at=unit particle=item.assault.aura whose=own
 fx modifier.modifier_item_vladmir_aura.worn at=unit particle=item.vladmir.aura whose=own
-fx item.radiance.held at=unit particle=item.radiance.owner
 fx modifier.modifier_item_radiance_debuff.worn at=unit particle=item.radiance.target sound=sound.item.radiance.target
 fx item.shivas_guard.held at=unit particle=item.shivas_guard.aura
 fx item.shivas_guard.use at=caster particle=item.shivas_guard.wave sound=sound.item.shivas_guard cp1=item_wave follow=true

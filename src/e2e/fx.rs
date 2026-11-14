@@ -229,7 +229,7 @@ fn a_blink_sounds_the_daggers_activation_in_a_muted_client() {
 }
 
 #[test]
-fn support_item_particles_follow_data_and_end_when_the_carrier_disables_them() {
+fn support_item_particles_follow_the_imported_wave_data() {
     use bevy::prelude::*;
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
@@ -240,40 +240,6 @@ fn support_item_particles_follow_data_and_end_when_the_carrier_disables_them() {
         ));
     client.cheat(Cheat::CreepSpawning { on: false });
     client.cheat(Cheat::StartGame);
-    client.stand_at(MID);
-    let radiance = bota_core::ITEMS
-        .iter()
-        .find(|item| item.key == "item_radiance")
-        .expect("Radiance")
-        .id;
-    client.cheat(Cheat::Item { item: radiance });
-    let slot = client.slot_of(radiance).expect("Radiance held");
-    client.until("enabled burn owner effect", |c| {
-        started(c, "item.radiance.owner") > 0
-    });
-    client.core_mut().act(Intent::Press {
-        slot: Slot::Item(slot),
-        ctrl: false,
-    });
-    client.until("burn disabled", |c| {
-        !c.core().session().expect("session").item_active(
-            c.me().id,
-            bota_proto::ItemSlot(slot),
-            radiance,
-        )
-    });
-    client.step_frames(2);
-    let library = client.world().resource::<Library>();
-    let effect = library.effect("item.radiance.owner").expect("owner effect");
-    assert!(
-        client
-            .world()
-            .resource::<Playing>()
-            .instances_of(effect)
-            .all(|instance| instance.ending()),
-        "disabling the item ends its held emission"
-    );
-    client.cheat(Cheat::ResetHero);
     client.stand_at(MID);
     let shiva = bota_core::ITEMS
         .iter()
