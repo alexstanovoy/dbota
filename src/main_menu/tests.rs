@@ -3744,7 +3744,7 @@ fn a_cached_service_catalogue_keeps_supported_modes_after_foreign_modes_on_recon
             .iter()
             .any(|mode| mode.id.0 == "solo_mid"),
         "cached replies must not spend the supported-mode budget on another game's modes"
-);
+    );
 }
 
 /// A match the service stops ends for its players as a match, not as a lost connection: the end
