@@ -83,6 +83,7 @@ PYTHONPATH=temp/pwlib python3 -m playwright install chromium`); its docstring ha
 - Against a folder of hard links to the install's packages: the privacy text and only the two ways to a cache, folder
   picks at every level, the worker's import, the copy kept over a reload, the client reading it, no request beyond the
   page's origin, and deletion.
+- `--launch-page`: the WebGL2 client starts and draws its first frames with no panic (fails at once with the message).
 - `--start-page`: the start window in both states (two buttons without a copy; "Play" and "Delete and import again" with
   one), the delete returning to the first without touching the player's replays, and the native client's links.
 - `--prepared-page`: bad zips (another build, a path that climbs out, a wrong index) are refused with their reasons;
@@ -92,6 +93,9 @@ PYTHONPATH=temp/pwlib python3 -m playwright install chromium`); its docstring ha
 - `--busy-page`: a server that answers 503 with Retry-After once gets the page's own script, the served cache's index and
   the game's download on the second try, with the wait said on the page; a download refused twice is a failure.
 - `--replay-page`: a build with a packed replay plays it with chat and the CJK font fallback.
+
+The browser build's lint (`web/lint/clippy.toml`, run by `tools/precheck.sh` on the wasm target) denies the std
+clocks and threads, which panic in a browser; time comes from `bevy::platform::time::Instant` or `replays::wall_clock`.
 
 The merge gate runs them all in its `browser` step (`tools/browser_check.sh`).
 

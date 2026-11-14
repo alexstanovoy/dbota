@@ -1,0 +1,10 @@
+# Used only by the browser build's lint (tools/precheck.sh, CLIPPY_CONF_DIR=web/lint), so native code keeps its clocks.
+# The client is also compiled for the browser, where the std clocks and threads are not there: reading
+# them panics ("time not implemented on this platform") and a spawn fails. Code that runs in a browser
+# takes time from `bevy::platform::time::Instant` or `crate::replays::wall_clock`.
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "panics in a browser; use crate::replays::wall_clock" },
+    { path = "std::time::Instant::now", reason = "panics in a browser; use bevy::platform::time::Instant" },
+    { path = "std::thread::sleep", reason = "a browser cannot block a thread" },
+    { path = "std::thread::spawn", reason = "a browser has no threads; use Bevy's task pools" },
+]

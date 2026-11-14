@@ -140,6 +140,10 @@ pub fn plugin(app: &mut App) {
 /// Debug `--slow-load`: the main thread held, as a slow machine's loading may
 /// hold it. The connection's reading, its answers to the server's pings and
 /// its redialing live on threads of their own, which this does not stop.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a debug command-line flag; the browser build's arguments are fixed when it is built"
+)]
 fn slow_load(args: Res<crate::Args>) {
     if let Some(seconds) = args.slow_load {
         std::thread::sleep(std::time::Duration::from_secs_f32(seconds.clamp(0.0, 60.0)));

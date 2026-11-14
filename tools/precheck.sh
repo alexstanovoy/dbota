@@ -31,6 +31,7 @@ wasm_crates="dbota dbota_import_web"
 wasm_checks=(
     "DBOTA_WEB_REPLAY=$PWD/Cargo.toml cargo check --locked --target wasm32-unknown-unknown --profile web -p dbota --features web-replay,webgpu"
     "cargo check --locked --target wasm32-unknown-unknown --profile web -p dbota_import_web"
+    "CLIPPY_CONF_DIR=$PWD/web/lint cargo clippy --locked --target wasm32-unknown-unknown --profile web -p dbota -p dbota_import -p dbota_particles -p dbota_import_web --features dbota/webgl2 -- -D clippy::disallowed_methods"
 )
 extra_clippy() { :; }
 extra_test() { :; }

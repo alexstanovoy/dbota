@@ -122,10 +122,7 @@ pub struct Die(pub u64);
 impl Die {
     /// A die seeded from the clock: the draw of a person is not meant to repeat.
     fn from_clock() -> Die {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_nanos() as u64);
-        Die(nanos)
+        Die(crate::replays::wall_clock().as_nanos() as u64)
     }
 
     /// The next number (splitmix64).

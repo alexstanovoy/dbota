@@ -19,6 +19,6 @@ pub use disk::{Disk, default_dir, recording_path};
 pub(crate) use index::valid_name;
 pub use index::{MAX_BYTES, MIN_BYTES, Policy, Record, Wanted};
 pub use library::{Library, Notice, Saving, Standing};
-pub use name::now;
 #[cfg(test)]
 pub(crate) use name::pass_time;
+pub use name::{now, wall_clock};

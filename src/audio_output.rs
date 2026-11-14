@@ -133,6 +133,10 @@ struct Silent {
 }
 
 impl Silent {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "chosen only by an environment variable, which a browser never has"
+    )]
     fn open() -> Silent {
         let (mixer, source) = silent_mixer();
         let stop = Arc::new(AtomicBool::new(false));

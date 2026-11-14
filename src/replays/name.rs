@@ -14,14 +14,21 @@ pub(crate) fn pass_time(seconds: u64) {
     LATER.set(LATER.get() + seconds);
 }
 
-/// Seconds since 1970 now. A browser has no `SystemTime`; its page clock stands in.
-pub fn now() -> u64 {
+/// The wall clock as a time since 1970. A browser has no `SystemTime` (reading it panics there); its
+/// page clock stands in. Everything that needs the date goes through here.
+pub fn wall_clock() -> std::time::Duration {
     #[cfg(not(target_arch = "wasm32"))]
-    let seconds = std::time::SystemTime::now()
+    let since = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+        .unwrap_or_default();
     #[cfg(target_arch = "wasm32")]
-    let seconds = (js_sys::Date::now() / 1000.0) as u64;
+    let since = std::time::Duration::from_secs_f64(js_sys::Date::now() / 1000.0);
+    since
+}
+
+/// Seconds since 1970 now.
+pub fn now() -> u64 {
+    let seconds = wall_clock().as_secs();
     #[cfg(test)]
     let seconds = seconds + LATER.get();
     seconds
