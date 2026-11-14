@@ -1057,11 +1057,15 @@ fn localized_text(core: &Core, kind: &FeedKind, texts: Option<&Texts>) -> String
             killer: _,
         } => structure(team, kind, lane, tier, ranged, texts),
         FeedKind::StreakEnded { victim, streak } => {
-            let victim = match victim {
-                Victim::Seat(slot) => seat_name(core, slot, texts),
-                Victim::Hero(team) => format!("a {team:?} hero"),
-            };
-            format!("{victim}: {streak}x kill streak ended")
+            let victim = fallen_name(core, victim, texts);
+            texts
+                .and_then(|texts| {
+                    texts.label(
+                        &streak_ended_key(streak),
+                        &[("victim_name", victim.clone())],
+                    )
+                })
+                .unwrap_or_else(|| format!("{victim}: {streak}x kill streak ended"))
         }
         FeedKind::Disconnected { seat } => format!("{} disconnected", seat_name(core, seat, texts)),
         FeedKind::ProtocolBroken { ref why } => format!("the server broke the protocol: {why}"),
@@ -1129,6 +1133,19 @@ fn structure(
     )
 }
 
+/// A fallen hero as the client words it: its seat's name, else its side.
+fn fallen_name(core: &Core, victim: Victim, texts: Option<&Texts>) -> String {
+    match victim {
+        Victim::Seat(slot) => seat_name(core, slot, texts),
+        Victim::Hero(team) => format!("a {team:?} hero"),
+    }
+}
+
+/// The label of Dota's words for a kill streak of this many that ended (they run to ten).
+pub(crate) fn streak_ended_key(streak: u16) -> String {
+    format!("DOTA_HUD_KillStreak_{}_Ended", streak.clamp(3, 10))
+}
+
 /// A hero's death, with its killer, the gold it paid and the seats that assisted when they are
 /// known.
 fn death(
@@ -1139,10 +1156,7 @@ fn death(
     assists: u16,
     texts: Option<&Texts>,
 ) -> String {
-    let victim = match victim {
-        Victim::Seat(slot) => seat_name(core, slot, texts),
-        Victim::Hero(team) => format!("a {team:?} hero"),
-    };
+    let victim = fallen_name(core, victim, texts);
     let by = killer.map(|killer| match killer {
         Killer::Seat(slot) => seat_name(core, slot, texts),
         Killer::Unit {
@@ -1528,6 +1542,53 @@ mod name_tests {
             "a Dire top Installed Ranged Building has fallen"
         );
     }
+    fn streak_ended(streak: u16) -> FeedKind {
+        FeedKind::StreakEnded {
+            victim: Victim::Seat(bota_proto::SlotId(1)),
+            streak,
+        }
+    }
+
+    #[test]
+    fn an_ended_streak_is_worded_by_the_installed_label_with_the_fallen_name() {
+        let root = crate::test_support::scratch_path("streak_ended_installed");
+        std::fs::create_dir_all(root.join("text")).expect("fixture directory");
+        std::fs::write(
+            root.join("text/labels.json"),
+            r#"{"dota_hud_killstreak_3_ended":"{s:victim_name} Installed Spree 3x ended"}"#,
+        )
+        .expect("fixture label");
+        let texts = Texts::load(&root);
+        let core = crate::main_menu::idle().0;
+        assert_eq!(
+            localized_text(&core, &streak_ended(3), Some(&texts)),
+            "seat 1 Installed Spree 3x ended"
+        );
+    }
+
+    #[test]
+    fn an_ended_streak_with_no_installed_label_reads_in_the_clients_neutral_words() {
+        let root = crate::test_support::scratch_path("streak_ended_absent");
+        std::fs::create_dir_all(root.join("text")).expect("fixture directory");
+        std::fs::write(root.join("text/labels.json"), "{}").expect("fixture label");
+        let texts = Texts::load(&root);
+        let core = crate::main_menu::idle().0;
+        assert_eq!(
+            localized_text(&core, &streak_ended(4), Some(&texts)),
+            "seat 1: 4x kill streak ended"
+        );
+        assert_eq!(
+            text(&core, &streak_ended(4)),
+            "seat 1: 4x kill streak ended"
+        );
+    }
+
+    #[test]
+    fn a_streak_beyond_ten_reads_as_the_longest_label_dota_has() {
+        assert_eq!(streak_ended_key(40), "DOTA_HUD_KillStreak_10_Ended");
+        assert_eq!(streak_ended_key(3), "DOTA_HUD_KillStreak_3_Ended");
+    }
+
     #[test]
     fn an_ancient_name_already_identifies_its_side_without_a_duplicate_prefix() {
         let root = crate::test_support::scratch_path("ancient_feed_names");

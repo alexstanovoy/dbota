@@ -121,6 +121,12 @@ impl Tracker {
         })
     }
 
+    /// The kills `hero` has made without falling now.
+    #[must_use]
+    pub fn streak_of(&self, hero: EntityId) -> u16 {
+        self.runs.get(&hero).map_or(0, |run| run.streak)
+    }
+
     /// A kill by `killer` on `tick`: its streak and its run of kills in a row now.
     fn kill(&mut self, killer: EntityId, tick: u32) -> Option<(u16, u16)> {
         if !self.runs.contains_key(&killer) && self.runs.len() >= MAX_HEROES {
@@ -330,7 +336,7 @@ pub struct Observed;
 
 /// The fall an event tells, if it is one; `killer_team` is the side of the unit that struck the
 /// last blow, when it is told and known.
-fn fall_of(event: &EventKind, tick: u32, killer_team: Option<Team>) -> Option<Fall> {
+pub(crate) fn fall_of(event: &EventKind, tick: u32, killer_team: Option<Team>) -> Option<Fall> {
     let EventKind::Died {
         unit,
         denied,
@@ -648,7 +654,7 @@ mod tests {
             spoken(&c),
             [
                 (Line::Streak(4), Duration::ZERO),
-                (Line::Multi(3), MULTI_AFTER_STREAK)
+                (Line::Multi(3), Duration::from_millis(1500))
             ]
         );
         assert_eq!(
@@ -661,6 +667,20 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn the_multi_kill_line_follows_the_streak_line_after_the_reference_games_second_and_a_half() {
+        // The delay of the game's second announcer query, pinned as the number, not by the name.
+        let c = call(false, Some(4), Some(5));
+        let lines = spoken(&c);
+        assert_eq!(
+            lines.iter().map(|(line, _)| *line).collect::<Vec<_>>(),
+            [Line::Streak(5), Line::Multi(4)],
+            "the streak first"
+        );
+        let gap = lines[1].1 - lines[0].1;
+        assert_eq!(gap, Duration::from_millis(1500));
     }
 
     #[test]

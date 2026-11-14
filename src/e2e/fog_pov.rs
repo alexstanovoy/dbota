@@ -151,6 +151,11 @@ impl ReplayFile {
     pub(super) fn path(&self) -> &std::path::Path {
         &self.path
     }
+
+    /// The tick the recording ends at.
+    pub(super) fn tick(&self) -> u32 {
+        self.tick
+    }
 }
 
 impl Drop for ReplayFile {

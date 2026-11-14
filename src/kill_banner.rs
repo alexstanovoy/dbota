@@ -120,6 +120,12 @@ fn hero(
     })
 }
 
+/// What the messages are drawn with.
+struct Stage<'a> {
+    fonts: &'a Fonts,
+    server: &'a AssetServer,
+}
+
 /// Puts up the messages of the frame's calls.
 #[allow(clippy::too_many_arguments)]
 fn say(
@@ -135,6 +141,10 @@ fn say(
 ) {
     let core = &session.0;
     let (column, children) = *column;
+    let stage = Stage {
+        fonts: &fonts,
+        server: &server,
+    };
     let mut standing: Vec<Entity> = children
         .into_iter()
         .flat_map(|children| children.iter())
@@ -153,79 +163,135 @@ fn say(
             while standing.len() >= MESSAGES {
                 commands.entity(standing.remove(0)).despawn();
             }
-            let row = commands
-                .spawn((
-                    Message { banner, age: 0.0 },
-                    Node {
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        ..default()
-                    },
-                    UiTransform::default(),
-                    Pickable::IGNORE,
-                    ChildOf(column),
-                ))
-                .id();
+            let row = spawn_row(&mut commands, column, banner);
             standing.push(row);
-            let shake = banner.rampage();
-            for piece in pieces {
-                let (name, colour) = match &piece {
-                    Piece::Argument(1) => {
-                        if let Some(icon) = &killer.icon {
-                            commands.spawn((
-                                Ink(Color::WHITE),
-                                ImageNode::new(server.load(icon.clone())),
-                                Node {
-                                    width: ui::dota(ICON),
-                                    height: ui::dota(ICON),
-                                    margin: UiRect::right(ui::dota(ICON_GAP)),
-                                    ..default()
-                                },
-                                Pickable::IGNORE,
-                                ChildOf(row),
-                            ));
-                        }
-                        continue;
-                    }
-                    Piece::Argument(2) => (killer.name.clone(), killer.colour),
-                    Piece::Argument(3) => (victim.name.clone(), victim.colour),
-                    Piece::Argument(_) => continue,
-                    Piece::Words(words, lit) => (
-                        words.clone(),
-                        lit.unwrap_or(if shake { RAMPAGE_RED } else { Color::WHITE }),
-                    ),
-                };
-                commands.spawn((
-                    Ink(colour),
-                    ui::text(name, &fonts.bold, TEXT_SIZE * ui::DOTA, colour),
-                    ui::shadow(),
-                    Pickable::IGNORE,
-                    ChildOf(row),
-                ));
+            for piece in &pieces {
+                spawn_piece(
+                    &mut commands,
+                    &stage,
+                    row,
+                    piece,
+                    (&killer, &victim),
+                    banner,
+                );
             }
         }
     }
 }
 
+/// The row of one message, which wraps rather than outgrow the column.
+fn spawn_row(commands: &mut Commands, column: Entity, banner: Banner) -> Entity {
+    commands
+        .spawn((
+            Message { banner, age: 0.0 },
+            Node {
+                align_items: AlignItems::Center,
+                align_content: AlignContent::Center,
+                justify_content: JustifyContent::Center,
+                flex_wrap: FlexWrap::Wrap,
+                max_width: Val::Percent(100.0),
+                ..default()
+            },
+            UiTransform::default(),
+            Pickable::IGNORE,
+            ChildOf(column),
+        ))
+        .id()
+}
+
+/// One piece of a message's words in its row: the killer's icon, a hero's name or lit words.
+fn spawn_piece(
+    commands: &mut Commands,
+    stage: &Stage,
+    row: Entity,
+    piece: &Piece,
+    (killer, victim): (&Hero, &Hero),
+    banner: Banner,
+) {
+    let (name, colour) = match piece {
+        Piece::Argument(1) => {
+            if let Some(icon) = &killer.icon {
+                commands.spawn((
+                    Ink(Color::WHITE),
+                    ImageNode::new(stage.server.load(icon.clone())),
+                    Node {
+                        width: ui::dota(ICON),
+                        height: ui::dota(ICON),
+                        margin: UiRect::right(ui::dota(ICON_GAP)),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                    ChildOf(row),
+                ));
+            }
+            return;
+        }
+        Piece::Argument(2) => (shown_name(&killer.name), killer.colour),
+        Piece::Argument(3) => (shown_name(&victim.name), victim.colour),
+        Piece::Argument(_) => return,
+        Piece::Words(words, lit) => (
+            words.clone(),
+            lit.unwrap_or(if banner.rampage() {
+                RAMPAGE_RED
+            } else {
+                Color::WHITE
+            }),
+        ),
+    };
+    commands.spawn((
+        Ink(colour),
+        ui::text(name, &stage.fonts.bold, TEXT_SIZE * ui::DOTA, colour),
+        ui::shadow(),
+        Pickable::IGNORE,
+        ChildOf(row),
+    ));
+}
+
+/// The most columns of a hero's name a message shows: a letter takes one and a wide glyph two. It
+/// holds the longest name the game makes of a hero no player named ("Shadow Fiend (Radiant)"), and
+/// cuts what players type, which a server admits to 32 bytes. Two names and the words between
+/// them can still outgrow [`WIDTH`]: the row then wraps.
+const NAME_COLUMNS: usize = 24;
+
+/// A name as a message shows it: control and hidden characters dropped, white space made one
+/// space, cut to [`NAME_COLUMNS`] columns with an ellipsis. Every character takes a column at
+/// least (marks that stack above a letter too), so that no name is taller or wider than its cut.
+pub fn shown_name(name: &str) -> String {
+    let name = crate::main_menu::text::line(name, NAME_COLUMNS);
+    let mut shown = String::with_capacity(name.len());
+    let mut columns = 0;
+    for c in name.chars() {
+        // Hangul, CJK, full-width forms and the emoji all lie above U+1100.
+        let width = if c >= '\u{1100}' { 2 } else { 1 };
+        if columns + width > NAME_COLUMNS {
+            shown.push('…');
+            break;
+        }
+        columns += width;
+        shown.push(c);
+    }
+    shown
+}
+
+const _: () = assert!(
+    RAMPAGE_SWING.len() >= 2,
+    "the shake has a segment to stand in"
+);
+
 /// How a message stands at `age`: its scale, its tilt in degrees and its opacity (Dota's
-/// `KillStreakReveal`, `FirstBloodReveal`, `KillStreakRampage` and `KillStreakExpire`).
+/// `KillStreakReveal`, `FirstBloodReveal`, `KillStreakRampage` and `KillStreakExpire`). An age
+/// outside the message's life, or no time at all, reads as the nearest edge of it.
 pub fn pose_at(banner: Banner, age: f32) -> (f32, f32, f32) {
+    let age = if age.is_nan() {
+        0.0
+    } else {
+        age.clamp(0.0, SHOWN_SECONDS + FADE_SECONDS)
+    };
     let faded = 1.0 - ((age - SHOWN_SECONDS) / FADE_SECONDS).clamp(0.0, 1.0);
     if banner.rampage() {
         let t = (age / RAMPAGE_SECONDS).clamp(0.0, 1.0);
         let scale = FIRST_BLOOD_SWELL + (1.0 - FIRST_BLOOD_SWELL) * t;
-        let step = t / RAMPAGE_STEP;
-        let still_from = (RAMPAGE_SWING.len() - 1) as f32 * RAMPAGE_STEP;
-        let tilt = if t >= still_from {
-            let last = RAMPAGE_SWING[RAMPAGE_SWING.len() - 1];
-            last * (1.0 - (t - still_from) / (1.0 - still_from))
-        } else {
-            let at = step.floor() as usize;
-            let from = RAMPAGE_SWING[at];
-            let to = RAMPAGE_SWING[at + 1];
-            from + (to - from) * step.fract()
-        };
-        return (scale, tilt, faded);
+        return (scale, rampage_tilt(t), faded);
     }
     let swell = if banner == Banner::FirstBlood {
         FIRST_BLOOD_SWELL
@@ -239,6 +305,22 @@ pub fn pose_at(banner: Banner, age: f32) -> (f32, f32, f32) {
         swell + (1.0 - swell) * ((t - 0.5) / 0.5)
     };
     (scale, 0.0, t.min(faded))
+}
+
+/// The Rampage's tilt in degrees `t` (0 to 1) through its shake: the swing's points joined, then
+/// the last one eased to rest.
+fn rampage_tilt(t: f32) -> f32 {
+    let last = RAMPAGE_SWING.len() - 1;
+    let still_from = last as f32 * RAMPAGE_STEP;
+    if t >= still_from {
+        return RAMPAGE_SWING[last] * (1.0 - (t - still_from) / (1.0 - still_from));
+    }
+    // `t` just below `still_from` can divide out to exactly `last` in f32: the segment is
+    // clamped, never trusted, and the point in it kept within the segment.
+    let step = t / RAMPAGE_STEP;
+    let at = (step as usize).min(last - 1);
+    let (from, to) = (RAMPAGE_SWING[at], RAMPAGE_SWING[at + 1]);
+    from + (to - from) * (step - at as f32).clamp(0.0, 1.0)
 }
 
 /// Ages the messages, poses them and fades their parts; takes the expired away.
@@ -293,6 +375,26 @@ pub fn shown(world: &mut World) -> Vec<(String, Banner)> {
         .collect()
 }
 
+/// Where the column stands and where each message does, on the window: for the tests.
+#[cfg(test)]
+pub fn placed(world: &mut World) -> (Rect, Vec<Rect>) {
+    let rect = |world: &World, entity: Entity| {
+        let at = world.get::<UiGlobalTransform>(entity).expect("placed");
+        let size = world.get::<ComputedNode>(entity).expect("laid out").size();
+        Rect::from_center_size(at.translation, size)
+    };
+    let column = world
+        .query_filtered::<Entity, With<Column>>()
+        .single(world)
+        .expect("the column");
+    let rows: Vec<Entity> = world
+        .query_filtered::<Entity, With<Message>>()
+        .iter(world)
+        .collect();
+    let rows = rows.into_iter().map(|row| rect(world, row)).collect();
+    (rect(world, column), rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +437,82 @@ mod tests {
         let (_, tilt, _) = pose_at(RAMPAGE, 0.05);
         assert!((tilt + 5.0).abs() < 1e-4, "{tilt}");
         assert_eq!(pose_at(RAMPAGE, RAMPAGE_SECONDS), (1.0, 0.0, 1.0));
+    }
+
+    /// Every age at which one of the animation tables changes its segment, and the floats beside
+    /// it, then ages no clock should give.
+    fn boundary_ages() -> Vec<f32> {
+        let edges = (0..=RAMPAGE_SWING.len() as u32 + 2)
+            .map(|n| n as f32 * RAMPAGE_STEP * RAMPAGE_SECONDS)
+            .chain([
+                REVEAL_SECONDS / 2.0,
+                REVEAL_SECONDS,
+                RAMPAGE_SECONDS,
+                SHOWN_SECONDS,
+                SHOWN_SECONDS + FADE_SECONDS,
+            ]);
+        let mut ages = Vec::new();
+        for edge in edges {
+            let mut below = edge;
+            let mut above = edge;
+            for _ in 0..4 {
+                ages.extend([below, above]);
+                below = below.next_down();
+                above = above.next_up();
+            }
+        }
+        ages.extend([
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::MAX,
+            f32::MIN,
+            f32::MIN_POSITIVE,
+            -0.0,
+            -1.0,
+            1.0e9,
+        ]);
+        ages
+    }
+
+    #[test]
+    fn no_age_poses_a_message_outside_its_tables_or_panics() {
+        let banners = [Banner::FirstBlood, Banner::Streak(3), MULTI, RAMPAGE];
+        for banner in banners {
+            for age in boundary_ages() {
+                let (scale, tilt, opacity) = pose_at(banner, age);
+                assert!(
+                    (1.0..=FIRST_BLOOD_SWELL).contains(&scale),
+                    "{banner:?} at {age}: scale {scale}"
+                );
+                assert!(tilt.abs() <= 5.0, "{banner:?} at {age}: tilt {tilt}");
+                assert!(
+                    (0.0..=1.0).contains(&opacity),
+                    "{banner:?} at {age}: opacity {opacity}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_rampage_at_the_start_of_its_stillness_has_no_gap_in_its_shake() {
+        // 0.45 s divides out to the shake's last point in f32, one float below where it rests.
+        let (_, before, _) = pose_at(RAMPAGE, 0.45);
+        let (_, after, _) = pose_at(RAMPAGE, 0.45_f32.next_up().next_up());
+        assert!((before - after).abs() < 1e-3, "{before} then {after}");
+    }
+
+    #[test]
+    fn a_name_is_cut_to_its_columns_with_an_ellipsis_and_loses_its_hidden_characters() {
+        let long = "W".repeat(32);
+        let wide = "漢".repeat(16);
+        let hostile = "\u{202E}a\u{200B}b\u{0}c";
+        assert_eq!(shown_name(&long), format!("{}…", "W".repeat(NAME_COLUMNS)));
+        assert_eq!(
+            shown_name(&wide),
+            format!("{}…", "漢".repeat(NAME_COLUMNS / 2))
+        );
+        assert_eq!(shown_name(hostile), "abc");
+        assert_eq!(shown_name("Short"), "Short");
     }
 }

@@ -1,7 +1,9 @@
 //! Timed facts retained from the local recording; no curves are inferred from final totals.
 
-use bota_proto::{ItemId, SlotId};
+use bota_proto::{EntityId, ItemId, SlotId};
 use bota_replay::meta::{Meta, MetaRecord, Who};
+
+use crate::kill_calls::{Fall, MULTI_KILL_SECONDS, Tracker};
 
 const MAX_EVENTS: usize = 16_384;
 pub const MAX_SECONDS: u32 = bota_replay::limits::MAX_MINUTES * 60;
@@ -68,6 +70,8 @@ pub struct Recording {
     pub kills: Vec<Kill>,
     pub purchases: Vec<Purchase>,
     pub levels: Vec<Level>,
+    /// The side of each seat (0 Radiant, 1 Dire), which tells a deny from a kill.
+    seat_teams: Vec<(SlotId, u8)>,
     pub limited: bool,
     pub roster_complete: bool,
     pub restricted: bool,
@@ -99,6 +103,7 @@ impl Recording {
             kills: Vec::new(),
             purchases: Vec::new(),
             levels: Vec::new(),
+            seat_teams: Vec::new(),
             limited: !meta.complete || meta.damaged,
             roster_complete: true,
             restricted: false,
@@ -227,8 +232,21 @@ impl Recording {
                     self.limited = true;
                 }
             }
+            MetaRecord::Seat { slot, team, .. }
+                if self.seat_teams.len() < bota_proto::limits::MAX_SEATS
+                    && self.team_of(SlotId(*slot)).is_none() =>
+            {
+                self.seat_teams.push((SlotId(*slot), *team));
+            }
             _ => {}
         }
+    }
+
+    fn team_of(&self, slot: SlotId) -> Option<u8> {
+        self.seat_teams
+            .iter()
+            .find(|(seat, _)| *seat == slot)
+            .map(|(_, team)| *team)
     }
 
     fn has_slot(&self, slot: u8) -> bool {
@@ -243,17 +261,165 @@ impl Recording {
             .value(stat)
     }
 
+    /// The most kills `slot`'s hero made without falling, counted by the rule of the live
+    /// announcements ([`Tracker`]): a fall to an enemy ends the streak, a deny (a hero of its own
+    /// side struck last) does not. The file does not say neutral creeps from lane creeps, so a
+    /// fall to either ends it here; the live count, which is told, leaves it for neutrals.
     pub fn killstreak(&self, slot: SlotId) -> u16 {
-        let (mut current, mut best) = (0_u16, 0_u16);
+        let window = MULTI_KILL_SECONDS.saturating_mul(self.tick_rate.max(1));
+        let mut tracker = Tracker::new(window, true);
+        let me = body_of(Some(slot));
+        let mut best = 0;
         for kill in &self.kills {
-            if kill.victim == Some(slot) {
-                current = 0;
-            }
-            if kill.killer == Some(slot) {
-                current = current.saturating_add(1);
-                best = best.max(current);
-            }
+            tracker.fall(self.fall_of(kill));
+            best = best.max(tracker.streak_of(me));
         }
         best
+    }
+
+    /// What a recorded kill is to the count: credited to an enemy hero, or a deny.
+    fn fall_of(&self, kill: &Kill) -> Fall {
+        let denied = match (kill.killer, kill.victim) {
+            (Some(killer), Some(victim)) => {
+                killer == victim
+                    || matches!(
+                        (self.team_of(killer), self.team_of(victim)),
+                        (Some(a), Some(b)) if a == b
+                    )
+            }
+            _ => false,
+        };
+        Fall {
+            tick: kill.second.saturating_mul(self.tick_rate),
+            victim: body_of(kill.victim),
+            credited: kill
+                .killer
+                .filter(|_| !denied)
+                .map(|killer| body_of(Some(killer))),
+            ends_streak: !denied,
+            shared: false,
+        }
+    }
+}
+
+/// The handle the count knows a seat's hero by (a hero no seat drives has one of its own), for a
+/// recording has no bodies.
+fn body_of(slot: Option<SlotId>) -> EntityId {
+    EntityId {
+        idx: slot.map_or(u32::MAX, |slot| u32::from(slot.0)),
+        generation: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bota_proto::{EventKind, Team};
+    use bota_replay::meta::MetaHeader;
+
+    use super::*;
+
+    const TICK_RATE: u16 = 30;
+    /// Radiant's seats 0 and 2, Dire's 1 and 3.
+    const SEATS: [(u8, u8); 4] = [(0, 0), (1, 1), (2, 0), (3, 1)];
+
+    /// A fall as the match told it: who fell, who struck last, whether it was a deny.
+    struct Death(u8, u8, bool);
+
+    fn recording(falls: &[Death]) -> Recording {
+        let mut records: Vec<_> = SEATS
+            .iter()
+            .map(|&(slot, team)| MetaRecord::Seat {
+                slot,
+                team,
+                hero: 1,
+            })
+            .collect();
+        for (n, Death(victim, killer, _)) in falls.iter().enumerate() {
+            records.push(MetaRecord::Kill {
+                tick: (n as u32 + 1) * u32::from(TICK_RATE),
+                victim: Who::Hero(*victim),
+                killer: Some(Who::Hero(*killer)),
+                gold: 0,
+            });
+        }
+        let meta = Meta {
+            header: MetaHeader {
+                magic: MetaHeader::MAGIC,
+                schema: MetaHeader::SCHEMA,
+                wire_fingerprint: 0,
+                rules_version: 0,
+                match_id: 1,
+                map: 0,
+                tick_rate: TICK_RATE,
+                pregame_ticks: 0,
+                catalogue_items: 0,
+                catalogue_digest: 0,
+            },
+            records,
+            skipped: 0,
+            damaged: false,
+            complete: true,
+        };
+        Recording::from_meta(&meta, SEATS.iter().map(|&(slot, _)| SlotId(slot)))
+    }
+
+    /// The longest streak of a seat by the live count, fed the falls as the server tells them.
+    fn live_streak(falls: &[Death], slot: u8) -> u16 {
+        let team = |slot: u8| match SEATS.iter().find(|seat| seat.0 == slot) {
+            Some((_, 0)) => Team::Radiant,
+            _ => Team::Dire,
+        };
+        let id = |slot: u8| body_of(Some(SlotId(slot)));
+        let mut tracker = Tracker::new(MULTI_KILL_SECONDS * u32::from(TICK_RATE), true);
+        let mut best = 0;
+        for (n, Death(victim, killer, denied)) in falls.iter().enumerate() {
+            let event = EventKind::Died {
+                unit: id(*victim),
+                killer: Some(id(*killer)),
+                denied: *denied,
+                gold: 0,
+                bounty: None,
+                assists: 0,
+                awards: None,
+                credited_hero: (!denied).then(|| Box::new(id(*killer))),
+            };
+            let fall = crate::kill_calls::fall_of(&event, n as u32, Some(team(*killer)))
+                .expect("a death is a fall");
+            tracker.fall(fall);
+            best = best.max(tracker.streak_of(id(slot)));
+        }
+        best
+    }
+
+    fn kill(victim: u8, killer: u8) -> Death {
+        Death(victim, killer, false)
+    }
+
+    #[test]
+    fn a_deny_in_the_middle_of_a_streak_leaves_it_in_the_score_card_as_in_the_live_count() {
+        let falls = [
+            kill(1, 0),
+            kill(3, 0),
+            Death(0, 2, true),
+            kill(1, 0),
+            kill(3, 0),
+        ];
+        assert_eq!(live_streak(&falls, 0), 4);
+        assert_eq!(recording(&falls).killstreak(SlotId(0)), 4);
+    }
+
+    #[test]
+    fn a_fall_to_an_enemy_in_the_middle_of_a_streak_ends_it_in_the_score_card_as_in_the_live_count()
+    {
+        let falls = [kill(1, 0), kill(3, 0), kill(0, 1), kill(1, 0), kill(3, 0)];
+        assert_eq!(live_streak(&falls, 0), 2);
+        assert_eq!(recording(&falls).killstreak(SlotId(0)), 2);
+    }
+
+    #[test]
+    fn a_hero_that_killed_itself_keeps_its_streak_in_the_score_card_as_in_the_live_count() {
+        let falls = [kill(1, 0), kill(3, 0), Death(0, 0, true), kill(1, 0)];
+        assert_eq!(live_streak(&falls, 0), 3);
+        assert_eq!(recording(&falls).killstreak(SlotId(0)), 3);
     }
 }

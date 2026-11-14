@@ -134,7 +134,7 @@ fn streak_ended(
     streak: u16,
 ) -> Option<Vec<Pair>> {
     let said = texts.label(
-        &format!("DOTA_HUD_KillStreak_{}_Ended", streak.clamp(3, 10)),
+        &super::streak_ended_key(streak),
         &[("victim_name", String::new())],
     )?;
     let who = match victim {

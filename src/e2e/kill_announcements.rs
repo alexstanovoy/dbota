@@ -3,13 +3,14 @@
 //! kills again and again, each kill told by the server as any hero's fall, the match's game time
 //! moved on by ticks (a lockstep match goes as fast as the client takes it in), never by waiting.
 
+use bevy::prelude::{Entity, Name};
 use bota_client_core::Intent;
 use bota_proto::{Cheat, HeroId, ModifierSpec, Target, Vec2};
 
 use super::harness::{Client, MID, Server};
 use super::hero_voice::{HANG, Send, Sends, begun, foe, foe_player, foe_seat, send_foe};
 use crate::kill_banner::shown as banners;
-use crate::kill_calls::{Call, CallLog, MULTI_AFTER_STREAK, MULTI_KILL_SECONDS};
+use crate::kill_calls::{Call, CallLog, MULTI_KILL_SECONDS};
 use crate::voice::KillsHeard;
 
 /// Shadow Fiend (Dire) and the enemy Pudge on the map without creeps, the battle begun, Shadow
@@ -172,9 +173,51 @@ fn a_double_and_a_triple_kill_inside_the_window_are_called_and_a_streak_comes_fi
                 "sound.announcer.kill.streak.3".to_owned(),
                 std::time::Duration::ZERO
             ),
-            ("sound.announcer.kill.triple".to_owned(), MULTI_AFTER_STREAK),
+            (
+                "sound.announcer.kill.triple".to_owned(),
+                std::time::Duration::from_millis(1500)
+            ),
         ],
-        "first blood alone, a double alone, then the spree and, a pause behind it, the triple"
+        "first blood alone, a double alone, then the spree and, a second and a half behind it \
+         (the reference game's delay), the triple"
+    );
+}
+
+/// Five kills, each within the window of the one before, are a Rampage: its streak line is
+/// called first, then the Rampage a second and a half behind it, and it is shaken in red.
+#[test]
+fn five_quick_kills_are_a_rampage_called_after_the_streak_and_shaken_in_red() {
+    let (_server, mut client, sends) = arena(true);
+    let window = window_ticks(&client);
+    let mut made = Vec::new();
+    for _ in 0..5 {
+        made.push(kill_foe(&mut client, &sends));
+    }
+    for pair in made.windows(2) {
+        assert!(
+            pair[1].tick - pair[0].tick < window,
+            "each kill is inside the last one's window"
+        );
+    }
+    let fifth = made[4];
+    assert_eq!((fifth.multi, fifth.streak), (Some(5), Some(5)));
+    let shown = banners(client.world_mut());
+    let (words, banner) = shown.last().expect("a message");
+    assert_eq!(words.trim(), "RAMPAGE!!!");
+    assert!(banner.rampage(), "{banner:?}");
+    assert_eq!(
+        spoken(&client)[spoken(&client).len() - 2..],
+        [
+            (
+                "sound.announcer.kill.streak.5".to_owned(),
+                std::time::Duration::ZERO
+            ),
+            (
+                "sound.announcer.kill.rampage".to_owned(),
+                std::time::Duration::from_millis(1500)
+            ),
+        ],
+        "the streak, then the Rampage behind it"
     );
 }
 
@@ -305,13 +348,18 @@ fn an_enemy_hero_ending_a_streak_is_told_in_the_event_column_and_the_streak_star
     assert_eq!(again.streak, None, "the streak starts over after the fall");
 }
 
+/// Ground far from where the viewer's hero stands, which its side has no sight of.
+fn far_ground() -> Vec2 {
+    Vec2::from_ints(MID.0 - 5500, MID.1 - 5500)
+}
+
 /// A kill far from the viewer's hero, in a match with the fog on, is announced all the same:
 /// First Blood is called and spoken. (In a game of two sides the viewer's own side always has a
 /// hero in the fight, so the kill itself is never hidden from it; what is far is the viewer.)
 #[test]
 fn a_kill_far_from_the_viewer_in_the_fog_is_announced() {
     let (_server, mut client, sends) = arena(false);
-    let far = Vec2::from_ints(MID.0 - 5500, MID.1 - 5500);
+    let far = far_ground();
     {
         let mut queue = sends.lock().expect("the foe's queue");
         queue.push_back(Send::To(far));
@@ -321,6 +369,10 @@ fn a_kill_far_from_the_viewer_in_the_fog_is_announced() {
     client.within(HANG, "the fall in the fog called", |c| !calls(c).is_empty());
     let call = calls(&client)[0];
     assert!(call.first_blood);
+    assert!(
+        client.view().unit(call.victim).is_none(),
+        "the fallen is gone from the viewer's sight"
+    );
     let mine = client.me().pos;
     assert!(
         mine.distance_squared(far) > 4_000 * 4_000,
@@ -410,4 +462,215 @@ fn a_client_joining_after_the_first_kill_calls_no_first_blood_on_the_second() {
     }
     assert_eq!(made.len(), 1, "only the second kill: {made:?}");
     assert!(!made[0].first_blood);
+}
+
+/// The recording of a hero that falls far from where a spectator of one side looks, in the fog,
+/// as that side's point of view saw it, and the call the player's client made.
+fn recorded_far_kill() -> (super::fog_pov::ReplayFile, Call, u8) {
+    let (server, mut client, sends) = arena_with(false, &["--spectators", "open"]);
+    let mut recording = super::fog_pov::Recording::open(&server, false);
+    let far = far_ground();
+    {
+        let mut queue = sends.lock().expect("the foe's queue");
+        queue.push_back(Send::To(far));
+        queue.push_back(Send::Create(HeroId::PUDGE, far + Vec2::from_ints(200, 0)));
+        queue.push_back(Send::Strike);
+    }
+    client.within(HANG, "the fall in the fog called", |c| !calls(c).is_empty());
+    let call = calls(&client)[0];
+    let seat = client.core().my_slot.expect("a seat").0;
+    let until = client.tick();
+    client.within(HANG, "the recording caught up", |_| {
+        recording.poll();
+        recording.tick + 2 >= until
+    });
+    (recording.save(server), call, seat)
+}
+
+/// A replay seen from one side, the fallen's, with the fight far from where that side has eyes,
+/// announces the kill all the same: the announcement is not what the viewer can see. (A kill is
+/// always in sight of the side that made it or the side that lost the hero at the tick of the fall,
+/// so that a point of view restricted to a side is the strongest the scene can be made.)
+#[test]
+fn a_replay_from_a_side_that_sees_neither_fighter_announces_the_kill() {
+    let (file, live, seat) = recorded_far_kill();
+    let replayed = super::fog_pov::replay_observed(&file, Some(seat), &[], |_| {});
+    let made = calls(&replayed);
+    assert_eq!(gist(&made), gist(&[live]), "the same kill at the same tick");
+    assert!(
+        replayed.view().unit(made[0].victim).is_none(),
+        "the fallen is gone"
+    );
+    assert_eq!(spoken(&replayed)[0].0, "sound.announcer.kill.first_blood");
+}
+
+/// Opens the recording afresh in the client, as a restart or a seek back does: the same game, a
+/// view that begins at an earlier tick than the one on screen.
+fn reopen(client: &mut Client, file: &super::fog_pov::ReplayFile) {
+    let player = bota_client_core::ReplayPlayer::load(file.path()).expect("the recording opens");
+    *client.core_mut() =
+        bota_client_core::App::new(bota_client_core::Source::Replay(Box::new(player)));
+}
+
+/// Plays the client's replay on until `done`, at the pace of the frames.
+fn play_until(client: &mut Client, what: &str, done: impl Fn(&Client) -> bool) {
+    if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
+        player.paused = false;
+    }
+    client.within(HANG, what, |c| done(c));
+    if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
+        player.paused = true;
+    }
+}
+
+/// A recording sought back to its start, or restarted, announces what the first pass did at the
+/// same ticks and no kill twice, whether the first pass was whole or cut short.
+#[test]
+fn a_replay_sought_back_or_restarted_announces_the_same_kills_once() {
+    let (file, live) = recorded_kills(3);
+    let mut client = super::fog_pov::replay_observed(&file, None, &[], |_| {});
+    let forward = gist(&calls(&client));
+    assert_eq!(
+        forward.len(),
+        3,
+        "three kills in the first pass: {forward:?}"
+    );
+    assert_eq!(
+        (forward[2].2, forward[2].3),
+        (Some(3), Some(3)),
+        "a triple and a spree among them"
+    );
+    assert_eq!(forward, gist(&live), "as live");
+    let heard_forward = spoken(&client);
+    let (calls_before, heard_before) = (calls(&client).len(), heard_forward.len());
+
+    // Back to the start, and on to the end.
+    reopen(&mut client, &file);
+    let end = file.tick();
+    play_until(&mut client, "the recording played again", |c| {
+        c.tick() >= end
+    });
+    assert_eq!(
+        gist(&calls(&client)[calls_before..]),
+        forward,
+        "the second pass"
+    );
+    assert_eq!(
+        spoken(&client)[heard_before..],
+        heard_forward[..],
+        "and its words"
+    );
+
+    // Back again, this time cut short after the second kill, then back and on to the end.
+    let (calls_before, heard_before) = (calls(&client).len(), spoken(&client).len());
+    reopen(&mut client, &file);
+    let second = forward[1].0;
+    play_until(&mut client, "the second kill told again", |c| {
+        c.tick() >= second
+    });
+    let partial = gist(&calls(&client)[calls_before..]);
+    assert_eq!(partial, forward[..2], "the first two kills and not a third");
+    assert_eq!(
+        spoken(&client).len() - heard_before,
+        heard_forward.len() - 2
+    );
+    let (calls_before, heard_before) = (calls(&client).len(), spoken(&client).len());
+    reopen(&mut client, &file);
+    play_until(&mut client, "the recording played a third time", |c| {
+        c.tick() >= end
+    });
+    assert_eq!(
+        gist(&calls(&client)[calls_before..]),
+        forward,
+        "the third pass"
+    );
+    assert_eq!(
+        spoken(&client)[heard_before..],
+        heard_forward[..],
+        "and its words"
+    );
+}
+
+/// The box of the interface node called `name`, on the window.
+fn box_of(client: &mut Client, name: &str) -> bevy::math::Rect {
+    let world = client.world_mut();
+    let node = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, label)| label.as_str() == name)
+        .map(|(entity, _)| entity)
+        .expect("the node");
+    let at = world
+        .get::<bevy::ui::UiGlobalTransform>(node)
+        .expect("placed")
+        .translation;
+    let size = world
+        .get::<bevy::ui::ComputedNode>(node)
+        .expect("laid out")
+        .size();
+    bevy::math::Rect::from_center_size(at, size)
+}
+
+/// Names a server lets through (32 bytes, no control or bidi characters) that are as wide as
+/// names get, wide glyphs, right to left, or like markup, never push a message out of its
+/// column nor up under the top bar; they are cut with an ellipsis.
+#[test]
+fn hostile_names_stay_in_the_banner_column_below_the_top_bar() {
+    let (_server, mut client, sends) = arena(true);
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(100),
+        ));
+    let (me, foe) = (
+        client.core().my_slot.expect("a seat"),
+        foe_player(&client).expect("the foe's row").slot,
+    );
+    let hostile = [
+        ("W".repeat(32), "漢字".repeat(5)),
+        (
+            "אבגדהוזחטיכלמנסע".to_owned(),
+            "<font color='#f00'>%s1%s2</b>".to_owned(),
+        ),
+        (
+            "%s3<b>%s2</b>\u{5d0}\u{5d1}\u{5d2}\u{5d3}".to_owned(),
+            "x".to_owned(),
+        ),
+    ];
+    for (n, (killer, victim)) in hostile.iter().enumerate() {
+        for name in [killer, victim] {
+            assert!(
+                bota_core::name_fault(name).is_none(),
+                "{name:?} is a name a server admits"
+            );
+        }
+        client.core_mut().names = vec![(me, killer.clone()), (foe, victim.clone())];
+        kill_foe(&mut client, &sends);
+        client.frames(3);
+        let shown = said(&mut client);
+        let cut = crate::kill_banner::shown_name(killer);
+        assert!(
+            shown.iter().any(|line| line.contains(&cut)),
+            "kill {n}: {cut:?} not in {shown:?}"
+        );
+        if cut != *killer {
+            assert!(
+                !shown.iter().any(|line| line.contains(killer.as_str())),
+                "kill {n}: the whole name in {shown:?}"
+            );
+        }
+        let (column, rows) = crate::kill_banner::placed(client.world_mut());
+        let bar = box_of(&mut client, "hud top bar");
+        assert!(!rows.is_empty(), "kill {n}: a message stands");
+        for row in rows {
+            assert!(
+                row.min.x >= column.min.x - 1.0 && row.max.x <= column.max.x + 1.0,
+                "kill {n}: {row:?} outside the column {column:?}"
+            );
+            assert!(
+                row.min.y >= bar.max.y,
+                "kill {n}: {row:?} under the top bar {bar:?}"
+            );
+        }
+    }
 }
