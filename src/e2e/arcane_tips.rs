@@ -35,7 +35,7 @@ fn tooltip_tells(client: &mut Client, figure: &str) -> bool {
     shown_spans(client).iter().any(|span| span.trim() == figure)
 }
 
-/// Takes an Arcane Rune with the hero.
+/// Takes an Arcane Rune with the hero: nothing takes a rune but an order.
 fn take_an_arcane_rune(client: &mut Client) {
     let top = bota_core::DOTA_RUNE_SPOTS[0].at;
     let spot = (top.x.to_int(), top.y.to_int());
@@ -44,7 +44,7 @@ fn take_an_arcane_rune(client: &mut Client) {
         kind: RuneKind::Arcane,
         at: Spot::from_ints(spot.0, spot.1),
     });
-    client.stand_at(spot);
+    super::runes::take_rune(client, RuneKind::Arcane, spot);
     client.within(SOON, "the Arcane Rune on the hero", |c| {
         c.me().effects.iter().any(|e| e.id == EffectId::RUNE_ARCANE)
     });

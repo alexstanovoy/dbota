@@ -15,7 +15,7 @@ use dbota_import::voice::concept::{Concept, Fact};
 use dbota_import::voice::speaker::Silence;
 
 use super::harness::{Client, MID, Server, scripted_seat};
-use super::runes::{drawn, point_at, spawn_rune, top_spot};
+use super::runes::{drawn, spawn_rune, take_rune, top_spot};
 use crate::hero_voice::{Answer, HeroVoice, Line, Said};
 
 /// How long a wait on the match may take before the test calls it stuck: a hang guard only, the
@@ -488,8 +488,8 @@ fn a_last_hit_counts_the_heros_creep_score() {
     );
 }
 
-/// Takes a Bounty Rune spawned at the top river spot: the hero stands beside it, and a right
-/// click on it takes it.
+/// Takes a Bounty Rune spawned at the top river spot: the hero stands beside it and is ordered
+/// to take it, as a right click on it orders.
 fn take_bounty(client: &mut Client) {
     quiet(client);
     let spot = top_spot();
@@ -498,8 +498,7 @@ fn take_bounty(client: &mut Client) {
     client.within(HANG, "the Bounty Rune drawn", |c| {
         drawn(c, RuneKind::Bounty).is_some()
     });
-    point_at(client, (spot.0 as f32, spot.1 as f32));
-    client.click(MouseButton::Right);
+    take_rune(client, RuneKind::Bounty, spot);
 }
 
 /// The answers to the Bounty Rune, waiting for the `n`th.
