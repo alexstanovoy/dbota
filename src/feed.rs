@@ -145,6 +145,7 @@ impl Place {
             | FeedKind::Rune { .. }
             | FeedKind::ShrineActivated { .. }
             | FeedKind::BoughtBack { .. }
+            | FeedKind::StreakEnded { .. }
             | FeedKind::Captured { .. } => Place::Left,
             _ => Place::Corner,
         }
@@ -399,6 +400,10 @@ fn side_of(core: &Core, kind: &FeedKind) -> Option<Side> {
             (None, Victim::Hero(team)) => Some(good_for(team).flip()),
         },
         FeedKind::StructureFell { team, .. } => Some(good_for(team).flip()),
+        FeedKind::StreakEnded { victim, .. } => match victim {
+            Victim::Seat(slot) => team_of(slot).map(|team| good_for(team).flip()),
+            Victim::Hero(team) => Some(good_for(team).flip()),
+        },
         FeedKind::Captured { by, .. } => Some(good_for(by)),
         FeedKind::BoughtBack { team, .. } => Some(good_for(team)),
         _ => None,
@@ -1051,6 +1056,13 @@ fn localized_text(core: &Core, kind: &FeedKind, texts: Option<&Texts>) -> String
             ranged,
             killer: _,
         } => structure(team, kind, lane, tier, ranged, texts),
+        FeedKind::StreakEnded { victim, streak } => {
+            let victim = match victim {
+                Victim::Seat(slot) => seat_name(core, slot, texts),
+                Victim::Hero(team) => format!("a {team:?} hero"),
+            };
+            format!("{victim}: {streak}x kill streak ended")
+        }
         FeedKind::Disconnected { seat } => format!("{} disconnected", seat_name(core, seat, texts)),
         FeedKind::ProtocolBroken { ref why } => format!("the server broke the protocol: {why}"),
         FeedKind::ConnectionLost => "connection to the server lost".to_string(),

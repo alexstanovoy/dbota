@@ -22,13 +22,13 @@ const MAX_RECORD_BYTES: usize = 32 * 1024 * 1024;
 const STANDING_TICKS: u32 = 2;
 static NEXT_REPLAY: AtomicU32 = AtomicU32::new(0);
 
-struct Recording {
+pub(super) struct Recording {
     net: Net,
     bytes: Vec<u8>,
     info: Option<bota_proto::MatchInfo>,
     started: bool,
     whole: usize,
-    tick: u32,
+    pub(super) tick: u32,
     deaths: Vec<(bota_proto::EntityId, usize, u32)>,
     /// Whether the bytes are not kept: a test that makes its own records needs the match's
     /// description and no more.
@@ -38,7 +38,7 @@ struct Recording {
 }
 
 impl Recording {
-    fn open(server: &Server, discard: bool) -> Self {
+    pub(super) fn open(server: &Server, discard: bool) -> Self {
         let mut net = Net::connect(&server.address).expect("the recording spectator connects");
         net.send(&ClientMsg::hello(
             Role::Spectator,
@@ -78,7 +78,7 @@ impl Recording {
         self.bytes.extend(bytes);
     }
 
-    fn poll(&mut self) {
+    pub(super) fn poll(&mut self) {
         let messages = self.net.poll();
         if self.closed {
             return;
@@ -120,7 +120,7 @@ impl Recording {
         }
     }
 
-    fn save(&self, server: Server) -> ReplayFile {
+    pub(super) fn save(&self, server: Server) -> ReplayFile {
         self.save_until(server, self.whole, self.tick)
     }
 

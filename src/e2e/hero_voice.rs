@@ -20,7 +20,7 @@ use crate::hero_voice::{Answer, HeroVoice, Line, Said};
 
 /// How long a wait on the match may take before the test calls it stuck: a hang guard only, the
 /// waits are on the match's own state (a loaded machine runs it slowly).
-const HANG: Duration = Duration::from_secs(240);
+pub(super) const HANG: Duration = Duration::from_secs(240);
 
 fn answers(client: &Client) -> Vec<Answer> {
     client
@@ -53,7 +53,7 @@ pub(super) fn spoke(client: &Client, concept: Concept, value: &str) -> bool {
 }
 
 /// Every sound player started, with the sound it plays and the mixer's event for it.
-type Players = Arc<Mutex<Vec<(Entity, AssetId<AudioSource>, Option<String>)>>>;
+pub(super) type Players = Arc<Mutex<Vec<(Entity, AssetId<AudioSource>, Option<String>)>>>;
 
 /// Records every sound player the client starts from now on.
 fn players(client: &mut Client) -> Players {
@@ -153,7 +153,7 @@ fn checked_line(client: &mut Client, players: &Players, line: &Line) {
 
 /// Waits for the game to show (the hero says nothing before), the battle to begin and the
 /// hero's line for it to end.
-fn begun(client: &mut Client) {
+pub(super) fn begun(client: &mut Client) {
     client.until("the game shown", |c| {
         c.world().resource::<crate::loading::Loading>().done()
     });
@@ -260,28 +260,79 @@ fn shadow_fiend_answers_a_move_order_from_his_own_move_rule() {
 }
 
 /// What the enemy Pudge of [`foe_seat`] is told next.
-enum Send {
+pub(super) enum Send {
     /// Stand up at its fountain (`-respawn`).
     Respawn,
     /// Stand at a spot.
     To(bota_proto::Vec2),
+    /// Strike the nearest hero of the other side, every view, until told to stand.
+    Strike,
+    /// Stop striking.
+    Peace,
+    /// Create a hero of the other side where told (`-createhero`), to strike.
+    Create(HeroId, bota_proto::Vec2),
 }
 
 /// The queue of what [`foe_seat`]'s Pudge does next.
-type Sends = Arc<Mutex<std::collections::VecDeque<Send>>>;
+pub(super) type Sends = Arc<Mutex<std::collections::VecDeque<Send>>>;
 
 /// An enemy Pudge, held by a seat with no front end, doing what is pushed to the queue returned,
 /// one thing a view, standing still between.
-fn foe_seat(server: &Server) -> Sends {
+pub(super) fn foe_seat(server: &Server) -> Sends {
     let sends: Sends = Arc::default();
     let queue = sends.clone();
+    let mut striking = false;
     scripted_seat(server, HeroId::PUDGE, move |session| {
-        if session.own_hero().is_none() {
-            return Vec::new();
-        }
+        let me = session.own_hero().map(|hero| (hero.team, hero.pos));
         let next = queue.lock().expect("the foe's queue").pop_front();
+        // A fallen hero can only be stood up again; the rest waits for it.
+        let Some((team, pos)) = me else {
+            return match next {
+                Some(Send::Respawn) => vec![IssuedOrder::hero(Order::Cheat {
+                    cheat: Cheat::Respawn,
+                })],
+                Some(held) => {
+                    queue.lock().expect("the foe's queue").push_front(held);
+                    Vec::new()
+                }
+                None => Vec::new(),
+            };
+        };
         let orders = match next {
+            None if striking => {
+                let nearest = session.current().and_then(|view| {
+                    view.units
+                        .iter()
+                        .filter(|u| u.kind == bota_proto::UnitKind::Hero && u.team != team)
+                        .min_by_key(|u| u.pos.distance_squared(pos))
+                        .map(|u| u.id)
+                });
+                return nearest
+                    .map(|target| {
+                        vec![IssuedOrder::hero(Order::Attack {
+                            target: Target::Unit(target),
+                        })]
+                    })
+                    .unwrap_or_default();
+            }
             None => return Vec::new(),
+            Some(Send::Strike) => {
+                striking = true;
+                return Vec::new();
+            }
+            Some(Send::Peace) => {
+                striking = false;
+                vec![Order::Move {
+                    target: Target::None,
+                }]
+            }
+            Some(Send::Create(hero, at)) => vec![Order::Cheat {
+                cheat: Cheat::CreateHero {
+                    hero,
+                    enemy: true,
+                    at,
+                },
+            }],
             Some(Send::Respawn) => vec![Order::Cheat {
                 cheat: Cheat::Respawn,
             }],
@@ -300,20 +351,20 @@ fn foe_seat(server: &Server) -> Sends {
 }
 
 /// The enemy seat's scoreboard row.
-fn foe_player(c: &Client) -> Option<&bota_proto::PlayerView> {
+pub(super) fn foe_player(c: &Client) -> Option<&bota_proto::PlayerView> {
     let view = c.core().view()?;
     let mine = view.player(c.core().my_slot?)?.team;
     view.players.iter().find(|p| p.team != mine)
 }
 
 /// The enemy hero, as the view shows it.
-fn foe(c: &Client) -> Option<&bota_proto::UnitView> {
+pub(super) fn foe(c: &Client) -> Option<&bota_proto::UnitView> {
     c.core().view()?.unit(foe_player(c)?.unit?)
 }
 
 /// Sends the foe to `at` (standing it up first when it lies dead) and waits until it stands
 /// there.
-fn send_foe(client: &mut Client, sends: &Sends, at: bota_proto::Vec2) {
+pub(super) fn send_foe(client: &mut Client, sends: &Sends, at: bota_proto::Vec2) {
     if foe_player(client).is_none_or(|p| p.respawn_left > 0) {
         sends
             .lock()
@@ -336,7 +387,7 @@ fn send_foe(client: &mut Client, sends: &Sends, at: bota_proto::Vec2) {
 /// battle begun; `before` runs first. Shadow Fiend then kills Pudge: the first attack order, at
 /// the foe far off, is answered first, so that the killing one falls in the attack's own
 /// cooldown and the hero is quiet when the kill comes. The answer to the kill, and the players.
-fn kill_scene(before: impl FnOnce(&mut Client, &Sends)) -> (Client, Players, Answer) {
+pub(super) fn kill_scene(before: impl FnOnce(&mut Client, &Sends)) -> (Client, Players, Answer) {
     let server = Server::start(2, &["--map", "0", "--runes", "none"]);
     let sends = foe_seat(&server);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
@@ -381,7 +432,7 @@ fn kill_scene(before: impl FnOnce(&mut Client, &Sends)) -> (Client, Players, Ans
 
 /// The kill was answered by Shadow Fiend's first-blood rule, which outscores his plain kill
 /// rule, with the line it played.
-fn first_blood_answered(client: &mut Client, players: &Players, kill: Answer) {
+pub(super) fn first_blood_answered(client: &mut Client, players: &Players, kill: Answer) {
     assert_eq!(
         kill.query.value("targetclassname"),
         Some("npc_dota_hero_pudge")
@@ -787,6 +838,7 @@ fn heard(
     let args = crate::Args::parse_from(["dbota", "--replay", path, "--pov", &seat]);
     let mut core = crate::session::open(&args).expect("the replay opens").0;
     let fog = crate::fog::FogGrid::default();
+    let mut counting = crate::kill_calls::Counting::default();
     let mut raised = Vec::new();
     let mut listening = false;
     // A frame a tick, and a bound far past any test's match.
@@ -795,7 +847,8 @@ fn heard(
         if let Some(tick) = core.view().map(|view| view.tick) {
             listening |= from(&core);
             if listening {
-                let queries = memory.queries(&core, Some(slot), &fog);
+                let calls = counting.read(&core, 0);
+                let queries = memory.queries(&core, Some(slot), &fog, &calls);
                 raised.extend(queries.into_iter().map(|(c, f)| (tick, c, f)));
             }
         }
@@ -931,13 +984,15 @@ fn a_listener_begun_after_a_shared_kill_keeps_first_blood_spent() {
             credited_hero: credited.then(|| Box::new(killer)),
         };
     let fog = crate::fog::FogGrid::default();
-    let heard = |core: &mut bota_client_core::App,
-                 memory: &mut crate::hero_voice::listen::Memory,
-                 view,
-                 event| {
+    let mut counting = crate::kill_calls::Counting::default();
+    let mut heard = |core: &mut bota_client_core::App,
+                     memory: &mut crate::hero_voice::listen::Memory,
+                     view,
+                     event| {
         core.handle(view);
         core.told = vec![event];
-        memory.queries(core, Some(slot), &fog)
+        let calls = counting.read(core, 0);
+        memory.queries(core, Some(slot), &fog, &calls)
     };
     let shared = || (after(1, 0, 1), death(tower, false, 1 << slot.0));
     let kill = || (after(60, 1, 1), death(mine, true, 0));

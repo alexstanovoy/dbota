@@ -59,6 +59,11 @@ pub struct PregameHeard(pub Vec<(PregameCue, u32)>);
 #[cfg(test)]
 #[derive(Resource, Default, Debug)]
 pub struct BuildingsHeard(pub Vec<String>);
+/// The announcer's lines of the kills it called, by their logical name, with the wait each had
+/// (muted, or with no sound device, too): for the tests.
+#[cfg(test)]
+#[derive(Resource, Default, Debug)]
+pub struct KillsHeard(pub Vec<(String, Duration)>);
 /// The sounds of one logical name, played in turn.
 #[derive(Default)]
 struct Lines {
@@ -175,6 +180,8 @@ struct Voices {
     /// The announcer's lines of a tower or barracks that fell, by their logical name
     /// (`sound.announcer.tower.fall.yr.top`, ...).
     buildings: Vec<(String, Lines)>,
+    /// The announcer's lines of a hero's kill, by their logical name.
+    kills: Vec<(&'static str, Lines)>,
     roshan: [Lines; 2],
     /// The horn at each side's ancient: Radiant's, then Dire's.
     horns: [Lines; 2],
@@ -203,9 +210,14 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (announce, fortified, building_fell, boss_fell, herald, speak),
+        )
+        .add_systems(
+            Update,
+            kill_called.after(crate::kill_calls::Observed).before(speak),
         );
     #[cfg(test)]
-    app.init_resource::<BuildingsHeard>();
+    app.init_resource::<BuildingsHeard>()
+        .init_resource::<KillsHeard>();
 }
 
 fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
@@ -230,6 +242,11 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
         if !lines.sources.is_empty() {
             voices.buildings.push((logical, lines));
         }
+    }
+    for line in crate::kill_calls::LINES {
+        voices
+            .kills
+            .push((line, Lines::load(&manifest, &server, line)));
     }
     voices.day = Lines::load(&manifest, &server, "sound.day");
     voices.night = Lines::load(&manifest, &server, "sound.night");
@@ -509,6 +526,32 @@ pub fn announce_buildings_once(world: &mut World) -> (usize, usize) {
     (waiting - before, voices.buildings.len())
 }
 
+/// The announcer's lines for the kills the frame called, told to every seat and spectator as
+/// Dota's announcer does.
+fn kill_called(
+    calls: Res<crate::kill_calls::Calls>,
+    mut voices: ResMut<Voices>,
+    #[cfg(test)] mut heard: ResMut<KillsHeard>,
+    mut announcer: ResMut<Announcer>,
+    time: Res<Time>,
+    settings: Res<Settings>,
+    args: Res<crate::Args>,
+) {
+    for call in &calls.0 {
+        for (line, wait) in crate::kill_calls::spoken(call) {
+            let name = line.logical();
+            #[cfg(test)]
+            heard.0.push((name.to_owned(), wait));
+            if settings.muted || args.mute {
+                continue;
+            }
+            if let Some((_, lines)) = voices.kills.iter_mut().find(|(n, _)| *n == name) {
+                announcer.push_after(lines.take(), 0.9, time.elapsed_secs(), wait);
+            }
+        }
+    }
+}
+
 /// Starts the next announcer line once the one before it has ended.
 fn speak(
     mut commands: Commands,
@@ -624,6 +667,7 @@ fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate
     .chain([&voices.day, &voices.night])
     .chain(voices.fortified.iter())
     .chain(voices.buildings.iter().map(|(_, lines)| lines))
+    .chain(voices.kills.iter().map(|(_, lines)| lines))
     .chain(voices.roshan.iter())
     .chain(voices.horns.iter());
     let (done, total) = lines.flat_map(|l| &l.sources).fold((0, 0), |(d, t), h| {

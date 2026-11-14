@@ -1320,6 +1320,21 @@ sound sound.announcer.battle_begins sounds/vo/announcer/announcer_battle_begin_0
 # The Glyph's only sound: the announcer tells both sides which side's structures are fortified (subtitles: "Radiant's structures are fortified.")
 sound sound.announcer.fortified.radiant sounds/vo/announcer/announcer_fort_rad.vsnd_c sounds/vo/announcer/announcer_fort_rad.mp3 event=announcer_announcer_fort_rad
 sound sound.announcer.fortified.dire sounds/vo/announcer/announcer_fort_dire.vsnd_c sounds/vo/announcer/announcer_fort_dire.mp3 event=announcer_announcer_fort_dire
+# The announcer's lines for a hero's kill (scripts/talker/response_rules_announcer_killing_spree, the default killing-spree pack: IsFirstBlood,
+# IsDoubleKill..IsQuintupleKill by multiplekillcount, IsThreeSpree..IsMaxSpree by streak). Which plays when is src/kill_calls.rs.
+sound sound.announcer.kill.first_blood sounds/vo/announcer_killing_spree/announcer_1stblood_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_1stblood_01.mp3 event=announcer_killing_spree_announcer_1stblood_01
+sound sound.announcer.kill.double sounds/vo/announcer_killing_spree/announcer_kill_double_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_double_01.mp3 event=announcer_killing_spree_announcer_kill_double_01
+sound sound.announcer.kill.triple sounds/vo/announcer_killing_spree/announcer_kill_triple_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_triple_01.mp3 event=announcer_killing_spree_announcer_kill_triple_01
+sound sound.announcer.kill.ultra sounds/vo/announcer_killing_spree/announcer_kill_ultra_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_ultra_01.mp3 event=announcer_killing_spree_announcer_kill_ultra_01
+sound sound.announcer.kill.rampage sounds/vo/announcer_killing_spree/announcer_kill_rampage_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_rampage_01.mp3 event=announcer_killing_spree_announcer_kill_rampage_01
+sound sound.announcer.kill.streak.3 sounds/vo/announcer_killing_spree/announcer_kill_spree_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_spree_01.mp3 event=announcer_killing_spree_announcer_kill_spree_01
+sound sound.announcer.kill.streak.4 sounds/vo/announcer_killing_spree/announcer_kill_dominate_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_dominate_01.mp3 event=announcer_killing_spree_announcer_kill_dominate_01
+sound sound.announcer.kill.streak.5 sounds/vo/announcer_killing_spree/announcer_kill_mega_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_mega_01.mp3 event=announcer_killing_spree_announcer_kill_mega_01
+sound sound.announcer.kill.streak.6 sounds/vo/announcer_killing_spree/announcer_kill_unstop_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_unstop_01.mp3 event=announcer_killing_spree_announcer_kill_unstop_01
+sound sound.announcer.kill.streak.7 sounds/vo/announcer_killing_spree/announcer_kill_wicked_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_wicked_01.mp3 event=announcer_killing_spree_announcer_kill_wicked_01
+sound sound.announcer.kill.streak.8 sounds/vo/announcer_killing_spree/announcer_kill_monster_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_monster_01.mp3 event=announcer_killing_spree_announcer_kill_monster_01
+sound sound.announcer.kill.streak.9 sounds/vo/announcer_killing_spree/announcer_kill_godlike_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_godlike_01.mp3 event=announcer_killing_spree_announcer_kill_godlike_01
+sound sound.announcer.kill.streak.max sounds/vo/announcer_killing_spree/announcer_kill_holy_01.vsnd_c sounds/vo/announcer_killing_spree/announcer_kill_holy_01.mp3 event=announcer_killing_spree_announcer_kill_holy_01
 # The announcer's lines for a tower or barracks that fell (scripts/talker/response_rules_announcer: IsTowerKilled/IsEnemyTowerKilled and the
 # Good/Bad variants a spectator hears, IsBarracksKilled likewise; twr_deny_* when the owner's own side struck it). yr = the listener's side lost it,
 # enm = the other side did, rad/dire = what a spectator hears; by lane. Which plays when is src/voice.rs.
@@ -2016,6 +2031,33 @@ texture hud.rune_timer.wisdom panorama/images/hud/timer/widsom_rune_png.vtex_c h
 # top spot or, turned, the bottom one).
 texture hud.rune_toast.background panorama/images/hud/reborn/item_purchase_bg_psd.vtex_c hud/item_purchase_bg_psd.png
 texture hud.rune_toast.arrow panorama/images/hud/reborn/arrow_icon_psd.vtex_c hud/arrow_icon_psd.png
+
+# A hero's kill in Dota's words (the chat events the game raises: first blood, multi-kills, kill streaks and their ends).
+label resource/localization/dota_english.txt DOTA_Chat_FirstBlood
+label resource/localization/dota_english.txt DOTA_Chat_DoubleKill
+label resource/localization/dota_english.txt DOTA_Chat_TripleKill
+label resource/localization/dota_english.txt DOTA_Chat_QuadKill
+label resource/localization/dota_english.txt DOTA_Chat_QuintupleKill
+label resource/localization/dota_english.txt DOTA_Chat_DoubleKill_noname
+label resource/localization/dota_english.txt DOTA_Chat_TripleKill_noname
+label resource/localization/dota_english.txt DOTA_Chat_QuadKill_noname
+label resource/localization/dota_english.txt DOTA_Chat_QuintupleKill_noname
+label resource/localization/dota_english.txt DOTA_Chat_New_KillStreak_3
+label resource/localization/dota_english.txt DOTA_Chat_New_KillStreak_4
+label resource/localization/dota_english.txt DOTA_Chat_New_KillStreak_5
+label resource/localization/dota_english.txt DOTA_Chat_New_KillStreak_6
+label resource/localization/dota_english.txt DOTA_Chat_New_KillStreak_7
+label resource/localization/dota_english.txt DOTA_Chat_New_KillStreak_8
+label resource/localization/dota_english.txt DOTA_Chat_New_KillStreak_9
+label resource/localization/dota_english.txt DOTA_Chat_New_KillStreak_10
+label resource/localization/dota_english.txt DOTA_HUD_KillStreak_3_Ended
+label resource/localization/dota_english.txt DOTA_HUD_KillStreak_4_Ended
+label resource/localization/dota_english.txt DOTA_HUD_KillStreak_5_Ended
+label resource/localization/dota_english.txt DOTA_HUD_KillStreak_6_Ended
+label resource/localization/dota_english.txt DOTA_HUD_KillStreak_7_Ended
+label resource/localization/dota_english.txt DOTA_HUD_KillStreak_8_Ended
+label resource/localization/dota_english.txt DOTA_HUD_KillStreak_9_Ended
+label resource/localization/dota_english.txt DOTA_HUD_KillStreak_10_Ended
 
 # Objective announcements in Dota's words: the kill feed (DOTA_HUD_*) and chat (DOTA_Chat_*) lines of Roshan, the
 # Aegis, the Tormentor, Outposts, Shrines of Wisdom and the Banner, and the Outposts' names.

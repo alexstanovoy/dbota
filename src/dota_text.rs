@@ -128,6 +128,12 @@ impl Texts {
         fill(self.labels.get(&key.to_lowercase())?, values)
     }
 
+    /// One of Dota's chat lines (`%s1`, `%s2`... for what the caller puts in, `<font color>` for
+    /// a lit word) as pieces in order; none when the cache has not the label.
+    pub fn chat_line(&self, key: &str) -> Option<Vec<Piece>> {
+        Some(chat_pieces(self.labels.get(&key.to_lowercase())?))
+    }
+
     /// One of Dota's interface labels as text and icons: each `{s:..._icon}`
     /// variable an icon by its name, every other filled from `values`, its
     /// markup dropped; none as [`Self::label`].
@@ -177,6 +183,58 @@ pub enum Part {
     Text(String),
     /// The variable's name (`outpost_icon`).
     Icon(String),
+}
+
+/// A piece of a chat line.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Piece {
+    /// Words, lit in a colour if a `<font color>` holds them.
+    Words(String, Option<Color>),
+    /// The caller's `n`th argument (`%sN`, from one).
+    Argument(u8),
+}
+
+/// A chat line's pieces: its tags other than `<font color='#rrggbb'>` dropped.
+fn chat_pieces(label: &str) -> Vec<Piece> {
+    let mut out: Vec<Piece> = Vec::new();
+    let mut colour = None;
+    let mut rest = label;
+    let words = |out: &mut Vec<Piece>, text: &str, colour| {
+        if !text.is_empty() {
+            out.push(Piece::Words(text.to_owned(), colour));
+        }
+    };
+    while let Some(at) = rest.find(['%', '<']) {
+        words(&mut out, &rest[..at], colour);
+        let tail = &rest[at..];
+        if let Some(number) = tail
+            .strip_prefix("%s")
+            .and_then(|t| t.chars().next()?.to_digit(10))
+        {
+            out.push(Piece::Argument(number as u8));
+            rest = &tail[3..];
+        } else if tail.starts_with('<') {
+            let Some(end) = tail.find('>') else {
+                words(&mut out, tail, colour);
+                return out;
+            };
+            let tag = &tail[1..end];
+            if tag.starts_with("/font") {
+                colour = None;
+            } else if tag.starts_with("font") {
+                colour = tag
+                    .split(['\'', '"'])
+                    .find(|part| part.starts_with('#'))
+                    .and_then(|hex| self::colour(&format!("{hex}ff")));
+            }
+            rest = &tail[end + 1..];
+        } else {
+            words(&mut out, "%", colour);
+            rest = &tail[1..];
+        }
+    }
+    words(&mut out, rest, colour);
+    out
 }
 
 fn parts(label: &str, values: &[(&str, String)]) -> Option<Vec<Part>> {
@@ -449,5 +507,23 @@ mod tests {
     #[test]
     fn numbers_lose_their_trailing_zeros() {
         assert_eq!(levels("3.0 00 -2.50 1600.0"), ["3", "0", "-2.5", "1600"]);
+    }
+
+    #[test]
+    fn a_chat_line_keeps_its_arguments_and_lit_words_in_order() {
+        let pieces =
+            chat_pieces("%s1 %s2 is on a <font color='#00FF40'><b>killing spree</b></font>!");
+        let green = colour("#00FF40ff");
+        assert_eq!(
+            pieces,
+            vec![
+                Piece::Argument(1),
+                Piece::Words(" ".into(), None),
+                Piece::Argument(2),
+                Piece::Words(" is on a ".into(), None),
+                Piece::Words("killing spree".into(), green),
+                Piece::Words("!".into(), None),
+            ]
+        );
     }
 }

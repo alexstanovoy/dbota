@@ -67,6 +67,8 @@ mod item_look;
 mod item_menu;
 mod item_names;
 mod keys;
+mod kill_banner;
+mod kill_calls;
 mod layers;
 mod loading;
 #[cfg(not(target_arch = "wasm32"))]
@@ -750,6 +752,8 @@ fn client_plugins(app: &mut App, read_environment: bool) {
             base_blockers::plugin,
             soundscape::plugin,
             hero_voice::plugin,
+            kill_calls::plugin,
+            kill_banner::plugin,
             tally::plugin,
         ))
         .add_plugins((

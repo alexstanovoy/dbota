@@ -4,7 +4,7 @@
 //! One message is one list of pairs of an icon and a text; each kind of event says its own in
 //! [`toast`], and the row draws every one alike.
 
-use bota_client_core::{App as Core, FeedKind, Killer, RuneAct};
+use bota_client_core::{App as Core, FeedKind, Killer, RuneAct, Victim};
 use bota_proto::{SlotId, Team, UnitKind};
 
 use super::{
@@ -38,6 +38,9 @@ pub(super) fn toast(
         } => rune_taken(core, texts, manifest, colours, (by, team), rune, act),
         FeedKind::ShrineActivated { by, team, xp } => {
             shrine(core, texts, manifest, colours, (by, team), xp)
+        }
+        FeedKind::StreakEnded { victim, streak } => {
+            streak_ended(core, texts, manifest, colours, victim, streak)
         }
         _ => None,
     });
@@ -118,6 +121,30 @@ fn mark(manifest: &Manifest, icon: Option<String>) -> Pair {
 
 fn words(text: impl Into<String>) -> Pair {
     (None, text.into(), Style::default())
+}
+
+/// A hero's streak ended: the fallen hero by its icon and its name, and Dota's words of the streak
+/// (`DOTA_HUD_KillStreak_N_Ended`, which lead with the name).
+fn streak_ended(
+    core: &Core,
+    texts: &Texts,
+    manifest: &Manifest,
+    colours: &PlayerColours,
+    victim: Victim,
+    streak: u16,
+) -> Option<Vec<Pair>> {
+    let said = texts.label(
+        &format!("DOTA_HUD_KillStreak_{}_Ended", streak.clamp(3, 10)),
+        &[("victim_name", String::new())],
+    )?;
+    let who = match victim {
+        Victim::Seat(slot) => (Some(slot), Team::Neutral),
+        Victim::Hero(team) => (None, team),
+    };
+    Some(vec![
+        actor(core, Some(texts), manifest, colours, who),
+        words(format!(" {}", said.trim())),
+    ])
 }
 
 /// A figure, lit.

@@ -179,7 +179,9 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<HeroVoice>()
         .add_systems(
             Update,
-            (follow_seat, load::receive, speak.after(load::receive)).chain(),
+            (follow_seat, load::receive, speak.after(load::receive))
+                .chain()
+                .after(crate::kill_calls::Observed),
         )
         .add_systems(PostUpdate, report.in_set(crate::loading::Report));
 }
@@ -269,6 +271,7 @@ fn speak(
     settings: Res<crate::config::Settings>,
     loading: Res<crate::loading::Loading>,
     fog: Res<crate::fog::FogGrid>,
+    calls: Res<crate::kill_calls::Calls>,
     time: Res<Time>,
     real: Res<Time<bevy::time::Real>>,
 ) {
@@ -279,7 +282,7 @@ fn speak(
         *memory = listen::Memory::default();
         return;
     };
-    let queries = memory.queries(core, seat(core), &fog);
+    let queries = memory.queries(core, seat(core), &fog, &calls.0);
     let now = f64::from(view.tick) / f64::from(core.tick_rate().max(1));
     let seed = match_seed(core, seat(core));
     if resident.history.seed() != seed {
