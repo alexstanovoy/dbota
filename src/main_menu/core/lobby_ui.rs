@@ -457,10 +457,10 @@ impl MenuCore {
             .iter()
             .flat_map(|team| &team.slots)
             .any(|slot| slot.who.as_ref().is_some_and(|member| member.me));
-        if room.owner && room.starting_in_secs.is_some() {
+        if room.owner && room.starting_in_secs.left().is_some() {
             items.push(Item::Button(Act::ReadyLobby(false)));
         } else if seated
-            && room.starting_in_secs.is_none()
+            && room.starting_in_secs.left().is_none()
             && (!room.owner || room.waiting.is_none())
         {
             items.push(Item::Button(Act::ReadyLobby(room.owner || !room.me_ready)));
@@ -875,6 +875,12 @@ impl MenuCore {
     }
     pub(crate) fn test_lobby_event(&mut self, state: LobbyState) {
         self.event(Event::LobbyState { state });
+    }
+    /// Lets `passed` go by for the lobby's countdown, without waiting for it.
+    pub(crate) fn test_lobby_counted(&mut self, passed: std::time::Duration) {
+        if let Some((_, at)) = &mut self.lobby {
+            *at -= passed;
+        }
     }
     pub(crate) fn test_lobby_elapsed(&mut self, duration: std::time::Duration) {
         self.poll_lobby_ui_at(Instant::now() + duration);

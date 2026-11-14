@@ -5,7 +5,7 @@ use super::{
     lobby_chat::{ChatView, Line},
     lobby_controls::{Action, ControlsView},
     lobby_widgets::{self as w},
-    view::{LobbyView, MemberRow, TeamRow},
+    view::{LobbyView, MemberRow, MenuView, PageView, TeamRow},
 };
 use crate::theme;
 use bevy::prelude::*;
@@ -446,14 +446,19 @@ fn setting(kit: &mut Kit, parent: Entity, label: &str, value: &str) {
 
 fn footer_status(kit: &mut Kit, parent: Entity, lobby: &LobbyView, seated: &[&MemberRow]) {
     let ready = seated.iter().filter(|member| member.ready).count();
-    let status = if let Some(secs) = lobby.starting_in_secs {
-        format!("Starting in {secs}")
+    let status = if let Some(secs) = lobby.starting_in_secs.left() {
+        format!("{STARTING_LINE}{secs}")
     } else if ready == seated.len() && ready > 0 {
         format!("All {ready} players are ready.")
     } else {
         format!("{ready} of {} seated players are ready.", seated.len())
     };
-    kit.typed(parent, status, theme::SMALL_BODY, theme::INK_2);
+    let line = kit.typed(parent, status, theme::SMALL_BODY, theme::INK_2);
+    if lobby.starting_in_secs.left().is_some() {
+        kit.commands
+            .entity(line)
+            .insert(CountdownText(STARTING_LINE));
+    }
     if let Some(name) = &lobby.moving {
         kit.typed(
             parent,
@@ -524,19 +529,24 @@ fn ready_action(
         None
     };
     // The host's button carries the countdown and cancels the start, where it began it.
-    let counting = lobby.owner.then_some(lobby.starting_in_secs).flatten();
+    let counting = lobby
+        .owner
+        .then_some(lobby.starting_in_secs.left())
+        .flatten();
     if let Some(secs) = counting {
         let button = w::full_button(
             kit,
             go,
-            &format!("STARTING IN {secs}"),
+            &format!("{STARTING_BUTTON}{secs}"),
             Act::ReadyLobby(false),
             Tone::Primary,
             52.0,
             theme::lobby::ROOM_ACTION,
         );
-        // The same name as before the start, so that the keyboard's focus survives each second's redraw.
-        kit.commands.entity(button).insert(Name::new("start game"));
+        // The name it had before the start, for the keyboard's focus and the scripts.
+        kit.commands
+            .entity(button)
+            .insert((Name::new("start game"), CountdownText(STARTING_BUTTON)));
         return;
     }
     let label = if lobby.owner {
@@ -546,7 +556,7 @@ fn ready_action(
     } else {
         "READY"
     };
-    if reason.is_some() || lobby.starting_in_secs.is_some() {
+    if reason.is_some() || lobby.starting_in_secs.left().is_some() {
         w::full_disabled(kit, go, label, 52.0);
     } else {
         w::full_button(
@@ -800,4 +810,42 @@ fn chat_entry(kit: &mut Kit, space: Entity, chat: &ChatView) {
         theme::INK_1
     };
     kit.typed(input, text, theme::BODY, ink);
+}
+
+const STARTING_LINE: &str = "Starting in ";
+const STARTING_BUTTON: &str = "STARTING IN ";
+
+/// A text, or a button holding one, that shows the seconds before the lobby starts after `.0`.
+#[derive(Component)]
+pub struct CountdownText(&'static str);
+
+/// Writes the seconds left into the texts that show them, in place: the page is not rebuilt for
+/// them, so the hover, the focus and the animation of everything else stay as they are.
+pub fn write_countdown(
+    view: &MenuView,
+    labels: &mut Query<(&CountdownText, Option<&Children>, Option<&mut Text>)>,
+    inner: &mut Query<&mut Text, Without<CountdownText>>,
+) {
+    let PageView::Lobby(lobby) = &view.body else {
+        return;
+    };
+    let Some(secs) = lobby.starting_in_secs.left() else {
+        return;
+    };
+    let write = |text: &mut Text, words: &str| {
+        if text.0 != words {
+            text.0 = words.to_owned();
+        }
+    };
+    for (label, children, own) in labels.iter_mut() {
+        let words = format!("{}{secs}", label.0);
+        if let Some(mut text) = own {
+            write(&mut text, &words);
+        }
+        for child in children.into_iter().flatten() {
+            if let Ok(mut text) = inner.get_mut(*child) {
+                write(&mut text, &words);
+            }
+        }
+    }
 }

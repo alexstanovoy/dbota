@@ -1899,6 +1899,11 @@ fn a_locked_lobbys_password_can_only_be_removed_by_the_explicit_control() {
     let mut alice = signed_up(&service, "alice");
     create(&mut alice, "known secret");
     click(&mut alice, "edit  ✎");
+    // Not asserted: that the draft knows the password just saved. The service answers a save with
+    // Done and then pushes the lobby's state, and every state update forgets the remembered
+    // password (another session may have changed it), so whether the host's next draft knows it
+    // depends on that push having arrived. A Create used to be answered with the state alone,
+    // which is why this test could ask it of a creation.
     assert!(
         named(&mut alice, "remove password"),
         "locked state offers an explicit remove operation"
@@ -2507,7 +2512,7 @@ fn client_lobby_states_without_deadlines_restore_host_and_guest_actions() {
             .non_send_mut::<MenuCore>()
             .test_lobby_event(state.clone());
         client.frames(3);
-        assert!(room(client).starting_in_secs.is_some());
+        assert!(room(client).starting_in_secs.left().is_some());
         assert!(
             client
                 .shown_texts()
@@ -2532,7 +2537,7 @@ fn client_lobby_states_without_deadlines_restore_host_and_guest_actions() {
             room_id
         );
         assert!(
-            room(client).starting_in_secs.is_none(),
+            room(client).starting_in_secs.left().is_none(),
             "every recipient clears the countdown"
         );
         assert!(
@@ -2625,6 +2630,56 @@ fn the_countdown_is_on_the_hosts_start_button_and_pressing_it_cancels_the_start(
         words, "STARTING IN 5",
         "the host's start button says how long is left, and stays a button"
     );
+    // The seconds run out while the pointer rests on another control and the keyboard on the button.
+    let (other, _) = room_button(&mut alice, "edit  ✎").expect("another control");
+    alice.hover_ui_with(std::time::Duration::from_secs(30), |client| {
+        room_button(client, "edit  ✎").map(|(entity, _)| entity)
+    });
+    alice
+        .world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .set(button, bevy::input_focus::FocusCause::Navigated);
+    for left in [4, 3, 2] {
+        alice
+            .world_mut()
+            .non_send_mut::<MenuCore>()
+            .test_lobby_counted(std::time::Duration::from_secs(1));
+        alice.frames(2);
+        let (now, words) = room_button(&mut alice, "start game").expect("the start button");
+        assert_eq!(
+            words,
+            format!("STARTING IN {left}"),
+            "the label counts down"
+        );
+        assert_eq!(now, button, "the countdown does not rebuild the button");
+        assert_eq!(
+            room_button(&mut alice, "edit  ✎").map(|(entity, _)| entity),
+            Some(other),
+            "nor the control the pointer is on"
+        );
+        assert!(
+            alice
+                .world()
+                .get::<bevy::picking::hover::Hovered>(other)
+                .is_some_and(|hover| hover.get()),
+            "which stays hovered"
+        );
+        assert_eq!(
+            alice
+                .world()
+                .resource::<bevy::input_focus::InputFocus>()
+                .get(),
+            Some(button),
+            "and the keyboard stays on the start button"
+        );
+    }
+    assert!(
+        alice
+            .shown_texts()
+            .iter()
+            .any(|line| line == "Starting in 2"),
+        "the status line counts too"
+    );
     assert!(
         room_button(&mut bob, "ready").is_none_or(|(_, words)| !words.contains("STARTING")),
         "a guest's button does not carry a countdown it cannot cancel"
@@ -2638,5 +2693,71 @@ fn the_countdown_is_on_the_hosts_start_button_and_pressing_it_cancels_the_start(
             Some(bota_radovid::proto::ClientMsg::LobbyReady { lobby, ready: false }) if *lobby == room_id
         ),
         "pressing the countdown asks the service to cancel the start"
+    );
+}
+
+#[test]
+fn a_name_the_service_has_open_already_is_refused_in_the_details_window() {
+    use bota_radovid::proto::{AccountKind, Audience, ClientMsg, Reply, RulesetId};
+    let service = crate::main_menu::tests::service();
+    let trust = bota_radovid::Tls::trust_pem(&service.pem).expect("trust");
+    let mut squatter = bota_radovid::Client::open(&service.url, &trust).expect("connection");
+    let sequence = squatter
+        .register(
+            "squatter",
+            crate::main_menu::tests::PASSWORD,
+            AccountKind::Human,
+            None,
+        )
+        .expect("register");
+    control_reply(&mut squatter, sequence);
+    let sequence = squatter
+        .request(ClientMsg::LobbyCreate {
+            ruleset: RulesetId("full".into()),
+            name: ALICES_LOBBY.into(),
+            audience: Audience::Everyone,
+            password: None,
+        })
+        .expect("create");
+    assert!(matches!(
+        control_reply(&mut squatter, sequence),
+        Reply::Lobby { .. }
+    ));
+    let mut alice = signed_up(&service, "alice");
+    act(&mut alice, Act::Go(Page::Lobbies));
+    click(&mut alice, "create lobby");
+    alice.until("the real service's refusal in the editor", |client| {
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .view()
+            .lobby_ui
+            .editor
+            .is_some_and(|editor| {
+                editor.error.as_deref() == Some("A lobby of that name is open already")
+            })
+    });
+    alice.until("the details window drawn", |client| named(client, "cancel"));
+}
+
+#[test]
+fn a_lobby_made_at_once_draws_no_details_window_while_the_service_answers() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    act(&mut alice, Act::Go(Page::Lobbies));
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_lobby_requests();
+    click(&mut alice, "create lobby");
+    alice.frames(3);
+    let view = alice.world().non_send::<MenuCore>().view();
+    assert!(
+        view.lobby_ui.editor.is_some_and(|editor| editor.saving),
+        "the creation is waiting for the service"
+    );
+    assert!(
+        !named(&mut alice, "ok") && !named(&mut alice, "lobby name"),
+        "and no window asks for a name or a password meanwhile"
     );
 }

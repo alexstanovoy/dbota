@@ -194,6 +194,26 @@ impl LobbyBlock {
     }
 }
 
+/// The seconds left before a lobby starts. Two countdowns are equal whenever both run or both do
+/// not, so the page is not rebuilt (dropping the hover, focus and animation of every widget) as the
+/// seconds go; the texts that show them are written in place by [`super::lobby_room::write_countdown`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Countdown(pub Option<u32>);
+
+impl PartialEq for Countdown {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.is_some() == other.0.is_some()
+    }
+}
+impl Eq for Countdown {}
+
+impl Countdown {
+    /// The seconds left, while the start is counting down.
+    pub fn left(self) -> Option<u32> {
+        self.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbyView {
     pub name: String,
@@ -210,7 +230,7 @@ pub struct LobbyView {
     pub waiting: Option<LobbyBlock>,
     /// The owner may start with the lobby below its seats: the empty ones stay empty.
     pub starts_short: bool,
-    pub starting_in_secs: Option<u32>,
+    pub starting_in_secs: Countdown,
 }
 
 /// One seat of a finished match.
@@ -1129,9 +1149,11 @@ fn lobby_view(
             .map(|m| text::line(&m.nickname, text::NAME)),
         spectators,
         teams,
-        starting_in_secs: state
-            .starting_in_ms
-            .map(|ms| ms.saturating_sub(elapsed).div_ceil(1000)),
+        starting_in_secs: Countdown(
+            state
+                .starting_in_ms
+                .map(|ms| ms.saturating_sub(elapsed).div_ceil(1000)),
+        ),
     }
 }
 

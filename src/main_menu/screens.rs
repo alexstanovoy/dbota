@@ -52,6 +52,12 @@ pub fn draw(
     overlay_root: Query<Entity, With<OverlayRoot>>,
     fold: Res<super::top_bar::TabFold>,
     mut drawn: Local<Option<(MenuView, super::top_bar::TabFold, u64)>>,
+    mut countdowns: Query<(
+        &super::lobby_room::CountdownText,
+        Option<&Children>,
+        Option<&mut Text>,
+    )>,
+    mut counted: Query<&mut Text, Without<super::lobby_room::CountdownText>>,
 ) {
     let view = match (&preview, &core) {
         (Some(preview), _) => preview.0.clone(),
@@ -62,6 +68,7 @@ pub fn draw(
     if drawn.as_ref().is_some_and(|(shown, folded, minute)| {
         *shown == view && folded == &*fold && *minute == clock.minute_shown(&view.body)
     }) {
+        super::lobby_room::write_countdown(&view, &mut countdowns, &mut counted);
         return;
     }
     let (Ok((page, mut shown)), Ok(overlay)) = (page_root.single_mut(), overlay_root.single())

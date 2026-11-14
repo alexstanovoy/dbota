@@ -190,7 +190,7 @@ pub(super) fn room(name: &str) -> MenuView {
             Some(crate::main_menu::view::LobbyBlock::Ready(2))
         },
         starts_short: false,
-        starting_in_secs: None,
+        starting_in_secs: Default::default(),
     };
     let mut lobby = lobby;
     for member in lobby
