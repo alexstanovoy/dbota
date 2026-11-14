@@ -47,7 +47,7 @@ cargo build --locked --profile "$profile" --target-dir "$target" --target wasm32
 wasm-bindgen --target web --no-typescript --out-dir "$out/import" --out-name dbota_import \
     "$target/wasm32-unknown-unknown/$profile/dbota_import_web.wasm"
 optimize "$out/import/dbota_import_bg.wasm"
-cp web/index.html web/page.css web/boot.js web/busy.js web/main.js web/native.js web/grant.js web/keys.js web/pointer.js web/cache.js web/import_worker.js web/replays.js web/report.js web/voice.js web/voice_worker.js "$out/"
+cp web/index.html web/page.css web/boot.js web/busy.js web/audio.js web/main.js web/native.js web/grant.js web/keys.js web/pointer.js web/cache.js web/import_worker.js web/replays.js web/report.js web/voice.js web/voice_worker.js "$out/"
 # The icons' licence asks for the credit to travel with them: the page links this file.
 cp THIRD-PARTY-NOTICES.md "$out/"
 # A copy, not a link: a service serving the folder does not follow a link out of it, and the

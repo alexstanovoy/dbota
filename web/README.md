@@ -13,6 +13,7 @@ game servers. Without a copy the page offers two buttons, "Use Dota 2 folder" an
 | `index.html`, `page.css` | the gate (folder question, progress, ready) over the client's canvas; the CSP |
 | `native.js` | where the native client's download links point (one constant per system, placeholders for now) |
 | `boot.js` | a classic script: "Loading" at once, and the one failure screen for a browser too old, a part that won't load or a start that stalls; every later wait has a limit in `main.js` and ends on a screen naming the stage |
+| `audio.js` | keeps the page's AudioContexts, resumes a suspended one on the first click or key; `dbota_audio_state()` in the console tells their states |
 | `busy.js` | a server busy sending pages answers 503 with Retry-After: every fetch, module and worker of the page's own origin goes through here, says so on the page, waits as asked (1 to 60 s) and tries once more |
 | `main.js` | the flow: stored copy, folder grant, import progress, update check, delete, start the client that suits the browser |
 | `grant.js` | the prepared-cache picker and the folder grant (`showDirectoryPicker`, remembered in IndexedDB; else `<input webkitdirectory>`); keeps only the `*.vpk` files and the interface's typefaces (`panorama/fonts/*.otf`) it needs, whatever folder level was picked |
