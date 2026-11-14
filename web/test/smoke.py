@@ -1136,6 +1136,39 @@ def check_launch_page(directory):
     server.shutdown()
 
 
+def check_sound_page(directory):
+    """The game's sound is not lost to the autoplay policy: a client started without a user gesture
+    (a context the browser leaves suspended; Safari does so even after a gesture that ended before
+    the context was made) is resumed by the player's first click or key, and the page says the
+    state of its audio contexts (`dbota_audio_state()`) for a player who hears nothing."""
+    spy = """
+    window.__contexts = [];
+    for (const name of ['AudioContext', 'webkitAudioContext']) {
+      const Base = window[name];
+      if (!Base) continue;
+      window[name] = class extends Base { constructor(...a) { super(...a); window.__contexts.push(this); } };
+    }
+    """
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        page.add_init_script(spy)
+        page.goto(base + "?cache=http&gpu=webgl2")
+        wait_console(page, console, "dbota: running", 600, "the client's first frame")
+        states = lambda: page.evaluate("window.__contexts.map(c => c.state)")
+        assert states() == ["suspended"], f"no gesture yet: the context waits, got {states()}"
+        page.mouse.click(640, 360)
+        deadline = time.time() + 20
+        while time.time() < deadline and states() != ["running"]:
+            page.wait_for_timeout(250)
+        assert states() == ["running"], f"the first click must start the sound, got {states()}"
+        said = page.evaluate("globalThis.dbota_audio_state()")
+        assert said == "running", f"the console one-liner says the state, got {said!r}"
+        assert not problems, problems
+        print("sound: a context left suspended is resumed by the first click")
+        browser.close()
+    server.shutdown()
+
+
 def check_boot_page(directory):
     """The page never spins for ever: each way the start can go wrong ends on the failure screen or the
     asset screen, saying which stage failed. A part of the page that does not load, a page that never
@@ -2004,6 +2037,7 @@ def main():
     ap.add_argument("--fonts-page", type=pathlib.Path, help="any build: the page holds its interface fonts")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
     ap.add_argument("--launch-page", type=pathlib.Path, help="any build: the client starts and draws without a panic")
+    ap.add_argument("--sound-page", type=pathlib.Path, help="any build: the audio context is resumed by the first gesture")
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
     ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
     ap.add_argument("--cursor-input-page", type=pathlib.Path, help="a replay build: the cursor with a real mouse (X server)")
@@ -2031,6 +2065,8 @@ def main():
         check_start_page(args.start_page)
     if args.served_page:
         check_served_cache(args.served_page)
+    if args.sound_page:
+        check_sound_page(args.sound_page)
     if args.launch_page:
         check_launch_page(args.launch_page)
     if args.startup_page:

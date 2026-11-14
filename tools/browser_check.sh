@@ -82,7 +82,7 @@ rm -f "$work/cache.zip"
 
 in_private_environment python3 web/test/smoke.py --import-page "$pages/replay" --reference-cache "$DBOTA_ASSETS" --start-page "$pages/plain" \
     --prepared-page "$pages/replay" --cache-zip "$work/cache.zip" --cache-folder "$DBOTA_ASSETS" \
-    --served-page "$pages/plain" --launch-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
+    --served-page "$pages/plain" --launch-page "$pages/plain" --sound-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
     --fonts-page "$pages/plain" \
     --replay-page "$pages/replay" --scene-page "$pages/web" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
     --fullscreen-page "$pages/video" \
