@@ -2248,11 +2248,23 @@ fn a_texture_a_sibling_refracts_is_drawn_only_through_a_single_channel_mask() {
     use bevy::prelude::*;
     use heatel::particle::TextureChannels as Channels;
     let mut system = bare(1.0, vec![], vec![], vec![], vec![]);
+    let mut bend = sprite("distortion.vtex", Channels::RgbaRgbAlpha, true);
+    let heatel::particle::Renderer::Sprites(sprites) = &mut bend.class else {
+        panic!("sprites")
+    };
+    // The bend is masked by a soft circle, which is a plain colour texture of the fifth renderer.
+    sprites.look.layers = vec![heatel::particle::TextureLayer {
+        texture: "circle.vtex".to_owned(),
+        channels: Channels::Rgba,
+        blend: heatel::particle::LayerBlend::Multiply,
+        transform: [1.0, 0.0, 1.0, 0.0],
+    }];
     system.renderers = vec![
         sprite("distortion.vtex", Channels::Rgba, false),
-        sprite("distortion.vtex", Channels::RgbaRgbAlpha, true),
+        bend,
         sprite("distortion.vtex", Channels::GAlpha, false),
         sprite("glow.vtex", Channels::Rgba, false),
+        sprite("circle.vtex", Channels::Rgba, false),
     ];
     let bytes = serde_json::to_vec(&serde_json::json!({
         "version": 3,
@@ -2260,6 +2272,7 @@ fn a_texture_a_sibling_refracts_is_drawn_only_through_a_single_channel_mask() {
         "textures": [
             {"vtex": "distortion.vtex", "file": "distortion.ktx2"},
             {"vtex": "glow.vtex", "file": "glow.ktx2"},
+            {"vtex": "circle.vtex", "file": "circle.ktx2"},
         ],
     }))
     .expect("particle file");
@@ -2272,8 +2285,9 @@ fn a_texture_a_sibling_refracts_is_drawn_only_through_a_single_channel_mask() {
         .collect();
     assert_eq!(
         drawn,
-        vec![2, 3],
-        "the colour mix and the refracting sibling of the distortion map are not drawn"
+        vec![2, 3, 4],
+        "the colour mix and the refracting sibling of the distortion map are not drawn; a texture \
+         that is only a layer of the bend (the circle) is colour where a renderer draws it"
     );
 }
 

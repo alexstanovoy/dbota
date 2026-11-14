@@ -51,6 +51,7 @@ pub fn slot(field: Field) -> Slot {
         10 => Slot::Scalar(TRAIL_LENGTH),
         12 => Slot::Scalar(YAW),
         13 => Slot::Scalar(9),
+        // Gap: nothing consumes particle field 16 (alpha 2), though the shrine ring sets it from its progress.
         16 => Slot::Scalar(10),
         18 => Slot::Scalar(11),
         20 => Slot::Scalar(PITCH),

@@ -547,34 +547,25 @@ fn defaults(system: &System) -> Defaults {
     defaults
 }
 
-/// The textures some refracting renderer of the effect bends the view by: normal maps, whatever
-/// the renderer drawing them says.
+/// The textures some refracting renderer of the effect bends the view by: its own primary
+/// texture, the normal map. A layer of it (a soft circle masking the bend) is a colour or alpha
+/// texture elsewhere, so layers do not count.
 fn distortion_textures(systems: &[(String, System)]) -> HashSet<&str> {
     systems
         .iter()
         .flat_map(|(_, system)| system.renderers.iter())
         .filter_map(|renderer| renderer.class.look())
         .filter(|look| look.refract)
-        .flat_map(|look| {
-            look.texture
-                .iter()
-                .chain(look.layers.iter().map(|layer| &layer.texture))
-        })
-        .map(String::as_str)
+        .filter_map(|look| look.texture.as_deref())
         .collect()
 }
 
-/// Whether `look` takes colour from a distortion texture, which holds no colour.
+/// Whether `look` takes colour from its primary texture, which is a distortion map and holds no
+/// colour.
 fn colours_from(look: &heatel::particle::Look, distortion: &HashSet<&str>) -> bool {
-    let first = look
-        .texture
+    look.texture
         .as_deref()
-        .is_some_and(|t| distortion.contains(t) && reads_colour(look.channels));
-    first
-        || look
-            .layers
-            .iter()
-            .any(|l| distortion.contains(l.texture.as_str()) && reads_colour(l.channels))
+        .is_some_and(|t| distortion.contains(t) && reads_colour(look.channels))
 }
 
 /// Whether a channel mix takes colour (or a brightness of it) from its texel rather than one

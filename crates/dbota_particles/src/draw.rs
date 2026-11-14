@@ -157,6 +157,7 @@ struct Scales {
 
 fn scales(look: &Look, blend: Blend, scene: &Scene<'_>, parts: &Particles) -> Scales {
     let value = |input: &FloatInput, salt: u32| float(input, scene, parts, None, salt);
+    // Gap: the client has no bloom pass, so a gain above 1 only clamps and a thin additive line stays thin.
     Scales {
         radius: value(&look.radius_scale, 1),
         alpha: value(&look.alpha_scale, 2),
