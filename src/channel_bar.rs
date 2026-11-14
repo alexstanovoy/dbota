@@ -78,7 +78,15 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
             Pickable::IGNORE,
         ))
         .id();
-    let well = commands
+    let well = spawn_well(&mut commands, bar);
+    spawn_fill(&mut commands, well);
+    spawn_label(&mut commands, &fonts, well);
+    spawn_icon(&mut commands, bar);
+}
+
+/// The dark well the channel fills, left of the icon's disc.
+fn spawn_well(commands: &mut Commands, bar: Entity) -> Entity {
+    commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
@@ -102,7 +110,11 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
             Pickable::IGNORE,
             ChildOf(bar),
         ))
-        .id();
+        .id()
+}
+
+/// The part of the well that is full, in Dota's blue-grey gradient.
+fn spawn_fill(commands: &mut Commands, well: Entity) {
     let stop = |r: u8, g: u8, b: u8, at: f32| ColorStop::new(Color::srgb_u8(r, g, b), percent(at));
     commands.spawn((
         ChannelFill,
@@ -121,6 +133,10 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
         Pickable::IGNORE,
         ChildOf(well),
     ));
+}
+
+/// The words over the fill, centred in the well.
+fn spawn_label(commands: &mut Commands, fonts: &Fonts, well: Entity) {
     commands.spawn((
         ChannelLabel,
         Node {
@@ -137,6 +153,10 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
         Pickable::IGNORE,
         ChildOf(well),
     ));
+}
+
+/// The round icon of the ability channelled.
+fn spawn_icon(commands: &mut Commands, bar: Entity) {
     commands.spawn((
         ChannelIcon,
         Node {

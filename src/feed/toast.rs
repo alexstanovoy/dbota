@@ -166,7 +166,13 @@ fn structure(
     let sword = icon_file(core, "killed_icon", kind).and_then(|logical| manifest.file(logical));
     let mut pairs = Vec::new();
     if let Some(Killer::Seat(slot)) = killer {
-        pairs.push(actor(core, Some(texts), manifest, colours, (Some(slot), team)));
+        pairs.push(actor(
+            core,
+            Some(texts),
+            manifest,
+            colours,
+            (Some(slot), team),
+        ));
     }
     pairs.push(mark(manifest, sword));
     pairs.push(words(format!("{} ", name.trim())));

@@ -300,17 +300,6 @@ fn complaints(client: &mut Client, window: Vec2) -> Vec<String> {
             all.push(format!("{}: {} is not laid out", part.region, part.name));
             continue;
         };
-        // For the comparison page: the rectangles laid out, as `hud_rect <window> <part> x y w h`.
-        println!(
-            "hud_rect {}x{} {} {:.1} {:.1} {:.1} {:.1}",
-            window.x,
-            window.y,
-            part.name,
-            got.min.x,
-            got.min.y,
-            got.width(),
-            got.height()
-        );
         let off = |a: f32, b: f32| (a - b).abs() / window.y;
         let edges = [
             ("left", got.min.x, want.min.x),
@@ -461,12 +450,106 @@ fn demo_panel_follows_the_reference_in_a_16_by_10_window() {
     demo_panel_follows_reference_at(1920, 1200);
 }
 
-/// The tally in the corner tells one's own seat's figures in Dota's two lines.
+/// The seat's figures as the match counts them: kills, deaths, assists, last hits, denies.
+fn figures(client: &Client) -> (u16, u16, u16, u16, u16) {
+    let me = client.core().my_slot.expect("a seat");
+    let player = client.view().player(me).expect("own row");
+    let score = player.creep_score.expect("own creep score");
+    (
+        player.kills,
+        player.deaths,
+        player.assists,
+        score.last_hits,
+        score.denies,
+    )
+}
+
+/// An enemy hero made where the hero stands, struck down by it.
+fn kill_a_hero(client: &mut Client) {
+    use bota_client_core::Intent;
+    use bota_proto::{Cheat, UnitKind};
+    let kills = figures(client).0;
+    let at = bota_proto::Vec2::from_ints(super::harness::MID.0 + 250, super::harness::MID.1);
+    client.cheat(Cheat::CreateHero {
+        hero: HeroId::PUDGE,
+        enemy: true,
+        at,
+    });
+    let mine = client.me().team;
+    client.until("the foe hero made", |c| {
+        c.view()
+            .units
+            .iter()
+            .any(|u| u.kind == UnitKind::Hero && u.team != mine)
+    });
+    let foe = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Hero && u.team != mine)
+        .map(|u| ((u.pos.x.to_f32(), u.pos.y.to_f32()), u.id))
+        .expect("the foe");
+    client.core_mut().act(Intent::AttackAt {
+        at: foe.0,
+        unit: Some(foe.1),
+    });
+    client.until("the foe struck down", |c| figures(c).0 > kills);
+}
+
+/// The corner tally tells each of the seat's figures in its own place: the kills, deaths and
+/// assists on one line and the last hits and denies on the next, which differ from each other
+/// here (two kills, a death to the foe's fountain, no assist, the creeps of a camp last hit, no deny) so
+/// that a figure in the wrong place is a wrong word.
 #[test]
-fn the_corner_tally_tells_kills_deaths_assists_and_last_hits_and_denies() {
-    let (mut client, _) = in_window(1920, 1080);
+fn the_corner_tally_tells_each_figure_of_the_seat_in_its_own_place() {
+    use bota_client_core::Intent;
+    use bota_proto::{Cheat, CreepSide};
+    let server = Server::start(1, &["--map", "0", "--runes", "none"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    on_screen(&mut client);
+    client.cheat(Cheat::StartGame);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::KillCreeps {
+        which: CreepSide::All,
+    });
+    client.cheat(Cheat::Levels { count: 24 });
+    client.cheat(Cheat::Invulnerable { on: true });
+    client.stand_at(super::harness::MID);
+    kill_a_hero(&mut client);
+    kill_a_hero(&mut client);
+    let camp = (super::harness::MID.0 + 300, super::harness::MID.1);
+    client.cheat(Cheat::CreateCreeps {
+        enemy: true,
+        at: bota_proto::Vec2::from_ints(camp.0, camp.1),
+    });
+    client.core_mut().act(Intent::AttackAt {
+        at: (camp.0 as f32, camp.1 as f32),
+        unit: None,
+    });
+    client.until("the camp's creeps last hit", |c| figures(c).3 >= 2);
+    // The foe's fountain takes the hero down, as it does a Demo Hero that wanders in.
+    let foe_side = if client.me().team == bota_proto::Team::Radiant {
+        bota_proto::Team::Dire
+    } else {
+        bota_proto::Team::Radiant
+    };
+    let fountain = bota_core::fountain_pos(client.core().session().expect("match").map(), foe_side);
+    client.cheat(Cheat::Invulnerable { on: false });
+    client.cheat(Cheat::Teleport { at: fountain });
+    client.until("the hero fallen", |c| figures(c).1 >= 1);
+    client.frames(3);
+    let (kills, deaths, assists, last_hits, denies) = figures(&client);
+    assert!(
+        kills > deaths && deaths > assists && last_hits > denies,
+        "the figures differ from each other: {kills} {deaths} {assists} {last_hits} {denies}"
+    );
     let shown = client.shown_texts();
-    for line in ["K / D / A", "0 / 0 / 0", "LH / DN", "0 / 0"] {
-        assert!(shown.iter().any(|t| t == line), "{line:?} in {shown:?}");
+    for line in [
+        "K / D / A".to_owned(),
+        format!("{kills} / {deaths} / {assists}"),
+        "LH / DN".to_owned(),
+        format!("{last_hits} / {denies}"),
+    ] {
+        assert!(shown.contains(&line), "{line:?} in {shown:?}");
     }
 }

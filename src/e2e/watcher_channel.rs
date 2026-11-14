@@ -369,11 +369,22 @@ fn the_label_tells_the_time_the_simulation_leaves_at_three_moments_of_the_channe
 #[test]
 fn a_cancelled_channel_takes_its_label_with_it() {
     let (_server, mut client) = channelling_at_a_watcher();
+    let label_shown = |client: &mut Client| {
+        let world = client.world_mut();
+        world
+            .query_filtered::<&InheritedVisibility, With<crate::channel_bar::ChannelLabel>>()
+            .single(world)
+            .expect("the channel bar's label")
+            .get()
+    };
+    assert!(
+        label_shown(&mut client),
+        "the label shows while it channels"
+    );
     client.core_mut().act(Intent::Stop);
-    client.until("the bar gone", |c| !bar(c).0);
-    let (text, ..) = label(&mut client);
+    client.until("the label gone", |c| !label_shown(c));
     assert!(
         !bar(&mut client).0 && !channelling(&client),
-        "the channel is over and the bar hidden, whatever its last words {text:?}"
+        "the channel is over and the bar hidden with its label"
     );
 }
