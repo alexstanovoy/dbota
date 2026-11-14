@@ -116,9 +116,13 @@ fn pixels(client: &mut Client) -> Vec<u8> {
         .take()
         .expect("captured pixels")
 }
+/// Where the frames go: `OBJECTIVE_EVIDENCE_DIR` when set (a clean run's evidence is copied from
+/// there by hand), else a folder of this run's own, so a mutant run never overwrites evidence.
 fn evidence_directory() -> std::path::PathBuf {
-    let directory =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("temp/evidence/item14_r2");
+    let directory = std::env::var_os("OBJECTIVE_EVIDENCE_DIR").map_or_else(
+        || std::env::temp_dir().join(format!("objective_pixels_{}", std::process::id())),
+        std::path::PathBuf::from,
+    );
     std::fs::create_dir_all(&directory).expect("the pixel evidence directory");
     directory
 }
