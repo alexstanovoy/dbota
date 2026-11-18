@@ -7,10 +7,10 @@ use bevy::ui_widgets::Button;
 use bota_core::HEROES;
 
 use super::backdrop::{self, Backdrop};
-use super::core::{Act, LocalRules, Page};
+use super::core::{Act, DemoOffer, LocalRules, Page};
 use super::form::FormKind;
 use super::kit::{Kit, MenuButton, Tone};
-use super::view::{FieldView, MenuView, PageView, ReplayRow, ReplayShelf, ResultView};
+use super::view::{FieldView, MenuView, PageView, ResultView};
 use crate::theme;
 
 /// The pages' column: the forms and the replay list, one width.
@@ -53,6 +53,9 @@ pub fn draw(
     let body = page_body(kit, root);
     if !draw_account_page(kit, root, body, view, texts, clock) {
         draw_body(kit, body, view);
+    }
+    if matches!(view.body, PageView::Hero { .. }) {
+        super::hero_stage::turn_zone(&mut kit.commands, root);
     }
     page_corners(kit, root, view, clock);
 }
@@ -160,7 +163,7 @@ fn hero_backdrop(kit: &mut Kit, root: Entity, view: &MenuView) {
     }
     if let PageView::Hero { hero, .. } = view.body {
         // Over the page's ground and under its words: the hero stands in the middle.
-        super::hero_stage::draw(kit, root, hero, super::hero_stage::Anchor::Centre);
+        super::hero_stage::draw(kit, root, hero, super::hero_stage::Anchor::Page);
     }
 }
 
@@ -271,13 +274,7 @@ fn draw_body(kit: &mut Kit, body: Entity, view: &MenuView) {
         } => super::overlay::my_games(kit, body, view, games, finished, cooldown.as_deref()),
         PageView::Lobbies { .. } | PageView::Lobby(_) => {}
         PageView::Result(result) => result_page(kit, body, result),
-        PageView::Replays {
-            list,
-            fields,
-            shelf,
-        } => replays_page(kit, body, list, fields, shelf),
-        #[cfg(not(target_arch = "wasm32"))]
-        PageView::DemoHero { heroes, offered } => demo_page(kit, body, heroes, *offered),
+        PageView::DemoHero { heroes, offer } => demo_page(kit, body, heroes, *offer),
         PageView::Joining => {
             kit.typed(body, "JOINING THE GAME…", theme::TITLE, theme::INK_1);
         }
@@ -518,11 +515,11 @@ fn way_in_page(
 }
 
 /// Where a player without an account plays: the local lobby; in a browser, which hosts no game,
-/// the replays.
+/// Play, whose cards show the matches kept in the browser.
 #[cfg(not(target_arch = "wasm32"))]
 const WITHOUT_ACCOUNT: Page = Page::LocalLobby;
 #[cfg(target_arch = "wasm32")]
-const WITHOUT_ACCOUNT: Page = Page::Replays;
+const WITHOUT_ACCOUNT: Page = Page::Home;
 
 /// A form: a card of fields in the middle of the page.
 #[allow(clippy::too_many_arguments)]
@@ -614,7 +611,6 @@ fn form_heading(kit: &mut Kit, card: Entity, kind: FormKind) {
         | FormKind::LobbyPassword
         | FormKind::LobbySettings
         | FormKind::LobbyChat
-        | FormKind::Replay
         | FormKind::None
         | FormKind::Leaderboard => ("", ""),
     };
@@ -860,177 +856,6 @@ fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
     kit.button(column, "CONTINUE", Act::Go(Page::Home), Tone::Primary, 46.0);
 }
 
-/// Recordings kept by this client, each available to watch or delete.
-fn replays_page(
-    kit: &mut Kit,
-    body: Entity,
-    list: &[ReplayRow],
-    _fields: &[FieldView],
-    shelf: &ReplayShelf,
-) {
-    let column = kit.node(
-        body,
-        Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: px(10),
-            width: px(PAGE_WIDTH),
-            ..default()
-        },
-    );
-    kit.bold(column, "REPLAYS", 30.0, theme::INK_1);
-    let (note, colour) = if !shelf.store {
-        (
-            "This browser keeps no replays for the page.".to_owned(),
-            theme::GOLD,
-        )
-    } else if !shelf.keeping {
-        (
-            "Saving replays is off (SETTINGS, Options, REPLAYS): the ones below were kept before."
-                .to_owned(),
-            theme::GOLD,
-        )
-    } else if shelf.folder.is_empty() {
-        (
-            "The replays of your matches are kept in this browser, within the limits of SETTINGS, Options, REPLAYS.".to_owned(),
-            theme::INK_4,
-        )
-    } else {
-        (
-            format!(
-                "The replays of your matches are kept in {}, within the limits of SETTINGS, Options, REPLAYS.",
-                shelf.folder
-            ),
-            theme::INK_4,
-        )
-    };
-    kit.text(column, note, 13.0, colour);
-    if shelf.service_keeps_none {
-        kit.text(
-            column,
-            "The matchmaking service keeps no replays of its matches, so none of them is saved here; local games still are.",
-            13.0,
-            theme::GOLD,
-        );
-    }
-    if list.is_empty() {
-        kit.text(column, "No replays yet", 16.0, theme::INK_4);
-    }
-    for replay in list {
-        replay_row(kit, column, replay);
-    }
-}
-
-/// What a replay's row says of where it was played.
-fn mode_label(mode: &str) -> String {
-    match mode {
-        "local" => "Local lobby".to_owned(),
-        "demo" => "Demo Hero".to_owned(),
-        "file" => "Replay file".to_owned(),
-        ruleset => format!("Online match · {ruleset}"),
-    }
-}
-
-fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
-    let row = kit.panel(
-        column,
-        Node {
-            padding: UiRect::all(px(10)),
-            column_gap: px(12),
-            align_items: AlignItems::Center,
-            ..default()
-        },
-    );
-    let label = kit.node(
-        row,
-        Node {
-            flex_grow: 1.0,
-            min_width: px(0),
-            width: px(0),
-            flex_direction: FlexDirection::Column,
-            ..default()
-        },
-    );
-    use super::replay_info::Summary;
-    let known = |sides: &str| {
-        if sides.is_empty() {
-            mode_label(&replay.mode)
-        } else {
-            sides.to_owned()
-        }
-    };
-    let (headline, line, colour) = match &replay.summary {
-        Summary::Read { sides, outcome, .. } if outcome.is_empty() => (
-            known(&sides.text(kit.texts)),
-            replay.when.clone(),
-            theme::INK_4,
-        ),
-        Summary::Read { sides, outcome, .. } => (
-            known(&sides.text(kit.texts)),
-            format!("{}  ·  {outcome}", replay.when),
-            theme::INK_4,
-        ),
-        Summary::Reading => (
-            mode_label(&replay.mode),
-            format!("{}  ·  reading…", replay.when),
-            theme::INK_4,
-        ),
-        Summary::Broken(why) => (
-            mode_label(&replay.mode),
-            format!("{}  ·  cannot be watched: {why}", replay.when),
-            theme::ERROR_TEXT,
-        ),
-    };
-    if let Summary::Read { identities, .. } = &replay.summary
-        && !identities.is_empty()
-    {
-        for identity in identities.iter().take(bota_proto::limits::MAX_SEATS) {
-            kit.player_name(
-                label,
-                &identity.name,
-                identity.version.as_deref(),
-                theme::Type {
-                    size: 16.0,
-                    face: theme::Face::Bold,
-                    ..theme::BODY
-                },
-                theme::INK_1,
-            );
-        }
-    } else {
-        kit.bold(label, headline, 16.0, theme::INK_1);
-    }
-    kit.text(label, line, 13.0, colour);
-    kit.text(
-        label,
-        format!("{}  ·  {}", replay.name, replay.size),
-        12.0,
-        theme::INK_4,
-    );
-    let name = &replay.name;
-    if !matches!(replay.summary, Summary::Broken(_)) {
-        let watch = kit.button(
-            row,
-            "WATCH",
-            Act::OpenReplay(name.clone()),
-            Tone::Secondary,
-            34.0,
-        );
-        kit.commands
-            .entity(watch)
-            .insert(Name::new(format!("watch {name}")));
-    }
-    let delete = kit.button(
-        row,
-        "DELETE",
-        Act::DeleteReplay(name.clone()),
-        Tone::Danger,
-        34.0,
-    );
-    kit.commands
-        .entity(delete)
-        .insert(Name::new(format!("delete {name}")));
-}
-
 /// The rules of the lobby about to be hosted. The ten seats are the same under either: it
 /// starts with the players seated, and nothing takes the empty ones.
 fn local_rules(kit: &mut Kit, card: Entity, chosen: LocalRules) {
@@ -1090,8 +915,7 @@ fn checkbox(kit: &mut Kit, card: Entity, label: &'static str, action: Act, on: b
 
 /// DEMO HERO: every hero, its portrait and its name; a click starts Dota's
 /// Demo Hero with it, a game of the service alone on the map with every cheat.
-#[cfg(not(target_arch = "wasm32"))]
-fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: bool) {
+fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offer: DemoOffer) {
     let column = kit.node(
         body,
         Node {
@@ -1108,13 +932,8 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: boo
         16.0,
         theme::INK_4,
     );
-    if !offered {
-        kit.text(
-            column,
-            "This service offers no Demo Hero.",
-            16.0,
-            theme::ERROR_TEXT,
-        );
+    if let Some(reason) = offer.reason() {
+        kit.text(column, reason, 16.0, theme::ERROR_TEXT);
         return;
     }
     let grid = kit.node(

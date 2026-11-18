@@ -381,13 +381,6 @@ impl Archive {
         }
     }
 
-    pub fn identities(&self, file: &str) -> Vec<bota_proto::SeatIdentity> {
-        self.entries
-            .iter()
-            .find(|entry| entry.file.as_deref() == Some(file))
-            .map_or_else(Vec::new, |entry| entry.card(&[]).players)
-    }
-
     pub fn cards(&self, records: &[Record]) -> Arc<Vec<Match>> {
         let mut cache = self.cards.borrow_mut();
         if cache.revision != self.revision || cache.records != records {

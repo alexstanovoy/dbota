@@ -102,7 +102,7 @@ fn hover_preview(
 }
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 57] = [
+pub const NAMES: [&str; 60] = [
     "service",
     "login",
     "register",
@@ -150,6 +150,9 @@ pub const NAMES: [&str; 57] = [
     "heroes",
     "hero",
     "hero-pudge",
+    "hero-demo-signin",
+    "hero-demo-missing",
+    "demo-hero",
     "leaderboard",
     "leaderboard_solo",
     "leaderboard-bots",

@@ -250,7 +250,7 @@ impl MenuCore {
         match replay {
             Replay::File(path) => self.start(Launch::Replay(path)),
             Replay::Blob(bytes) => self.start(Launch::Blob(super::core::Blob(bytes))),
-            Replay::Saved(file) => self.open_listed(&file),
+            Replay::Saved(file) => self.open_kept(&file),
         }
         Ok(())
     }
@@ -296,7 +296,7 @@ pub fn when(seconds: u64) -> String {
     }
     std::time::UNIX_EPOCH
         .checked_add(std::time::Duration::from_secs(seconds))
-        .map_or_else(|| "—".to_owned(), super::replay_info::when)
+        .map_or_else(|| "—".to_owned(), super::page_time::local_time)
 }
 fn rating(value: f64) -> Option<i32> {
     let value = value.round();

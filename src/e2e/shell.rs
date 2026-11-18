@@ -73,7 +73,7 @@ pub(super) fn settings_open(client: &Client) -> bool {
 fn the_quit_button_stands_at_one_point_on_every_screen() {
     let mut client = local_menu();
     let mut seen = Vec::new();
-    for page in [Page::LocalLobby, Page::Replays] {
+    for page in [Page::LocalLobby, Page::Heroes] {
         act(&mut client, Act::Go(page));
         seen.push((format!("{page:?}"), physical_quit(&mut client)));
     }
@@ -133,7 +133,7 @@ fn physical_quit(client: &mut Client) -> (Rect, ComputedNode, f32) {
 #[test]
 fn the_settings_window_opens_from_the_cog_over_the_dimmed_menu_and_its_cross_closes_it() {
     let mut client = local_menu();
-    act(&mut client, Act::Go(Page::Replays));
+    act(&mut client, Act::Go(Page::LocalLobby));
     click(&mut client, "settings");
     client.until("the settings window open", |c| settings_open(c));
     client.frames(5);
@@ -152,13 +152,13 @@ fn the_settings_window_opens_from_the_cog_over_the_dimmed_menu_and_its_cross_clo
     interface_rect(&mut client, "dbota");
     let shown = client.shown_texts();
     assert!(
-        shown.iter().any(|t| t == "No replays yet"),
-        "the replays under the settings: {shown:?}"
+        shown.iter().any(|t| t == "LOCAL LOBBY"),
+        "the local lobby under the settings: {shown:?}"
     );
     click(&mut client, "close");
     client.until("the settings window closed", |c| !settings_open(c));
     client.frames(5);
-    assert_eq!(page(&client), Page::Replays, "back where it was opened");
+    assert_eq!(page(&client), Page::LocalLobby, "back where it was opened");
 }
 
 /// Without an account the pill says OFFLINE and the card names the profile; signed in, the pill
@@ -252,7 +252,7 @@ fn the_menu_draws_with_dotas_typefaces_from_the_install() {
     };
     for (words, file) in [
         ("DBOTA", "fonts/reaver-bold.otf"),
-        ("REPLAYS", "fonts/radiance-semibold.otf"),
+        ("HEROES", "fonts/radiance-semibold.otf"),
     ] {
         let handle = face_of(&mut client, words);
         let path = client
@@ -435,7 +435,7 @@ fn the_way_in_lets_a_player_without_an_account_play_and_come_back() {
         !matches!(page(c), Page::Service | Page::Login | Page::Register)
     });
     client.frames(5);
-    for part in ["settings", "replays", "sign in"] {
+    for part in ["settings", "local lobby", "sign in"] {
         interface_rect(&mut client, part);
     }
     click(&mut client, "sign in");
@@ -475,7 +475,10 @@ fn the_fullest_bar_folds_its_last_tabs_under_more_and_stays_whole() {
             .any(|(named, seen)| seen.get() && named.as_str() == name)
     };
     assert!(shown(&mut client, "more"), "MORE holds the tabs folded");
-    assert!(!shown(&mut client, "replays"), "REPLAYS, the last, folded");
+    assert!(
+        !shown(&mut client, "demo hero tab"),
+        "DEMO HERO, the last, folded"
+    );
     let more = interface_rect(&mut client, "more");
     let kept: Vec<String> = ["play", "my games", "profile"]
         .into_iter()
@@ -483,7 +486,7 @@ fn the_fullest_bar_folds_its_last_tabs_under_more_and_stays_whole() {
         .map(str::to_owned)
         .collect();
     click(&mut client, "more");
-    client.until("MORE's list open", |c| shown(c, "replays"));
+    client.until("MORE's list open", |c| shown(c, "demo hero tab"));
     // Open, the list folds nothing more: MORE and the tabs before it stay where they were.
     client.frames(20);
     assert_eq!(interface_rect(&mut client, "more"), more, "MORE stays put");
@@ -492,7 +495,7 @@ fn the_fullest_bar_folds_its_last_tabs_under_more_and_stays_whole() {
     }
     super::menu::resize_menu_window(&mut client, UVec2::new(1920, 1080));
     client.until("every tab back in the bar", |c| {
-        shown(c, "replays") && !shown(c, "more")
+        shown(c, "demo hero tab") && !shown(c, "more")
     });
 }
 
@@ -530,4 +533,48 @@ fn play_width_fraction(client: &mut Client) -> Option<f32> {
         .iter(world)
         .find(|(name, node)| name.as_str() == "play drawer" && node.size().x > 0.0)
         .map(|(_, node)| node.size().x / height)
+}
+
+/// The tabs of the bar, left to right, by their labels.
+fn tabs(client: &mut Client) -> Vec<String> {
+    let world = client.world_mut();
+    let row = world
+        .query_filtered::<&Children, With<crate::main_menu::TabRow>>()
+        .single(world)
+        .expect("the row of tabs")
+        .to_vec();
+    row.into_iter()
+        .filter_map(|tab| {
+            let words = world.get::<Children>(tab)?.first().copied()?;
+            Some(world.get::<Text>(words)?.0.clone())
+        })
+        .collect()
+}
+
+/// The main menu offers exactly these tabs, in this order: no tab appears or vanishes unnoticed
+/// (there is no REPLAYS tab: a match is watched from the history). Without an account
+/// the service's tabs are absent; signed in, MY GAMES and LEADERBOARD come.
+#[test]
+fn the_main_menu_shows_exactly_the_expected_tabs() {
+    let mut client = local_menu();
+    assert_eq!(
+        tabs(&mut client),
+        ["PLAY", "LOCAL LOBBY", "HEROES", "DEMO HERO"],
+        "without an account"
+    );
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "dora");
+    client.frames(5);
+    assert_eq!(
+        tabs(&mut client),
+        [
+            "PLAY",
+            "MY GAMES",
+            "LEADERBOARD",
+            "LOCAL LOBBY",
+            "HEROES",
+            "DEMO HERO"
+        ],
+        "signed in"
+    );
 }

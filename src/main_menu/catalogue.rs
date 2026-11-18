@@ -1,6 +1,6 @@
 //! The playable catalogue and hero page, from the simulator's data and the installed art/text.
 use super::{
-    core::{Act, Page},
+    core::{Act, DemoOffer, Page},
     kit::{Kit, MenuButton, Tone},
 };
 use crate::{dota_text::Texts, theme};
@@ -166,7 +166,7 @@ pub fn tall(kit: &mut Kit, parent: Entity, hero: HeroId, node: Node) {
     }
 }
 
-pub fn hero(kit: &mut Kit, root: Entity, id: HeroId, texts: &Texts, demo: bool) {
+pub fn hero(kit: &mut Kit, root: Entity, id: HeroId, texts: &Texts, demo: DemoOffer) {
     let Some(hero) = bota_core::hero_def(id) else {
         return;
     };
@@ -174,9 +174,7 @@ pub fn hero(kit: &mut Kit, root: Entity, id: HeroId, texts: &Texts, demo: bool) 
     hero_header(kit, body, hero);
     skills(kit, body, hero, texts);
     stats(kit, body, hero);
-    if demo {
-        hero_actions(kit, body, id);
-    }
+    hero_actions(kit, body, id, demo);
     talents(kit, body, hero, texts);
 }
 
@@ -223,7 +221,7 @@ fn hero_body(kit: &mut Kit, root: Entity, id: HeroId) -> Entity {
         },
     );
     neighbours(kit, line, id);
-    kit.node(
+    let words = kit.node(
         page,
         Node {
             width: px(COLUMN_WIDTH),
@@ -234,7 +232,9 @@ fn hero_body(kit: &mut Kit, root: Entity, id: HeroId) -> Entity {
             row_gap: px(14),
             ..default()
         },
-    )
+    );
+    kit.commands.entity(words).insert(Name::new("hero words"));
+    words
 }
 
 /// The heroes before and after this one in the catalogue, one press away.
@@ -409,17 +409,24 @@ fn skill(kit: &mut Kit, abilities: Entity, def: &bota_core::AbilityDef, innate: 
     }
 }
 
-/// Under the stats: the green DEMO HERO, which starts Dota's Demo Hero with this hero. It is only
-/// drawn where one can be started, so the page has no empty row otherwise.
-fn hero_actions(kit: &mut Kit, body: Entity, id: HeroId) {
+/// Under the stats: the green DEMO HERO, which starts Dota's Demo Hero with this hero. Where none can
+/// be started it is drawn dimmed with the reason beside it, so that the page never leaves a
+/// player looking for a button that is not there.
+fn hero_actions(kit: &mut Kit, body: Entity, id: HeroId, offer: DemoOffer) {
     let bottom = kit.node(
         body,
         Node {
             align_items: AlignItems::Center,
+            column_gap: px(16),
             ..default()
         },
     );
-    kit.button(bottom, "DEMO HERO", Act::Demo(id.0), Tone::Primary, 40.0);
+    let Some(reason) = offer.reason() else {
+        kit.button(bottom, "DEMO HERO", Act::Demo(id.0), Tone::Primary, 40.0);
+        return;
+    };
+    kit.disabled_button(bottom, "DEMO HERO", 40.0);
+    kit.text(bottom, reason, 15.0, theme::INK_3);
 }
 
 /// The numbers: the three attributes, each as its base and its gain by level on one line, beside

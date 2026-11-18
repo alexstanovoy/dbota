@@ -42,7 +42,7 @@ impl Clock {
         } else {
             std::time::UNIX_EPOCH
                 .checked_add(std::time::Duration::from_secs(when))
-                .map_or_else(|| "Unknown date".to_owned(), super::replay_info::when)
+                .map_or_else(|| "Unknown date".to_owned(), local_time)
         }
     }
     pub fn date(self, when: u64) -> String {
@@ -81,6 +81,37 @@ impl Clock {
             format!("{} d ago", seconds / 86_400)
         }
     }
+}
+
+/// When a match was played, in this machine's time zone (the system's
+/// time zone database, read by `jiff`): `2026-10-24 15:06`; in UTC, and
+/// said so, where the machine names none.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn local_time(time: std::time::SystemTime) -> String {
+    let Ok(at) = jiff::Timestamp::try_from(time) else {
+        return "unknown date".to_owned();
+    };
+    match jiff::tz::TimeZone::try_system() {
+        Ok(zone) => at.to_zoned(zone).strftime("%Y-%m-%d %H:%M").to_string(),
+        Err(_) => format!("{} UTC", at.strftime("%Y-%m-%d %H:%M")),
+    }
+}
+
+/// When a match was played, in the page's time zone: `2026-10-24 15:06`.
+#[cfg(target_arch = "wasm32")]
+pub fn local_time(time: std::time::SystemTime) -> String {
+    let Ok(since) = time.duration_since(std::time::UNIX_EPOCH) else {
+        return "unknown date".to_owned();
+    };
+    let at = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(since.as_millis() as f64));
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        at.get_full_year(),
+        at.get_month() + 1,
+        at.get_date(),
+        at.get_hours(),
+        at.get_minutes()
+    )
 }
 
 #[cfg(test)]

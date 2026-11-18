@@ -30,6 +30,10 @@ const GROUND: f32 = 770.0;
 const TOP: f32 = 100.0;
 const FOV: f32 = 25.0_f32.to_radians();
 const SAMPLES: usize = 24;
+/// Where the hero page's hero stands across the page, in per cent of its width: right of the
+/// middle, clear of the 500-pixel column of words and of the nav at the right at the page's
+/// narrowest (the interface is never laid out narrower than 1440 pixels).
+const PAGE_SHARE: f32 = 67.0;
 // Presentation clearance above the common contact-shadow line.
 const HOVER: &[(bota_proto::HeroId, f32)] = &[(bota_proto::HeroId::SHADOW_FIEND, 32.0)];
 
@@ -71,6 +75,12 @@ pub(crate) struct HeroStage {
     render: bool,
     /// Whether the stage was made for a screen of its own (lit stronger).
     lit: bool,
+    /// The hero's turn on the hero page (see [`super::hero_turn`]), and whether it changed in
+    /// this frame: a turning hero is drawn every frame, not at the idle pace.
+    pub(super) turntable: super::hero_turn::Turntable,
+    pub(super) turning: bool,
+    /// The part of the picture the hero covers through its idle cycle, in the picture's pixels.
+    silhouette: Option<Rect>,
 }
 
 impl HeroStage {
@@ -88,6 +98,23 @@ impl HeroStage {
         self.framed && self.actor.as_ref().is_some_and(|a| a.posed)
     }
 
+    /// The part of the picture the hero covers through its idle cycle, in the picture's pixels,
+    /// once it is framed.
+    #[cfg(test)]
+    pub(crate) fn silhouette(&self) -> Option<Rect> {
+        self.silhouette
+    }
+
+    /// The picture's size in pixels.
+    #[cfg(test)]
+    pub(crate) const PICTURE: Vec2 = Vec2::new(SIZE.0 as f32, SIZE.1 as f32);
+
+    /// The angle the hero is turned to on the hero page, in radians.
+    #[cfg(test)]
+    pub(crate) fn yaw(&self) -> f32 {
+        self.turntable.yaw()
+    }
+
     /// The picture the stage renders the hero into.
     #[cfg(test)]
     pub(crate) fn image_handle(&self) -> &Handle<Image> {
@@ -100,9 +127,9 @@ impl HeroStage {
 pub(super) enum Anchor {
     /// Home: a little left of the page's middle, between the landscape and the match cards.
     Home,
-    /// The hero page: large in the middle of the scene, as the original game's hero page has it
-    /// (its model stands a little left of the screen's middle).
-    Centre,
+    /// The hero page: large, right of the middle of the scene with the page's words standing
+    /// unobstructed at its left, and turned by the pointer (see [`super::hero_turn`]).
+    Page,
 }
 
 impl Anchor {
@@ -111,7 +138,7 @@ impl Anchor {
     fn middle(self) -> (f32, f32, f32) {
         match self {
             Anchor::Home => (50.0, -200.0, 0.0),
-            Anchor::Centre => (48.5, 0.0, 85.0),
+            Anchor::Page => (PAGE_SHARE, 0.0, 85.0),
         }
     }
 }
@@ -162,6 +189,12 @@ pub(super) fn draw(
         Name::new("home hero"),
         ChildOf(root),
     ));
+}
+
+/// The zone that takes the drag turning the hero page's hero, over where it stands.
+pub(super) fn turn_zone(commands: &mut Commands, root: Entity) {
+    let (share, offset, drop) = Anchor::Page.middle();
+    super::hero_turn::zone(commands, root, (share, offset), (GROUND + drop, HEIGHT));
 }
 
 pub(super) fn plugin(app: &mut App) {
@@ -240,6 +273,9 @@ fn select(
         stage.envelope = Vec::new();
         stage.reference = Vec::new();
         stage.warmup = 0;
+        stage.turntable = default();
+        stage.turning = false;
+        stage.silhouette = None;
         stage.hero = hero;
         stage.lit = front;
         stage.model = hero.and_then(|hero| {
@@ -429,6 +465,7 @@ fn frame(
                 shadow.margin.left = px(centre - prepared.shadow * scale / 2.0);
             }
             stage.framed = true;
+            stage.silhouette = Some(prepared.silhouette);
             if let Some((player, node, _)) = prepared.idle
                 && let Ok(mut player) = players.get_mut(player)
                 && let Some(active) = player.animation_mut(node)
@@ -450,6 +487,7 @@ struct Prepared {
     camera: Transform,
     far: f32,
     shadow: f32,
+    silhouette: Rect,
     idle: Option<(Entity, AnimationNodeIndex, f32)>,
 }
 
@@ -498,6 +536,7 @@ fn prepare(
     Ok(Some(Prepared {
         far: (camera.translation - portrait::STAGE).length() + half.length() * 4.0,
         shadow: stance_width(&camera, &reference),
+        silhouette: silhouette(&camera, &points),
         camera,
         idle,
     }))
@@ -668,6 +707,27 @@ fn stance_width(camera: &Transform, points: &[Vec3]) -> f32 {
         hi = hi.max(x);
     }
     ((hi - lo) * SIZE.0 as f32 / 2.0 * 1.4).clamp(120.0, 500.0)
+}
+
+/// The picture's pixels the points cover, as `camera` sees them.
+fn silhouette(camera: &Transform, points: &[Vec3]) -> Rect {
+    let (_, half) = point_bounds(points);
+    let mut camera = *camera;
+    camera.translation -= portrait::STAGE;
+    let matrix = bevy::math::proj::perspective(
+        FOV,
+        SIZE.0 as f32 / SIZE.1 as f32,
+        0.1,
+        camera.translation.length() + half.length() * 4.0,
+    ) * Mat4::from(camera.compute_affine().inverse());
+    let (lo, hi) = projected_bounds(matrix, points);
+    let to_pixels = |ndc: Vec2| {
+        Vec2::new(
+            (ndc.x + 1.0) / 2.0 * SIZE.0 as f32,
+            (1.0 - ndc.y) / 2.0 * SIZE.1 as f32,
+        )
+    };
+    Rect::from_corners(to_pixels(lo), to_pixels(hi))
 }
 
 #[derive(SystemParam)]

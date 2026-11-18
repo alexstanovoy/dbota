@@ -8,7 +8,7 @@ use bota_radovid::proto::{
     QueueEntryId, RulesetId,
 };
 
-use super::core::{Confirm, GameKind, LocalRules, MenuCore, Page, Status, clock};
+use super::core::{Confirm, DemoOffer, GameKind, LocalRules, MenuCore, Page, Status, clock};
 use super::form::FormKind;
 use super::text;
 
@@ -263,33 +263,6 @@ pub struct ResultView {
     pub seats: Vec<SeatRow>,
 }
 
-/// A replay this client keeps.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReplayRow {
-    /// Its file name, which the buttons of its row name it by.
-    pub name: String,
-    pub size: String,
-    /// When it was played.
-    pub when: String,
-    /// Where it was played: a ruleset's id, `local`, `demo`, `file`.
-    pub mode: String,
-    /// Who played what and how it ended, as far as known.
-    pub summary: super::replay_info::Summary,
-}
-
-/// What the REPLAYS page says of the place replays are kept.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReplayShelf {
-    /// The folder, on a desktop; empty in a browser, which keeps them in its own storage.
-    pub folder: String,
-    /// Whether replays are kept at all now (the setting, and a store to keep them in).
-    pub keeping: bool,
-    /// Whether there is a store to keep them in.
-    pub store: bool,
-    /// The service said it keeps no replays of its matches, so none of them is fetched.
-    pub service_keeps_none: bool,
-}
-
 /// The page under the top bar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageView {
@@ -297,8 +270,8 @@ pub enum PageView {
     MatchHistory(super::history_page::View),
     Hero {
         hero: bota_proto::HeroId,
-        /// Whether a Demo Hero can be started with it from here.
-        demo: bool,
+        /// Whether a Demo Hero can be started with it from here, or why not.
+        demo: DemoOffer,
     },
     Leaderboard {
         board: Box<super::leaderboard::Board>,
@@ -351,17 +324,10 @@ pub enum PageView {
     Lobby(LobbyView),
     Result(ResultView),
     /// Dota's Demo Hero: every hero to try, by id and name.
-    #[cfg(not(target_arch = "wasm32"))]
     DemoHero {
         heroes: Vec<(u16, String)>,
-        /// The service has a Demo Hero to start.
-        offered: bool,
-    },
-    /// The replays on this machine, and a field for any replay file.
-    Replays {
-        list: Vec<ReplayRow>,
-        fields: Vec<FieldView>,
-        shelf: ReplayShelf,
+        /// Whether a Demo Hero can be started from here, or why not.
+        offer: DemoOffer,
     },
     /// A game is being opened.
     Joining,
@@ -664,11 +630,9 @@ impl MenuCore {
                 .shown
                 .and_then(|id| self.results.iter().find(|r| r.match_id == id))
                 .map_or(PageView::Joining, |r| PageView::Result(self.result_view(r))),
-            Page::Replays => self.replay_page(),
             Page::MatchHistory => PageView::MatchHistory(self.history_view()),
-            #[cfg(not(target_arch = "wasm32"))]
             Page::DemoHero => PageView::DemoHero {
-                offered: self.menu_rulesets().any(bota_radovid::is_demo),
+                offer: self.demo_offer(),
                 heroes: bota_core::HEROES
                     .iter()
                     .enumerate()
@@ -691,7 +655,7 @@ impl MenuCore {
     fn hero_page(&self, hero: bota_proto::HeroId) -> PageView {
         PageView::Hero {
             hero,
-            demo: self.demo_offered(),
+            demo: self.demo_offer(),
         }
     }
 
@@ -702,40 +666,6 @@ impl MenuCore {
                 label: "Find a nickname",
                 shown: self.form.value(0).to_owned(),
                 focused: self.form.focused_field() == Some(0),
-            },
-        }
-    }
-
-    fn replay_page(&self) -> PageView {
-        PageView::Replays {
-            list: self
-                .library
-                .records()
-                .iter()
-                .map(|r| ReplayRow {
-                    name: r.name.clone(),
-                    size: if r.bytes < 1_000_000 {
-                        format!("{} KB", r.bytes.div_ceil(1000))
-                    } else {
-                        format!("{:.1} MB", r.bytes as f64 / 1e6)
-                    },
-                    when: super::replay_info::when(
-                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(r.when),
-                    ),
-                    mode: r.mode.clone(),
-                    summary: self.summary_of(r),
-                })
-                .collect(),
-            fields: self.fields(),
-            shelf: ReplayShelf {
-                folder: self
-                    .library
-                    .dir()
-                    .map(|d| text::line(&d.display().to_string(), text::MESSAGE))
-                    .unwrap_or_default(),
-                keeping: self.library.keeping(),
-                store: self.library.standing() != crate::replays::Standing::Unavailable,
-                service_keeps_none: self.service_keeps_none(),
             },
         }
     }

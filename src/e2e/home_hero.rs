@@ -365,7 +365,7 @@ fn visit_home(client: &mut Client, hero: HeroId) {
             .id();
         (material, image)
     };
-    act(client, Act::Go(Page::Replays));
+    act(client, Act::Go(Page::LocalLobby));
     client.frames(8);
     assert_empty_stage(client);
     assert!(

@@ -55,6 +55,7 @@ pub(crate) mod harness;
 mod help_widgets;
 mod hero_fx;
 mod hero_page;
+mod hero_turn;
 mod hero_voice;
 mod hero_walk;
 mod home_hero;

@@ -24,8 +24,6 @@ pub enum FormKind {
     /// The local lobby page: a lobby hosted on this machine (port, players) and a game joined by
     /// address.
     Host,
-    /// Keyboard actions for recordings already kept by the client.
-    Replay,
 }
 
 /// One field.
@@ -115,7 +113,6 @@ fn items_of(kind: FormKind, fields: usize) -> Vec<Item> {
             Item::Button(Act::Direct(false)),
             Item::Button(Act::Direct(true)),
         ],
-        FormKind::Replay => Vec::new(),
     }
 }
 
@@ -128,8 +125,6 @@ pub struct Form {
     items: Vec<Item>,
     /// An index into the items.
     focus: usize,
-    /// The replays whose buttons come before the rest of the replays page's items.
-    rows: Vec<String>,
 }
 
 impl Form {
@@ -180,7 +175,6 @@ impl Form {
                     Field::new("Address", &prefs.direct, false, 200),
                 ]
             }
-            FormKind::Replay => Vec::new(),
         };
         // The keyboard starts in the first empty field, the local lobby's in its first.
         let first = match kind {
@@ -197,31 +191,7 @@ impl Form {
             fields,
             items,
             focus,
-            rows: Vec::new(),
         }
-    }
-
-    /// The replays page lists these replays, each with buttons Tab visits before the page's
-    /// own; the keyboard stays where it was.
-    pub fn set_replay_rows(&mut self, names: &[String]) {
-        if self.kind != FormKind::Replay || self.rows == names {
-            return;
-        }
-        let was = self.items.get(self.focus).cloned();
-        let mut items: Vec<Item> = names
-            .iter()
-            .flat_map(|name| {
-                let watch = Item::Button(Act::OpenReplay(name.clone()));
-                let delete = Item::Button(Act::DeleteReplay(name.clone()));
-                [watch, delete]
-            })
-            .collect();
-        items.extend(items_of(self.kind, self.fields.len()));
-        self.focus = was
-            .and_then(|was| items.iter().position(|i| *i == was))
-            .unwrap_or(0);
-        self.items = items;
-        self.rows = names.to_vec();
     }
 
     pub(super) fn set_controls(&mut self, items: Vec<Item>) {

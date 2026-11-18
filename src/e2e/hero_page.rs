@@ -15,7 +15,7 @@ use super::harness::Client;
 use super::menu::{act, local_menu};
 use crate::main_menu::catalogue::HeroCard;
 use crate::main_menu::hero_stage::{HeroImage, HeroStage};
-use crate::main_menu::{Act, MenuCore, Page};
+use crate::main_menu::{Act, DemoOffer, MenuCore, Page};
 
 const HERO: HeroId = HeroId::SHADOW_FIEND;
 
@@ -28,7 +28,7 @@ fn grid() -> Client {
     client
 }
 
-fn hero_page() -> Client {
+pub(super) fn hero_page() -> Client {
     let mut client = local_menu();
     act(&mut client, Act::InspectHero(HERO));
     client.until("the hero's page drawn", |c| {
@@ -55,7 +55,7 @@ fn card(client: &mut Client, hero: &str) -> Entity {
         .1
 }
 
-fn named(client: &mut Client, name: &str) -> Option<Entity> {
+pub(super) fn named(client: &mut Client, name: &str) -> Option<Entity> {
     let world = client.world_mut();
     world
         .query::<(Entity, &Name, &InheritedVisibility)>()
@@ -65,7 +65,7 @@ fn named(client: &mut Client, name: &str) -> Option<Entity> {
 }
 
 /// The box a node is drawn in, in the window's pixels.
-fn rect(client: &Client, node: Entity) -> Rect {
+pub(super) fn rect(client: &Client, node: Entity) -> Rect {
     let world = client.world();
     let laid = world.get::<ComputedNode>(node).expect("laid out");
     let at = world.get::<UiGlobalTransform>(node).expect("placed");
@@ -198,10 +198,10 @@ fn the_card_with_the_keyboards_focus_is_raised() {
     panic!("Tab never reached a hero card");
 }
 
-/// The hero stands large in the middle of the scene, as the model the game draws and not as a
-/// picture of it.
+/// The hero stands large on the scene right of its middle, as the model the game draws and not as
+/// a picture of it.
 #[test]
-fn the_hero_page_draws_the_hero_in_the_middle_of_the_scene() {
+fn the_hero_page_draws_the_hero_right_of_the_middle_of_the_scene() {
     let mut client = hero_page();
     client.until("the hero standing on the stage", |c| {
         let stage = c.world().resource::<HeroStage>();
@@ -233,8 +233,8 @@ fn the_hero_page_draws_the_hero_in_the_middle_of_the_scene() {
     assert_ne!(image, Handle::default(), "a rendered image");
     let middle = at.translation.x / width;
     assert!(
-        (middle - 0.485).abs() < 0.01,
-        "large in the middle of the scene, a little left of the screen's: {middle} of the width, {node:?}"
+        (middle - 0.67).abs() < 0.01,
+        "large, right of the middle of the screen: {middle} of the width, {node:?}"
     );
     let portrait = world
         .resource::<crate::manifest::Manifest>()
@@ -300,7 +300,7 @@ fn span_bottoms(world: &World, text: Entity) -> Vec<f32> {
 }
 
 /// Every text under `root`.
-fn texts_under(world: &World, root: Entity) -> Vec<Entity> {
+pub(super) fn texts_under(world: &World, root: Entity) -> Vec<Entity> {
     let mut found = Vec::new();
     let mut stack = vec![root];
     while let Some(entity) = stack.pop() {
@@ -532,22 +532,112 @@ fn the_demo_button_of_a_heros_page_starts_the_demo_hero() {
     );
 }
 
-/// A browser starts no game of its own, so it offers DEMO only where the service has a Demo Hero;
-/// a desktop always can.
+/// Without an account, the DEMO HERO tab of the top bar opens the page of heroes to try, and a
+/// press on a hero's card starts the Demo Hero with that hero.
 #[test]
-fn a_demo_is_offered_where_the_client_can_host_or_the_service_has_one() {
-    for (can_host, service_offers, offered) in [
-        (true, false, true),
-        (true, true, true),
-        (false, true, true),
-        (false, false, false),
+fn the_demo_hero_tab_starts_a_demo_without_an_account() {
+    let mut client = local_menu();
+    crate::main_menu::tests::use_matching_local_server(
+        &mut client.world_mut().non_send_mut::<MenuCore>(),
+    );
+    client.click_named("demo hero tab");
+    client.until("the Demo Hero page", |c| {
+        c.world().non_send::<MenuCore>().page() == Page::DemoHero
+    });
+    client.click_named("demo shadow fiend");
+    client.until("the Demo Hero on screen", |c| {
+        c.world().non_send::<MenuCore>().shows_game()
+    });
+    assert_eq!(
+        client.world().non_send::<MenuCore>().demo_hero(),
+        Some(HERO),
+        "the demo is of the hero whose card was pressed"
+    );
+}
+
+/// Signed in, the same tab and card start the service's Demo Hero, a game that cheats.
+#[test]
+fn the_demo_hero_tab_starts_the_services_demo_for_a_signed_in_player() {
+    let service = crate::main_menu::tests::service();
+    let mut client = super::menu::signed_up(&service, "alice");
+    client.click_named("demo hero tab");
+    client.until("the Demo Hero page", |c| {
+        c.world().non_send::<MenuCore>().page() == Page::DemoHero
+    });
+    client.click_named("demo pudge");
+    client.within(
+        std::time::Duration::from_secs(120),
+        "the Demo Hero stands",
+        |c| c.core().my_hero().is_some(),
+    );
+    assert!(
+        client.core().statics().is_some_and(|s| s.metadata().cheats),
+        "the service's Demo is a match that cheats"
+    );
+    assert_eq!(
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .demo_hero()
+            .map(|hero| hero.0),
+        Some(HeroId::PUDGE.0)
+    );
+}
+
+/// Where a Demo Hero cannot be started (a browser's service without one, or no account) the hero's
+/// page still shows a DEMO HERO button, dimmed, and says why beside it.
+#[test]
+fn a_hero_page_without_a_demo_shows_a_dimmed_button_and_says_why() {
+    for (preview, reason) in [
+        ("hero-demo-signin", "Sign in to play a Demo Hero."),
+        ("hero-demo-missing", "This service offers no Demo Hero."),
     ] {
-        assert_eq!(
-            MenuCore::demo_policy(can_host, service_offers),
-            offered,
-            "host {can_host}, service {service_offers}"
+        let mut client = Client::run(&["--menu-preview", preview]);
+        client.until("the hero's page drawn", |c| named(c, "demo hero").is_some());
+        let button = named(&mut client, "demo hero").expect("the button");
+        assert!(
+            client
+                .world()
+                .get::<crate::main_menu::Disabled>(button)
+                .is_some(),
+            "{preview}: the button is dimmed"
+        );
+        assert!(
+            client.shown_texts().iter().any(|text| text == reason),
+            "{preview}: the page says \"{reason}\": {:?}",
+            client.shown_texts()
         );
     }
+}
+
+/// A desktop always has a Demo Hero (the service's, else a game of its own); a browser has the
+/// service's for a signed-in player and says what is missing otherwise.
+#[test]
+fn a_demo_is_offered_where_the_client_can_host_or_the_service_has_one() {
+    for (can_host, account, service_offers, offer) in [
+        (true, false, false, DemoOffer::Ready),
+        (true, true, false, DemoOffer::Ready),
+        (true, true, true, DemoOffer::Ready),
+        (false, true, true, DemoOffer::Ready),
+        (false, true, false, DemoOffer::NoDemo),
+        (false, false, false, DemoOffer::SignIn),
+        (false, false, true, DemoOffer::SignIn),
+    ] {
+        assert_eq!(
+            DemoOffer::of(can_host, account, service_offers),
+            offer,
+            "host {can_host}, account {account}, service {service_offers}"
+        );
+    }
+    assert_eq!(DemoOffer::Ready.reason(), None);
+    assert_eq!(
+        DemoOffer::SignIn.reason(),
+        Some("Sign in to play a Demo Hero.")
+    );
+    assert_eq!(
+        DemoOffer::NoDemo.reason(),
+        Some("This service offers no Demo Hero.")
+    );
 }
 
 /// The popup that shows, if one does.

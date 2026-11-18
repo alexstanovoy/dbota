@@ -54,8 +54,6 @@ pub enum Page {
     Lobby,
     /// A lobby on this machine, others joining by its address.
     LocalLobby,
-    /// The replays on this machine.
-    Replays,
     MatchHistory,
     /// The account's rating per ruleset and the ladder.
     Profile,
@@ -63,7 +61,6 @@ pub enum Page {
     Hero(bota_proto::HeroId),
     Leaderboard,
     /// Dota's Demo Hero: a hero to try out alone, with every cheat.
-    #[cfg(not(target_arch = "wasm32"))]
     DemoHero,
     /// How a finished match went.
     Result,
@@ -78,16 +75,14 @@ pub enum Page {
 impl Page {
     /// Whether the page is the service's, shown only with an account.
     pub fn needs_account(self) -> bool {
-        match self {
+        matches!(
+            self,
             Page::MyGames
-            | Page::Lobbies
-            | Page::Lobby
-            | Page::Leaderboard
-            | Page::PlayerProfile(_) => true,
-            #[cfg(not(target_arch = "wasm32"))]
-            Page::DemoHero => true,
-            _ => false,
-        }
+                | Page::Lobbies
+                | Page::Lobby
+                | Page::Leaderboard
+                | Page::PlayerProfile(_)
+        )
     }
 }
 
@@ -95,6 +90,39 @@ mod clock;
 mod lobby_data;
 mod lobby_requests;
 mod lobby_ui;
+
+/// Whether a Demo Hero can be started from here, and if not, what stands in the way, so that the
+/// menu says it where the player looks for the Demo Hero instead of leaving a button dead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DemoOffer {
+    Ready,
+    /// A browser starts no game of its own, and the service's Demo Hero is for an account.
+    SignIn,
+    /// A browser, and the service lists no Demo Hero.
+    NoDemo,
+}
+
+impl DemoOffer {
+    /// A client that can start a game of its own (a desktop) always has a Demo Hero: the
+    /// service's when it lists one, else its own. A browser has the service's, for a signed-in
+    /// player.
+    pub(crate) fn of(can_host: bool, account: bool, service_offers: bool) -> DemoOffer {
+        match (can_host, account, service_offers) {
+            (true, ..) | (false, true, true) => DemoOffer::Ready,
+            (false, false, _) => DemoOffer::SignIn,
+            (false, true, false) => DemoOffer::NoDemo,
+        }
+    }
+
+    /// What the menu tells where the Demo Hero cannot be started.
+    pub(crate) fn reason(self) -> Option<&'static str> {
+        match self {
+            DemoOffer::Ready => None,
+            DemoOffer::SignIn => Some("Sign in to play a Demo Hero."),
+            DemoOffer::NoDemo => Some("This service offers no Demo Hero."),
+        }
+    }
+}
 
 /// What the player does in the menu.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,10 +181,6 @@ pub enum Act {
     /// Starts Dota's Demo Hero with a hero: the service's Demo ruleset, started for this account alone
     /// at once.
     Demo(u16),
-    /// Watches a kept replay, by its file name.
-    OpenReplay(String),
-    /// Deletes a kept replay.
-    DeleteReplay(String),
     /// Watches the replay of a finished match of the account's: fetched from the service once.
     WatchReplay(MatchId),
     /// Goes on with plain TCP to a host after the notice.
@@ -655,8 +679,6 @@ pub struct MenuCore {
     after_results: Option<Page>,
     /// The replays this client keeps.
     pub(super) library: Library,
-    /// What a kept replay holds, as read, where the library knows no more.
-    pub(super) shelf: super::replay_info::Shelf,
     /// The fetching of the replays of the player's matches.
     pub(super) keeper: Keeper,
     /// The metadata of the match on screen, fetched for the post-game screen.
@@ -811,7 +833,6 @@ impl MenuCore {
             list_cache: Default::default(),
             avatar: Default::default(),
             library,
-            shelf: Default::default(),
             keeper: Keeper::default(),
             meta: Default::default(),
             history: Vec::new(),
@@ -1146,9 +1167,8 @@ impl MenuCore {
         match left {
             #[cfg(not(target_arch = "wasm32"))]
             Some(OnScreen::Direct | OnScreen::Local) => Page::LocalLobby,
-            #[cfg(not(target_arch = "wasm32"))]
             Some(OnScreen::Demo(_)) => Page::DemoHero,
-            Some(OnScreen::Replay) => Page::Replays,
+            Some(OnScreen::Replay) => Page::MatchHistory,
             _ if self.account => Page::Home,
             #[cfg(not(target_arch = "wasm32"))]
             _ if self.prefs.service.is_empty() => Page::LocalLobby,
@@ -1164,7 +1184,6 @@ impl MenuCore {
             Page::Lobbies => FormKind::Lobby,
 
             Page::LocalLobby => FormKind::Host,
-            Page::Replays => FormKind::Replay,
             Page::Leaderboard => FormKind::Leaderboard,
             _ => FormKind::None,
         }
@@ -1382,7 +1401,6 @@ impl MenuCore {
             self.accepted.update(client);
         }
         self.poll_lobby_ui();
-        self.shelf.take();
         if let Some(leaving) = self
             .leaving
             .take_if(|leaving| Instant::now() >= leaving.until)
@@ -1397,9 +1415,6 @@ impl MenuCore {
         self.update_avatar();
         self.drive_leaderboard();
         self.drive_profile();
-        if self.page == Page::Replays {
-            self.read_summaries();
-        }
         self.keep_link();
         #[cfg(test)]
         if self.pause_service_events {
@@ -1889,18 +1904,13 @@ impl MenuCore {
         self.ask(ClientMsg::Account { account }, Asked::Profile);
     }
 
-    /// Whether a Demo Hero can be started from here: a desktop always can (the service's, else
-    /// a game of its own), a browser only when the service lists one.
-    pub(super) fn demo_offered(&self) -> bool {
-        Self::demo_policy(
+    /// Whether a Demo Hero can be started from here, or why not.
+    pub(super) fn demo_offer(&self) -> DemoOffer {
+        DemoOffer::of(
             cfg!(not(target_arch = "wasm32")),
+            self.logged_in(),
             self.service_offers_demo(),
         )
-    }
-
-    /// The rule of [`Self::demo_offered`], for a client that can start its own game or not.
-    pub(crate) fn demo_policy(can_host: bool, service_offers: bool) -> bool {
-        can_host || service_offers
     }
 
     fn service_offers_demo(&self) -> bool {
@@ -2101,7 +2111,6 @@ impl MenuCore {
             }
             Page::Leaderboard => self.open_leaderboard(),
             Page::Lobbies => self.ask(ClientMsg::LobbyList, Asked::Other),
-            Page::Replays => self.read_summaries(),
             _ => {}
         }
     }
@@ -2214,9 +2223,7 @@ impl MenuCore {
             | Act::LobbySlot(_)
             | Act::MoveMember(_)
             | Act::KickMember(_) => self.act_lobby(act),
-            Act::OpenReplay(_)
-            | Act::DeleteReplay(_)
-            | Act::WatchReplay(_)
+            Act::WatchReplay(_)
             | Act::PlainAnyway
             | Act::Dismiss
             | Act::RetryService
@@ -2385,8 +2392,6 @@ impl MenuCore {
     fn act_library(&mut self, act: Act) -> Option<Act> {
         match act {
             Act::Demo(hero) => self.start_demo(bota_proto::HeroId(hero)),
-            Act::OpenReplay(name) => self.open_listed(&name),
-            Act::DeleteReplay(name) => self.library.delete(&name),
             Act::WatchReplay(match_id) => self.watch_replay(match_id),
             Act::PlainAnyway => self.direct(false, true),
             Act::Dismiss => {

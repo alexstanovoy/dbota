@@ -2,7 +2,7 @@
 use super::{
     account_page::Rating,
     avatar,
-    core::Page,
+    core::{DemoOffer, Page},
     history::{Match, ResultKind},
     leaderboard::{Board, Mode, Players, Query, Row},
     page_time::Clock,
@@ -193,7 +193,8 @@ fn page_of(name: &str) -> Option<Page> {
         | "profile-details-unavailable" => Page::Profile,
         "heroes" => Page::Heroes,
         "hero" => Page::Hero(HeroId::SHADOW_FIEND),
-        "hero-pudge" => Page::Hero(HeroId::PUDGE),
+        "hero-pudge" | "hero-demo-signin" | "hero-demo-missing" => Page::Hero(HeroId::PUDGE),
+        "demo-hero" => Page::DemoHero,
         "leaderboard"
         | "leaderboard_solo"
         | "leaderboard-bots"
@@ -216,7 +217,21 @@ fn body(page: Page, name: &str) -> PageView {
         },
         Page::Profile | Page::PlayerProfile(_) => profile_fixture(name),
         Page::Heroes => PageView::Heroes,
-        Page::Hero(hero) => PageView::Hero { hero, demo: true },
+        Page::Hero(hero) => PageView::Hero {
+            hero,
+            demo: match name {
+                "hero-demo-signin" => DemoOffer::SignIn,
+                "hero-demo-missing" => DemoOffer::NoDemo,
+                _ => DemoOffer::Ready,
+            },
+        },
+        Page::DemoHero => PageView::DemoHero {
+            heroes: bota_core::HEROES
+                .iter()
+                .map(|hero| (hero.id.0, hero.key.to_owned()))
+                .collect(),
+            offer: DemoOffer::Ready,
+        },
         Page::Leaderboard => ladder_fixture(name),
         _ => PageView::Hidden,
     }

@@ -67,9 +67,8 @@ fn the_profile_shows_the_local_players_record_from_a_real_match_metadata_file() 
         &mut client.world_mut().non_send_mut::<MenuCore>(),
         &directory,
     );
-    act(&mut client, Act::Go(Page::Replays));
     client.until("the private library was read", |client| {
-        crate::main_menu::tests::library_titles_ready(client.world().non_send::<MenuCore>())
+        crate::main_menu::tests::local_library_scan_complete(client.world().non_send::<MenuCore>())
     });
     act(&mut client, Act::Go(Page::Profile));
     client.within(
@@ -2289,10 +2288,11 @@ fn a_profile_keeps_its_match_list_in_the_profile_instead_of_linking_to_replay_im
 }
 
 #[test]
-fn replay_library_and_match_history_offer_no_file_import_controls() {
+fn match_history_offers_no_file_import_controls() {
     use bevy::prelude::*;
     let mut client = local_menu();
-    for page in [Page::Replays, Page::MatchHistory] {
+    {
+        let page = Page::MatchHistory;
         act(&mut client, Act::Go(page));
         let words = client.shown_texts();
         assert!(

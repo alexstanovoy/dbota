@@ -20,6 +20,7 @@ pub(crate) mod catalogue;
 mod core;
 mod form;
 pub(crate) mod hero_stage;
+pub(crate) mod hero_turn;
 mod highlight;
 mod history;
 mod history_page;
@@ -53,7 +54,6 @@ mod prefs;
 mod preview;
 mod profile_metadata;
 mod rank_confidence;
-mod replay_info;
 pub(crate) mod results;
 mod screens;
 pub(crate) mod shell;
@@ -69,6 +69,8 @@ pub(crate) mod tests;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use core::Claim;
+#[cfg(test)]
+pub use core::DemoOffer;
 pub(crate) use core::Page;
 pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
 pub(crate) use hero_stage::{HeroImage, HeroStage};
@@ -92,6 +94,8 @@ pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;
 pub(crate) use text::line;
 pub(crate) use top_bar::StatusAnimation;
+#[cfg(test)]
+pub(crate) use top_bar::TabRow;
 #[cfg(test)]
 pub use view::{Connection, PageView};
 

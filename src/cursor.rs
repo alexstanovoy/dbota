@@ -32,9 +32,25 @@ enum Shape {
     SpellEnemy,
     SpellTeam,
     ItemDrop,
+    /// An open hand, over what can be turned by dragging; the window's own: the install has none.
+    Grab,
+    /// The closed hand of a drag in progress.
+    Grabbing,
 }
 
+/// How a hand holds what the pointer drags: the hero page's turntable shows one over the hero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Grip {
+    Open,
+    Closed,
+}
+
+/// The hand the cursor wears over something a drag turns, or none.
+#[derive(Resource, Default)]
+pub(crate) struct GripCursor(pub Option<Grip>);
+
 impl Shape {
+    /// The shapes the install has images of.
     const ALL: [Shape; 10] = [
         Shape::Default,
         Shape::DefaultEnemy,
@@ -60,6 +76,8 @@ impl Shape {
             Shape::SpellEnemy => "cursor.spell_enemy",
             Shape::SpellTeam => "cursor.spell_team",
             Shape::ItemDrop => "cursor.item_drop",
+            Shape::Grab => "cursor.grab",
+            Shape::Grabbing => "cursor.grabbing",
         }
     }
 
@@ -81,6 +99,8 @@ impl Shape {
                 SystemCursorIcon::Crosshair
             }
             Shape::AttackTeam => SystemCursorIcon::Pointer,
+            Shape::Grab => SystemCursorIcon::Grab,
+            Shape::Grabbing => SystemCursorIcon::Grabbing,
             _ => SystemCursorIcon::Crosshair,
         }
     }
@@ -104,8 +124,13 @@ impl Cursors {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Cursors>()
+        .init_resource::<GripCursor>()
         .add_systems(Startup, load)
-        .add_systems(Update, show.after(crate::pick::update));
+        .add_systems(
+            Update,
+            show.after(crate::pick::update)
+                .after(crate::main_menu::hero_turn::TurnSet),
+        );
 }
 
 fn load(mut cursors: ResMut<Cursors>, manifest: Res<Manifest>, server: Res<AssetServer>) {
@@ -125,7 +150,12 @@ fn enemy_of(core: &bota_client_core::App, id: bota_proto::EntityId) -> Option<bo
 }
 
 /// The shape the cursor has now, by what a click would do.
-fn shape(core: &bota_client_core::App, hover: &Hover, over_hud: bool) -> Shape {
+fn shape(core: &bota_client_core::App, hover: &Hover, over_hud: bool, grip: Option<Grip>) -> Shape {
+    match grip {
+        Some(Grip::Open) => return Shape::Grab,
+        Some(Grip::Closed) => return Shape::Grabbing,
+        None => {}
+    }
     if core.held_item.is_some() && !over_hud {
         return Shape::ItemDrop;
     }
@@ -154,12 +184,13 @@ fn show(
     session: NonSend<Session>,
     hover: Res<Hover>,
     over: Res<OverHud>,
+    grip: Res<GripCursor>,
     window: Single<Entity, With<PrimaryWindow>>,
     mut cursors: ResMut<Cursors>,
     images: Res<Assets<Image>>,
     mut commands: Commands,
 ) {
-    let wanted = shape(&session.0, &hover, over.0);
+    let wanted = shape(&session.0, &hover, over.0, grip.0);
     let image = cursors
         .images
         .iter()

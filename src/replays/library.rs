@@ -140,6 +140,10 @@ impl Library {
     }
 
     /// The folder replays are kept in, where they are files.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(dead_code, reason = "a browser keeps replays in no folder")
+    )]
     pub fn dir(&self) -> Option<std::path::PathBuf> {
         self.backend.dir()
     }
@@ -267,6 +271,8 @@ impl Library {
         );
     }
 
+    /// Forgets a replay and its file, as the pruning does (tests stand for a file lost).
+    #[cfg(test)]
     pub fn delete(&mut self, name: &str) {
         if self.index.remove(name) {
             self.backend.run(
