@@ -14,12 +14,15 @@ use bevy::{
 use dbota_import::thumbnail::Pixels;
 use std::sync::Arc;
 
+/// The side of the avatar on the profile page: the 256 pixel picture has room to be seen here.
+pub const HEADER_SIDE: f32 = 88.0;
+
 pub fn header(kit: &mut Kit, parent: Entity, name: &str, view: &View) {
     let frame = kit.node(
         parent,
         Node {
-            width: px(56),
-            height: px(56),
+            width: px(HEADER_SIDE),
+            height: px(HEADER_SIDE),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
             border: UiRect::all(px(1)),
@@ -31,7 +34,7 @@ pub fn header(kit: &mut Kit, parent: Entity, name: &str, view: &View) {
         BorderColor::all(theme::AVATAR_EDGE),
     ));
     if let Some(pixels) = &view.current {
-        picture(kit, frame, pixels.clone(), 54.0);
+        picture(kit, frame, pixels.clone(), HEADER_SIDE - 2.0);
     } else {
         kit.bold(
             frame,
@@ -39,7 +42,7 @@ pub fn header(kit: &mut Kit, parent: Entity, name: &str, view: &View) {
                 .next()
                 .map(|c| c.to_uppercase().to_string())
                 .unwrap_or_default(),
-            24.0,
+            32.0,
             theme::INK_1,
         );
     }
@@ -156,7 +159,7 @@ fn crop_preview(kit: &mut Kit, row: Entity, view: &View) {
     } else {
         kit.text(
             preview,
-            "Preview of the\nuploaded image\n128 × 128",
+            "Preview of the\nuploaded image\n256 × 256",
             12.0,
             theme::INK_3,
         );
@@ -186,7 +189,7 @@ fn upload_controls(kit: &mut Kit, row: Entity, view: &View) {
         .and_modify(|mut node| node.width = percent(100));
     kit.text(
         controls,
-        "PNG or JPG, up to 256 KB. Cropped to a square and shown at 128 × 128.",
+        "PNG or JPG, up to 16 MB. Cropped to a square, saved at 256 × 256.",
         13.0,
         theme::INK_3,
     );
@@ -236,7 +239,10 @@ fn button(kit: &mut Kit, parent: Entity, label: &str, action: Action, enabled: b
 #[derive(Component)]
 pub(crate) struct AvatarPicture;
 
-fn picture(kit: &mut Kit, parent: Entity, pixels: Arc<Pixels>, size: f32) {
+/// Draws `pixels` on a square of `size` logical pixels. The texture carries its mip chain (the
+/// sampler blends the levels), so a 256 pixel picture drawn at 32 averages the texels it covers
+/// instead of skipping them, and does not shimmer as the page moves.
+pub(super) fn picture(kit: &mut Kit, parent: Entity, pixels: Arc<Pixels>, size: f32) {
     let picture = kit.node(
         parent,
         Node {
@@ -251,7 +257,7 @@ fn picture(kit: &mut Kit, parent: Entity, pixels: Arc<Pixels>, size: f32) {
         if world.get_entity(picture).is_err() {
             return;
         }
-        let image = Image::new(
+        let mut image = Image::new(
             Extent3d {
                 width: pixels.width(),
                 height: pixels.height(),
@@ -262,6 +268,7 @@ fn picture(kit: &mut Kit, parent: Entity, pixels: Arc<Pixels>, size: f32) {
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::RENDER_WORLD,
         );
+        crate::icon_mips::add_mips(&mut image);
         let handle = world.resource_mut::<Assets<Image>>().add(image);
         world.entity_mut(picture).insert(ImageNode::new(handle));
     });

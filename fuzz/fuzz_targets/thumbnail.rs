@@ -1,4 +1,5 @@
-//! Compact service images and user-picked thumbnails reject hostile bytes before allocation.
+//! User-picked pictures reject hostile bytes before allocation, and whatever decodes can be made
+//! into the avatar's square.
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 fuzz_target!(|bytes: &[u8]| {
@@ -9,8 +10,11 @@ fuzz_target!(|bytes: &[u8]| {
                 pixels.rgba().len(),
                 pixels.width() as usize * pixels.height() as usize * 4
             );
-            let square = pixels.square(128).expect("a bounded output size");
-            assert_eq!((square.width(), square.height()), (128, 128));
+            for side in [128, 256] {
+                let square = pixels.square(side).expect("a bounded output size");
+                assert_eq!((square.width(), square.height()), (side, side));
+                assert_eq!(square.rgba().len(), side as usize * side as usize * 4);
+            }
         }
     }
 });

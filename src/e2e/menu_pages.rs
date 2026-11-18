@@ -247,7 +247,7 @@ fn leaderboard_uses_the_service_filters_and_profile_hides_unplayed_ratings() {
 }
 
 #[test]
-fn avatar_picker_crop_and_save_publish_only_a_validated_backend_reply() {
+fn avatar_picked_encoded_and_saved_through_the_service_is_what_the_profile_draws() {
     use crate::main_menu::{AVATAR_TEST_PNG, AvatarAction, AvatarRequest};
     let service = crate::main_menu::tests::service();
     let mut client = super::menu::signed_up(&service, "avatar_mira");
@@ -274,40 +274,55 @@ fn avatar_picker_crop_and_save_publish_only_a_validated_backend_reply() {
     });
     client.frames(5);
     act(&mut client, Act::Avatar(AvatarAction::Save));
-    let Some(AvatarRequest::Save {
-        token,
-        crop: Some(crop),
-    }) = client
-        .world_mut()
-        .non_send_mut::<MenuCore>()
-        .take_avatar_request()
-    else {
-        panic!("a crop is ready for the SDK adapter");
-    };
-    assert_eq!((crop.width(), crop.height()), (128, 128));
-    assert!(
-        crop.rgba()
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .all(|pixel| *pixel == [20, 90, 180, 255])
+    // The editor encodes, the menu sends, the service stores and answers, and only then does the
+    // editor close and the profile draw what the service holds.
+    client.within(
+        std::time::Duration::from_secs(30),
+        "the service stored the avatar and the editor closed",
+        |client| {
+            !crate::main_menu::tests::page_words(client.world_mut())
+                .iter()
+                .any(|text| text == "CHANGE AVATAR")
+        },
     );
-    client
-        .world_mut()
-        .non_send_mut::<MenuCore>()
-        .avatar_saved(token, Ok(Some(AVATAR_TEST_PNG.to_vec())));
-    client.frames(5);
-    assert!(
-        !crate::main_menu::tests::page_words(client.world_mut())
-            .iter()
-            .any(|text| text == "CHANGE AVATAR")
-    );
+    client.until("the stored avatar is drawn", |client| {
+        crate::main_menu::tests::drawn_profile_avatar(client.world_mut())
+            == Some([20, 90, 180, 255])
+    });
     act(&mut client, Act::Avatar(AvatarAction::Open));
     assert!(
         crate::main_menu::tests::page_words(client.world_mut())
             .iter()
             .all(|text| !text.contains("Preview of the")),
         "saved image is used on the next open"
+    );
+}
+
+#[test]
+fn an_avatar_set_by_one_client_is_drawn_on_its_profile_and_leaderboard_row_for_another() {
+    let service = crate::main_menu::tests::service();
+    let (account, _) = crate::main_menu::tests::served_leaderboard_profile(&service);
+    let mut client = super::menu::signed_up(&service, "avatar_viewer");
+    act(&mut client, Act::Go(Page::Leaderboard));
+    let solid = crate::main_menu::tests::FIXTURE_AVATAR_COLOR;
+    client.within(
+        std::time::Duration::from_secs(30),
+        "the ranked player's avatar is drawn in its leaderboard row at the row's size",
+        |client| {
+            crate::main_menu::tests::drawn_avatars(client.world_mut()).contains(&(solid, 30.0))
+        },
+    );
+    let held = crate::main_menu::tests::cached_list_avatars(client.world().non_send::<MenuCore>());
+    assert_eq!(held, 1, "one player on the board has an avatar");
+    client.click_named(&format!("leaderboard profile {account}"));
+    client.within(
+        std::time::Duration::from_secs(30),
+        "the same avatar is drawn large on the player's profile",
+        |client| {
+            crate::main_menu::tests::drawn_avatars(client.world_mut())
+                .iter()
+                .any(|(texel, side)| *texel == solid && *side > 60.0)
+        },
     );
 }
 

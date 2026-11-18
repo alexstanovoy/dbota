@@ -7,6 +7,8 @@ use bota_radovid::proto::{
     AccountGameLimit, AccountId, EndReason, LobbyId, MatchId, MatchResult, Outcome, ProposalId,
     QueueEntryId, RulesetId,
 };
+use dbota_import::thumbnail::Pixels;
+use std::sync::Arc;
 
 use super::core::{Confirm, DemoOffer, GameKind, LocalRules, MenuCore, Page, Status, clock};
 use super::form::FormKind;
@@ -491,6 +493,8 @@ pub struct MenuView {
     pub account: Option<String>,
     /// The name the player goes by: the account's, else the settings' profile name.
     pub player: String,
+    /// The account's avatar, small, for the card that names the player.
+    pub player_avatar: Option<Arc<Pixels>>,
     pub connection: Connection,
     pub side: Side,
     pub status: Option<Status>,
@@ -587,6 +591,7 @@ impl MenuCore {
             player: account
                 .clone()
                 .unwrap_or_else(|| text::line(&self.name(), text::NAME)),
+            player_avatar: self.own_list_avatar(),
             connection,
             side: self.last_side(),
             account,
@@ -770,8 +775,12 @@ impl MenuCore {
     }
 
     fn leaderboard_view(&self) -> PageView {
+        let mut board = self.board.clone();
+        for row in board.rows.iter_mut().chain(board.own.iter_mut()) {
+            row.picture = self.avatars.picture(row.account, row.avatar);
+        }
         PageView::Leaderboard {
-            board: Box::new(self.board.clone()),
+            board: Box::new(board),
             field: FieldView {
                 label: "Find a nickname",
                 shown: self.form.value(0).to_owned(),

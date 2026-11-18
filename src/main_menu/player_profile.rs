@@ -249,9 +249,10 @@ impl Reader {
                 if account.0 == visit.target.account =>
             {
                 if let Some(avatar) = avatar {
-                    visit.decoding = Some(AsyncComputeTaskPool::get().spawn(async move {
-                        dbota_import::thumbnail::decode(&avatar.png, 256 * 1024, 128)
-                    }));
+                    visit.decoding = Some(
+                        AsyncComputeTaskPool::get()
+                            .spawn(async move { super::avatar_image::decode(&avatar.png) }),
+                    );
                 }
                 visit.stage = Part::Done;
             }

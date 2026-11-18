@@ -534,6 +534,12 @@ pub(super) enum Asked {
     Profile,
     Visitor(u64, super::player_profile::Part),
     Leaderboard(u64),
+    /// A batch of other players' avatars for the rows drawn.
+    Avatars,
+    /// The avatar the editor sent, for the editor that sent it.
+    AvatarSaved(super::avatar::Token),
+    /// The account's own avatar, of the version its profile named.
+    OwnAvatar(bota_radovid::proto::AvatarVersion),
     Artifact(MatchId),
     Meta(MatchId),
     Other,
@@ -677,6 +683,10 @@ pub struct MenuCore {
     pub(super) board: super::leaderboard::Board,
     pub(super) list_cache: super::list_cache::Cache,
     pub(super) avatar: super::avatar::Editor,
+    /// The version of the own avatar asked for and not yet answered.
+    pub(super) own_avatar_asked: Option<bota_radovid::proto::AvatarVersion>,
+    /// The small pictures the rows of lists draw.
+    pub(super) avatars: super::avatar_cache::Cache,
     pub(super) local_history: super::local_matches::Archive,
     pub(super) local_meta: super::local_meta::Reader,
     pub(super) history_filter: super::history_page::Selection,
@@ -868,6 +878,8 @@ impl MenuCore {
             board: Default::default(),
             list_cache: Default::default(),
             avatar: Default::default(),
+            own_avatar_asked: None,
+            avatars: Default::default(),
             library,
             shelf: Default::default(),
             keeper: Keeper::default(),
@@ -1393,6 +1405,8 @@ impl MenuCore {
         }
         self.conn = Conn::Offline;
         self.asked.clear();
+        self.avatars.link_lost();
+        self.own_avatar_asked = None;
         self.idle_since = None;
     }
 
@@ -1471,6 +1485,7 @@ impl MenuCore {
         self.resume_result_replay();
         self.update_avatar();
         self.drive_leaderboard();
+        self.drive_avatars();
         self.drive_profile();
         if self.page == Page::MyGames {
             self.read_summaries();
@@ -1719,6 +1734,19 @@ impl MenuCore {
                     self.leaderboard_page(generation, page);
                 }
             }
+            Reply::Avatars { changes, answered } if matches!(asked, Asked::Avatars) => {
+                self.avatars.replied(changes, answered)
+            }
+            reply @ Reply::Avatar { .. } if matches!(asked, Asked::AvatarSaved(_)) => {
+                if let Asked::AvatarSaved(token) = asked {
+                    self.avatar_saved_reply(token, reply);
+                }
+            }
+            reply @ Reply::Avatar { .. } if matches!(asked, Asked::OwnAvatar(_)) => {
+                if let Asked::OwnAvatar(version) = asked {
+                    self.own_avatar_reply(version, reply);
+                }
+            }
             Reply::Artifact {
                 match_id,
                 offset,
@@ -1833,6 +1861,9 @@ impl MenuCore {
         }
         match (asked, error) {
             (Asked::Leaderboard(generation), error) => self.leaderboard_refused(generation, error),
+            (Asked::Avatars, error) => self.avatars.refused(error, Instant::now()),
+            (Asked::AvatarSaved(token), error) => self.avatar_saved_refused(token, error),
+            (Asked::OwnAvatar(version), _) => self.own_avatar_refused(version),
             (Asked::Resume, _) => {
                 self.clear_account();
                 self.drop_link();
@@ -2813,6 +2844,8 @@ impl MenuCore {
         self.list_cache.clear();
         self.board = Default::default();
         self.profiles.clear();
+        self.avatars.clear();
+        self.own_avatar_asked = None;
         self.avatar.backend(None, false);
         self.accepted.clear();
         self.lobby_ui = Default::default();

@@ -2672,7 +2672,9 @@ dependencies = [
  "jiff",
  "js-sys",
  "libc",
+ "png",
  "radovid",
+ "radovid_proto",
  "rodio",
  "serde",
  "serde_json",
@@ -5217,6 +5219,8 @@ dependencies = [
 name = "radovid_proto"
 version = "0.1.0"
 dependencies = [
+ "flate2",
+ "png",
  "postcard",
  "serde",
 ]

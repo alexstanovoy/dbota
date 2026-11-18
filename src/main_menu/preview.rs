@@ -103,7 +103,7 @@ fn hover_preview(
 }
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 61] = [
+pub const NAMES: [&str; 64] = [
     "login",
     "register",
     "home",
@@ -147,6 +147,8 @@ pub const NAMES: [&str; 61] = [
     "profile-details-unavailable",
     "profile-avatar",
     "profile-avatar-unavailable",
+    "profile-picture",
+    "profile_other-picture",
     "profile-empty",
     "heroes",
     "hero",
@@ -161,6 +163,7 @@ pub const NAMES: [&str; 61] = [
     "leaderboard-allpick",
     "leaderboard-empty",
     "leaderboard-unavailable",
+    "leaderboard-pictures",
     "home-local",
     "home-defeat",
     "home-empty",
@@ -194,6 +197,7 @@ pub(super) fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuVi
         cooldown_left: None,
         account: None,
         player: "mira".to_owned(),
+        player_avatar: None,
         connection: Connection::Offline,
         side: Side::Radiant,
         status: None,
@@ -223,6 +227,7 @@ pub(super) fn logged_in(page: Page, body: PageView) -> MenuView {
         cooldown_left: None,
         account: Some("alice".to_owned()),
         player: "alice".to_owned(),
+        player_avatar: None,
         connection: Connection::Online("play.example.org".to_owned()),
         side: Side::Radiant,
         status: None,

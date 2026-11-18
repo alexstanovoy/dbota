@@ -457,6 +457,10 @@ fn player_avatar(kit: &mut Kit, line: Entity, row: &Row, kind: Players) {
             theme::SECONDARY_EDGE
         }),
     ));
+    if let Some(picture) = &row.picture {
+        super::avatar_draw::picture(kit, avatar, picture.clone(), 30.0);
+        return;
+    }
     kit.text(
         avatar,
         row.nickname

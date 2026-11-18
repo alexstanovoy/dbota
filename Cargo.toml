@@ -72,6 +72,9 @@ half = { version = "2.7.1", default-features = false }
 heatel.workspace = true
 # Particle simulation and rendering compile independently of the client's game systems.
 dbota_particles.workspace = true
+# The avatar format's own decoder, which the client takes the pictures strangers chose with (the
+# same crate `bota_radovid` reaches the service through).
+radovid_proto = { path = "../radovid/crates/radovid_proto" }
 
 # wss:// and the matchmaking menu (radovid and the way into a game it hands out) on the desktop: threads and
 # sockets; a browser build has the browser's own WebSocket.
@@ -150,6 +153,8 @@ bota_radovid = { path = "../bota/crates/bota_radovid", default-features = false,
 rodio = { version = "=0.22.2", default-features = false, features = ["playback", "hound", "mp3", "wasm-bindgen"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# The editor's tests make the awkward pictures people pick.
+png = { version = "0.18", default-features = false }
 # The menu's end-to-end tests run the real matchmaking service in-process; its
 # launcher starts the real bota_server.
 radovid = { path = "../radovid/crates/radovid", default-features = false, features = ["test_support"] }

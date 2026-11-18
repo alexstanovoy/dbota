@@ -1,4 +1,5 @@
 //! Explicit screenshot fixtures only. Normal menu views never consume these records.
+use super::avatar_image::LIST_SIDE;
 use super::{
     account_page::Rating,
     avatar,
@@ -9,6 +10,8 @@ use super::{
     view::{Connection, FieldView, MenuView, PageView},
 };
 use bota_proto::HeroId;
+use dbota_import::thumbnail::Pixels;
+use std::sync::Arc;
 
 type MatchSeed = (HeroId, bool, u32, (u16, u16, u16), i32, &'static str, u64);
 const OFFLINE_MATCHES: &[MatchSeed] = &[
@@ -184,9 +187,12 @@ pub fn view(name: &str) -> Option<MenuView> {
 fn page_of(name: &str) -> Option<Page> {
     let page = match name {
         "home-local" | "home-offline" | "home-defeat" | "home-empty" => Page::Home,
-        "profile_other" | "profile_other_unavailable" => Page::PlayerProfile(42),
+        "profile_other" | "profile_other_unavailable" | "profile_other-picture" => {
+            Page::PlayerProfile(42)
+        }
         "profile"
         | "profile-offline"
+        | "profile-picture"
         | "profile-avatar"
         | "profile-avatar-unavailable"
         | "profile-empty"
@@ -200,7 +206,8 @@ fn page_of(name: &str) -> Option<Page> {
         | "leaderboard-bots"
         | "leaderboard-allpick"
         | "leaderboard-empty"
-        | "leaderboard-unavailable" => Page::Leaderboard,
+        | "leaderboard-unavailable"
+        | "leaderboard-pictures" => Page::Leaderboard,
         _ => return None,
     };
     Some(page)
@@ -253,6 +260,9 @@ fn profile_fixture(name: &str) -> PageView {
         available: name == "profile-avatar",
         ..Default::default()
     };
+    if name.ends_with("-picture") {
+        avatar.current = Some(Arc::new(detailed_picture(0)));
+    }
     if name == "profile-avatar-unavailable" {
         avatar.available = false;
         avatar.notice = Some("Avatar changes are not available on this service yet.".to_owned());
@@ -330,6 +340,21 @@ fn ladder_fixture(name: &str) -> PageView {
     if name == "leaderboard-unavailable" {
         board.disconnected();
     }
+    if name == "leaderboard-pictures" {
+        for (at, row) in board
+            .rows
+            .iter_mut()
+            .chain(board.own.iter_mut())
+            .enumerate()
+        {
+            // Two rows in three have an avatar, each its own.
+            if at % 3 != 2 {
+                row.picture = detailed_picture(at as u8 + 1)
+                    .shrunk(LIST_SIDE)
+                    .map(Arc::new);
+            }
+        }
+    }
     PageView::Leaderboard {
         board: Box::new(board),
         field: FieldView {
@@ -340,7 +365,54 @@ fn ladder_fixture(name: &str) -> PageView {
     }
 }
 
+/// A picture with all the detail an avatar can have: fine rings, hatching, a checker, a soft
+/// edge and a smooth gradient, `seed` rotating its colours. The previews show it at the sizes
+/// avatars are drawn at, where a picture sampled badly shimmers or goes grey.
+fn detailed_picture(seed: u8) -> Pixels {
+    let side = super::avatar_image::SIDE;
+    let rgba = (0..side)
+        .flat_map(|y| (0..side).map(move |x| (x as f32 - 127.5, y as f32 - 127.5)))
+        .flat_map(|(x, y)| {
+            let radius = (x * x + y * y).sqrt();
+            let angle = y.atan2(x);
+            let mut color = [
+                60.0 + 0.5 * radius,
+                90.0 + 0.3 * (x + 128.0),
+                170.0 - 0.4 * radius,
+            ];
+            if (radius as u32 / 3).is_multiple_of(2) && radius > 40.0 && radius < 100.0 {
+                color = [235.0, 225.0, 190.0];
+            }
+            if ((angle * 24.0 / std::f32::consts::TAU) as i32).rem_euclid(2) == 0 && radius < 38.0 {
+                color = [30.0, 30.0, 40.0];
+            }
+            if x < -40.0 && y > 40.0 && ((x as i32 / 4) + (y as i32 / 4)).rem_euclid(2) == 0 {
+                color = [250.0, 120.0, 40.0];
+            }
+            if (x + y) as i32 % 5 == 0 && x > 40.0 && y < -40.0 {
+                color = [20.0, 200.0, 120.0];
+            }
+            let rotated = [
+                color[(seed as usize) % 3],
+                color[(seed as usize + 1) % 3],
+                color[(seed as usize + 2) % 3],
+            ];
+            let alpha = ((125.0 - radius) * 12.0).clamp(0.0, 255.0);
+            [
+                rotated[0] as u8,
+                rotated[1] as u8,
+                rotated[2] as u8,
+                alpha as u8,
+            ]
+        })
+        .collect();
+    Pixels::from_rgba(side, side, rgba).expect("exactly the avatar's pixels")
+}
+
 fn decorate(view: &mut MenuView, name: &str) {
+    if name.ends_with("-picture") {
+        view.player_avatar = detailed_picture(0).shrunk(LIST_SIDE).map(Arc::new);
+    }
     if name == "profile-details-unavailable"
         && let PageView::Profile { matches, .. } = &mut view.body
     {
@@ -473,6 +545,8 @@ fn ladder_rows(bots: bool, allpick: bool, kind: Players) -> Vec<Row> {
                 human[index] + if allpick { 140 } else { 0 }
             }))
             .unwrap(),
+            avatar: None,
+            picture: None,
         })
         .collect()
 }
@@ -493,6 +567,8 @@ fn own_row(rows: &mut Vec<Row>, bots: bool, allpick: bool) -> Option<Row> {
             version: None,
             games: 9,
             rating: "1,302".to_owned(),
+            avatar: None,
+            picture: None,
         })
     } else {
         rows.iter().find(|row| row.account == 2207).cloned()
@@ -520,6 +596,8 @@ fn pad_rows(rows: &mut Vec<Row>, bots: bool, allpick: bool, kind: Players) {
                 }) - 2 * rank as i32,
             ))
             .expect("a finite fixture rating"),
+            avatar: None,
+            picture: None,
         });
     }
 }

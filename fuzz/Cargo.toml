@@ -22,6 +22,9 @@ ignored = ["hound", "rodio", "serde", "serde_json"]
 bevy_asset = { version = "=0.20.1", default-features = false }
 bevy_image = { version = "=0.20.0", default-features = false, features = ["png", "ktx2", "zstd_rust"] }
 dbota_import = { path = "../crates/dbota_import" }
+# The avatar format's decoder, which the client takes service avatars with (src/main_menu/avatar_image.rs,
+# read as a module of its own).
+radovid_proto = { path = "../../radovid/crates/radovid_proto" }
 # The importer's install made of the fuzzer's input (`heatel::fuzzing::files`).
 heatel = { path = "../../heatel" }
 libfuzzer-sys = "0.4"
@@ -93,6 +96,13 @@ bench = false
 [[bin]]
 name = "voice_pack"
 path = "fuzz_targets/voice_pack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "avatar_image"
+path = "fuzz_targets/avatar_image.rs"
 test = false
 doc = false
 bench = false

@@ -384,13 +384,17 @@ fn player_card(kit: &mut Kit, root: Entity, view: &MenuView) {
             ChildOf(card),
         ))
         .id();
-    let initial: String = view
-        .player
-        .chars()
-        .next()
-        .map(|c| c.to_uppercase().collect())
-        .unwrap_or_default();
-    kit.typed(avatar, initial, theme::INITIAL, theme::INK_1);
+    if let Some(picture) = &view.player_avatar {
+        super::avatar_draw::picture(kit, avatar, picture.clone(), 50.0);
+    } else {
+        let initial: String = view
+            .player
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().collect())
+            .unwrap_or_default();
+        kit.typed(avatar, initial, theme::INITIAL, theme::INK_1);
+    }
     kit.typed(card, view.player.clone(), theme::PLAYER_NAME, theme::INK_1);
 }
 

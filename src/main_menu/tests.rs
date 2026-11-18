@@ -3997,15 +3997,16 @@ pub(crate) fn registered_public_profile(service: &Service) -> (u64, String) {
     identity
 }
 
+/// The solid colour of the avatar the profile fixtures upload.
+pub(crate) const FIXTURE_AVATAR_COLOR: [u8; 4] = [60, 130, 210, 255];
+
 fn upload_profile_avatar(menu: &mut MenuCore) {
-    // A solid PNG is protocol input for a user-uploaded avatar.
-    let png = vec![
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 32, 0, 0, 0, 32, 8,
-        6, 0, 0, 0, 115, 122, 122, 244, 0, 0, 0, 47, 73, 68, 65, 84, 120, 218, 237, 206, 33, 1, 0,
-        0, 8, 3, 48, 130, 145, 142, 136, 20, 130, 24, 55, 19, 243, 171, 158, 189, 164, 18, 16, 16,
-        16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 72, 7, 30, 115, 205, 60, 151, 190, 23, 53,
-        16, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
-    ];
+    // A solid picture, in the avatar format, as a client makes one.
+    let side = radovid_proto::AVATAR_SIDE as usize;
+    let rgba: Vec<u8> = (0..side * side)
+        .flat_map(|_| FIXTURE_AVATAR_COLOR)
+        .collect();
+    let png = radovid_proto::encode_avatar_rgba(&rgba).expect("a solid picture fits");
     let client = menu.client.as_mut().expect("client");
     let seq = client
         .request(bota_radovid::proto::ClientMsg::SetAvatar { png })
@@ -4085,6 +4086,32 @@ pub(crate) fn install_profile_history(menu: &mut MenuCore, metadata: Vec<u8>) {
 
 pub(crate) fn public_profile_request_count(menu: &MenuCore) -> u64 {
     menu.profiles.requests
+}
+
+/// How many players' avatar pictures the menu holds for its lists.
+pub(crate) fn cached_list_avatars(core: &MenuCore) -> usize {
+    core.avatars.len()
+}
+
+/// The first texel of every avatar picture drawn, with the side it is drawn at.
+pub(crate) fn drawn_avatars(world: &mut bevy::prelude::World) -> Vec<([u8; 4], f32)> {
+    use bevy::prelude::*;
+    let pictures: Vec<_> = world
+        .query_filtered::<(&ImageNode, &Node), With<super::avatar_draw::AvatarPicture>>()
+        .iter(world)
+        .map(|(image, node)| (image.image.clone(), node.width))
+        .collect();
+    pictures
+        .into_iter()
+        .filter_map(|(handle, width)| {
+            let image = world.resource::<Assets<Image>>().get(&handle)?;
+            let texel = image.data.as_ref()?.get(..4)?.try_into().ok()?;
+            let Val::Px(side) = width else {
+                return None;
+            };
+            Some((texel, side))
+        })
+        .collect()
 }
 
 pub(crate) fn drawn_profile_avatar(world: &mut bevy::prelude::World) -> Option<[u8; 4]> {

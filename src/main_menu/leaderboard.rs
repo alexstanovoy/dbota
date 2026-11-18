@@ -49,6 +49,10 @@ pub struct Row {
     pub version: Option<String>,
     pub games: u32,
     pub rating: String,
+    /// The version of the player's avatar, as the service names it in the row.
+    pub avatar: Option<bota_radovid::proto::AvatarVersion>,
+    /// The picture of that avatar, once the menu holds it (set as the view is made).
+    pub picture: Option<std::sync::Arc<dbota_import::thumbnail::Pixels>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -322,6 +326,8 @@ impl Row {
             }),
             games: row.games,
             rating: rating(row.rating.rating)?,
+            avatar: row.avatar,
+            picture: None,
         })
     }
 }
@@ -485,6 +491,8 @@ mod tests {
             version: None,
             games: 41,
             rating: "1,524".to_owned(),
+            avatar: None,
+            picture: None,
         };
         board.receive(generation, Some((Vec::new(), Some(own))));
         assert!(
@@ -642,6 +650,8 @@ mod pacing_tests {
                 version: None,
                 games: 1,
                 rating: "1500".to_owned(),
+                avatar: None,
+                picture: None,
             })
             .collect();
         board.receive(generation, Some((rows, None)));

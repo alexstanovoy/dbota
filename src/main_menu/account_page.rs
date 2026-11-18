@@ -72,17 +72,16 @@ fn profile_header(kit: &mut Kit, parent: Entity, data: &Profile<'_>) {
     let header = kit.node(
         parent,
         Node {
-            height: px(
-                if data
-                    .ratings
-                    .iter()
-                    .any(|rating| rating.confidence.is_some())
-                {
-                    96.0
-                } else {
-                    80.0
-                },
-            ),
+            height: px(if data
+                .ratings
+                .iter()
+                .any(|rating| rating.confidence.is_some())
+            {
+                96.0_f32
+            } else {
+                80.0
+            }
+            .max(super::avatar_draw::HEADER_SIDE + 24.0)),
             flex_shrink: 0.0,
             padding: UiRect::axes(px(super::player_matches::CONTENT_INSET), px(12)),
             align_items: AlignItems::Center,
