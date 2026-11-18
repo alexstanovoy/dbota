@@ -18,6 +18,10 @@ Support) and every library their `libraryfolders.vdf` lists, or takes the folder
 dialog, then makes the cache on a worker thread with its progress and a CANCEL, and starts dbota again on it. The
 settings' RE-IMPORT GAME FILES (`dbota --reimport`) brings that screen back. On Windows the cache, the settings, the
 replays and the log (`dbota.log`) are under `%LOCALAPPDATA%\dbota`.
+The assets an import could not convert are named in that log (`DBOTA_LOG_FILE=/full/path` puts the log, on any system,
+in a file of your choice; elsewhere it goes to the terminal), which dbota keeps adding to when it starts itself again
+on the new copy. Two dbotas importing into one cache folder take turns: the folder has a lock file beside it
+(`.<folder>.lock`), and the second says it waits and can be cancelled.
 
 An import reads ~1 GB of the install, writes ~810 MB and takes about a minute. It builds beside the cache and swaps in
 when whole. `index.txt` lists the files; `stamp.txt` names the manifest version, importer revision and the size and

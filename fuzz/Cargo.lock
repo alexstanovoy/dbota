@@ -872,7 +872,6 @@ dependencies = [
  "crc32fast",
  "heatel",
  "image",
- "miniz_oxide 0.9.1",
  "serde_json",
  "skrifa",
 ]

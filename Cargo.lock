@@ -2692,7 +2692,6 @@ dependencies = [
  "heatel",
  "image",
  "ktx2",
- "miniz_oxide 0.9.1",
  "png",
  "serde_json",
  "skrifa 0.42.1",

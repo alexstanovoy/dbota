@@ -223,6 +223,16 @@ pub struct ManagedCacheLock {
 }
 
 pub fn lock_managed_root(root: &Path) -> Result<ManagedCacheLock> {
+    lock_managed_root_waiting(root, &mut || Flow::Continue)?
+        .ok_or_else(|| managed_io(root, io::Error::other("the wait for the lock was ended")))
+}
+
+/// [`lock_managed_root`] for an import: while another holds the lock, `wait` is called about
+/// every [`LOCK_POLL`], and answering [`Flow::Stop`] gives up (none).
+pub fn lock_managed_root_waiting(
+    root: &Path,
+    wait: &mut dyn FnMut() -> Flow,
+) -> Result<Option<ManagedCacheLock>> {
     fs::create_dir_all(root).map_err(|e| managed_io(root, e))?;
     plain_directory(root)?;
     ensure_marker(&root.join(ROOT_MARKER), ROOT_TEXT.as_bytes())?;
@@ -233,21 +243,80 @@ pub fn lock_managed_root(root: &Path) -> Result<ManagedCacheLock> {
         .write(true)
         .open(&path)
         .map_err(|e| managed_io(&path, e))?;
-    file.lock().map_err(|e| managed_io(&path, e))?;
-    Ok(ManagedCacheLock { _file: file })
+    Ok(lock_polling(&file, &path, wait)?.then_some(ManagedCacheLock { _file: file }))
 }
 
-pub fn begin_managed_import(root: &Path, current: &Path) -> Result<ManagedCacheLock> {
-    begin_managed_import_at(root, current, SystemTime::now())
+/// How often an import waiting for another's lock looks whether it was stopped.
+const LOCK_POLL: Duration = Duration::from_millis(25);
+
+/// The most looks at a lock another holds: about half an hour, which no import takes.
+const LOCK_LOOKS: u32 = 72_000;
+
+/// Takes the exclusive lock of `file` (`path` is named in errors), calling `wait` while another
+/// holds it; whether it was taken (not when `wait` stopped).
+fn lock_polling(file: &fs::File, path: &Path, wait: &mut dyn FnMut() -> Flow) -> Result<bool> {
+    for _ in 0..LOCK_LOOKS {
+        match file.try_lock() {
+            Ok(()) => return Ok(true),
+            Err(fs::TryLockError::WouldBlock) => {
+                if wait() == Flow::Stop {
+                    return Ok(false);
+                }
+                std::thread::sleep(LOCK_POLL);
+            }
+            Err(fs::TryLockError::Error(source)) => return Err(managed_io(path, source)),
+        }
+    }
+    Err(managed_io(
+        path,
+        io::Error::other("another dbota has held the lock for half an hour"),
+    ))
+}
+
+/// The lock of one cache folder, held while an import makes that cache: two imports of the
+/// same folder (also one outside the managed root) would otherwise delete each other's
+/// staging folder. It is a file beside the cache, so it belongs to the folder it guards.
+pub struct CacheLock {
+    _file: fs::File,
+}
+
+/// Takes the lock of the cache at `cache`; see [`lock_managed_root_waiting`] for `wait`.
+pub fn lock_cache(cache: &Path, wait: &mut dyn FnMut() -> Flow) -> Result<Option<CacheLock>> {
+    let path = sibling(cache, "lock")?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|e| managed_io(parent, e))?;
+    }
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|e| managed_io(&path, e))?;
+    Ok(lock_polling(&file, &path, wait)?.then_some(CacheLock { _file: file }))
+}
+
+pub fn begin_managed_import(
+    root: &Path,
+    current: &Path,
+    wait: &mut dyn FnMut() -> Flow,
+) -> Result<Option<ManagedCacheLock>> {
+    begin_managed_import_at(root, current, SystemTime::now(), wait)
 }
 
 fn begin_managed_import_at(
     root: &Path,
     current: &Path,
     now: SystemTime,
-) -> Result<ManagedCacheLock> {
+    wait: &mut dyn FnMut() -> Flow,
+) -> Result<Option<ManagedCacheLock>> {
     let name = managed_name(root, current)?;
-    let lock = lock_managed_root(root)?;
+    let Some(lock) = lock_managed_root_waiting(root, wait)? else {
+        return Ok(None);
+    };
     let report = prune_records(root, name, now, true)?;
     for (path, why) in report.failures {
         eprintln!("dbota import: cache {} stays: {why}", path.display());
@@ -260,7 +329,7 @@ fn begin_managed_import_at(
             )),
         ));
     }
-    Ok(lock)
+    Ok(Some(lock))
 }
 
 fn remove_owned(path: &Path) -> Result<()> {
@@ -574,8 +643,71 @@ pub fn read_stamp(cache: &Path) -> Option<String> {
     (text.len() as u64 <= MAX_STAMP).then_some(text)
 }
 
-/// Imports `plan` from the install at `game` into `cache`, stamped `stamp`. The new cache is
-/// made beside the old one and replaces it once whole; a stopped import leaves the old one.
+/// Decides whether an import may still publish its cache, between the one who ends imports
+/// (the screen's CANCEL, a window closed) and the one who makes it: once [`cancel`](Gate::cancel)
+/// has answered that it took effect, nothing is published, whatever step the import is in; once
+/// the import has published, a cancel answers that it came too late. One gate per import.
+#[derive(Debug, Default)]
+pub struct Gate {
+    state: std::sync::Mutex<GateState>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum GateState {
+    #[default]
+    Open,
+    Cancelled,
+    Published,
+}
+
+impl Gate {
+    fn state(&self) -> std::sync::MutexGuard<'_, GateState> {
+        // The state is a plain value a panicking holder cannot leave half-written.
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Ends the import: true when nothing will be published, false when the cache was
+    /// published already.
+    #[must_use]
+    pub fn cancel(&self) -> bool {
+        let mut state = self.state();
+        match *state {
+            GateState::Published => false,
+            _ => {
+                *state = GateState::Cancelled;
+                true
+            }
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        *self.state() == GateState::Cancelled
+    }
+
+    /// Runs `publish` unless the import was cancelled, holding the gate so that a cancel
+    /// cannot land in between: false when it was cancelled and `publish` did not run.
+    fn publish(&self, publish: impl FnOnce() -> Result<()>) -> Result<bool> {
+        let mut state = self.state();
+        if *state == GateState::Cancelled {
+            return Ok(false);
+        }
+        publish()?;
+        *state = GateState::Published;
+        Ok(true)
+    }
+}
+
+/// What an import holds while it makes a cache: the lock of the cache folder, and the gate
+/// that can end it.
+#[derive(Clone, Copy)]
+pub struct Held<'a> {
+    pub lock: &'a CacheLock,
+    pub gate: &'a Gate,
+}
+
+/// Imports `plan` from the install at `game` into `cache`, stamped `stamp`, once no other
+/// import of that folder is under way (it waits for it). The new cache is made beside the old
+/// one and replaces it once whole; a stopped import leaves the old one.
 pub fn import_into(
     game: &Path,
     cache: &Path,
@@ -583,21 +715,67 @@ pub fn import_into(
     stamp: &str,
     progress: &mut dyn FnMut(&Progress<'_>) -> Flow,
 ) -> Result<Report> {
-    import_capped(game, cache, plan, stamp, progress, None)
+    let lock = lock_cache(cache, &mut || Flow::Continue)?
+        .ok_or_else(|| managed_io(cache, io::Error::other("the wait for the lock was ended")))?;
+    let held = Held {
+        lock: &lock,
+        gate: &Gate::default(),
+    };
+    import_held(game, cache, plan, stamp, held, progress)
 }
 
-/// [`import_into`], reading at most `limit` bytes of the install when given. An import the
+/// [`import_into`] for an import whose lock the caller holds and which `held.gate` can end.
+pub fn import_held(
+    game: &Path,
+    cache: &Path,
+    plan: &Plan,
+    stamp: &str,
+    held: Held<'_>,
+    progress: &mut dyn FnMut(&Progress<'_>) -> Flow,
+) -> Result<Report> {
+    import_capped(game, cache, plan, stamp, held, progress, None)
+}
+
+/// [`import_held`], reading at most `limit` bytes of the install when given. An import the
 /// install cut short (it asked for more) leaves no cache: the old one stays.
 fn import_capped(
     game: &Path,
     cache: &Path,
     plan: &Plan,
     stamp: &str,
+    held: Held<'_>,
     progress: &mut dyn FnMut(&Progress<'_>) -> Flow,
     limit: Option<u64>,
 ) -> Result<Report> {
     let staging = sibling(cache, "importing")?;
     remove(&staging)?;
+    // A staging folder is gone on every way out but a published cache.
+    let made = make_in(game, cache, plan, stamp, held, progress, limit);
+    let published = match made {
+        Ok((report, true)) => return Ok(report),
+        Ok((report, false)) => Ok(report),
+        Err(err) => Err(err),
+    };
+    // The import ended without a cache: its half copy goes, and failing to remove it is told
+    // instead of hidden (the next import clears it again).
+    if let Err(why) = remove(&staging) {
+        eprintln!("dbota import: the unfinished copy stays: {why}");
+    }
+    published
+}
+
+/// Makes the cache in `staging` and publishes it as `cache`'s place; the report, and whether it
+/// was published (false: stopped, by `progress` or by the gate).
+fn make_in(
+    game: &Path,
+    cache: &Path,
+    plan: &Plan,
+    stamp: &str,
+    held: Held<'_>,
+    progress: &mut dyn FnMut(&Progress<'_>) -> Flow,
+    limit: Option<u64>,
+) -> Result<(Report, bool)> {
+    let staging = sibling(cache, "importing")?;
     // A file that cannot be written (a full disk, a folder taken away) ends the import: what it
     // made would be a cache with holes, its index listing what is there.
     let failed = std::cell::RefCell::new(None);
@@ -609,7 +787,7 @@ fn import_capped(
             failed: &failed,
         },
         &mut |p: &Progress<'_>| {
-            if failed.borrow().is_some() {
+            if failed.borrow().is_some() || held.gate.is_cancelled() {
                 Flow::Stop
             } else {
                 progress(p)
@@ -617,26 +795,22 @@ fn import_capped(
         },
         limit,
     );
-    let made = match failed.into_inner() {
-        Some(err) => Err(err),
-        None => made,
+    let mut report = match failed.into_inner() {
+        Some(err) => return Err(err),
+        None => made?,
     };
-    let report = match made {
-        Ok(report) => report,
-        Err(err) => {
-            remove(&staging)?;
-            return Err(err);
-        }
-    };
-    if report.stopped {
-        remove(&staging)?;
-        return Ok(report);
+    // The stop flag is looked at before each step only: a cancel during the last one is
+    // found here, and again under the gate right before the publication.
+    if report.stopped || held.gate.is_cancelled() {
+        report.stopped = true;
+        return Ok((report, false));
     }
     let mut sink = DirSink::new(&staging);
     sink.write(INDEX, report.index().as_bytes())?;
     sink.write(STAMP, stamp.as_bytes())?;
-    replace(&staging, cache)?;
-    Ok(report)
+    let published = held.gate.publish(|| replace(&staging, cache))?;
+    report.stopped = !published;
+    Ok((report, published))
 }
 
 /// A sink that keeps the first file it could not write in `failed`.
@@ -658,7 +832,8 @@ impl Sink for Watched<'_> {
     }
 }
 
-/// Puts the whole cache in `staging` in the place of the one at `cache`.
+/// Puts the whole cache in `staging` in the place of the one at `cache` (also a link to
+/// nowhere there). When the new one cannot take its place, the old one is put back.
 pub(crate) fn replace(staging: &Path, cache: &Path) -> Result<()> {
     let old = sibling(cache, "old")?;
     remove(&old)?;
@@ -666,10 +841,20 @@ pub(crate) fn replace(staging: &Path, cache: &Path) -> Result<()> {
         path: cache.display().to_string(),
         source,
     };
-    if cache.exists() {
+    // `exists` is false for a link to nowhere, which still has to be moved out of the way.
+    let moved = fs::symlink_metadata(cache).is_ok();
+    if moved {
         fs::rename(cache, &old).map_err(io)?;
     }
-    fs::rename(staging, cache).map_err(io)?;
+    if let Err(source) = fs::rename(staging, cache) {
+        if moved && let Err(back) = fs::rename(&old, cache) {
+            eprintln!(
+                "dbota import: the previous cache stays at {}: {back}",
+                old.display()
+            );
+        }
+        return Err(io(source));
+    }
     remove(&old)
 }
 
@@ -767,11 +952,18 @@ mod tests {
         fs::write(cache.join(INDEX), b"").unwrap();
         let plan = Plan::parse("texture t t.vtex_c t.png\n", "").unwrap();
         let limit = Some(64 << 10);
+        let gate = Gate::default();
+        let lock = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
+        let held = Held {
+            lock: &lock,
+            gate: &gate,
+        };
         let made = import_capped(
             &game,
             &cache,
             &plan,
             "after",
+            held,
             &mut |_| Flow::Continue,
             limit,
         );
@@ -780,7 +972,15 @@ mod tests {
         assert_eq!(read_stamp(&cache).as_deref(), Some("before"));
         assert!(!sibling(&cache, "importing").unwrap().exists());
         // Within its limit, the same install imports, its failures reported, and is stamped.
-        let made = import_capped(&game, &cache, &plan, "after", &mut |_| Flow::Continue, None);
+        let made = import_capped(
+            &game,
+            &cache,
+            &plan,
+            "after",
+            held,
+            &mut |_| Flow::Continue,
+            None,
+        );
         assert!(made.is_ok_and(|r| r.cut.is_none()));
         assert_eq!(read_stamp(&cache).as_deref(), Some("after"));
         fs::remove_dir_all(&dir).unwrap();
@@ -817,6 +1017,184 @@ mod tests {
         assert!(err.to_string().contains("fonts/second.otf"), "{err}");
         assert_eq!(read_stamp(&cache).as_deref(), Some("before"));
         assert!(!staging.exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// An install with two fonts to import, and the plan that imports them: two steps.
+    fn two_font_install(label: &str) -> (PathBuf, PathBuf, PathBuf, Plan) {
+        let dir = fresh_dir(label);
+        let (game, cache) = (dir.join("game"), dir.join("cache"));
+        fs::create_dir_all(game.join("panorama/fonts")).unwrap();
+        fs::write(game.join("pak01_dir.vpk"), vpk(&[])).unwrap();
+        let face = include_bytes!("../../../assets/fonts/bota-sans-regular.ttf");
+        fs::write(game.join("panorama/fonts/f.otf"), face).unwrap();
+        let plan = Plan::parse(
+            "font first panorama/fonts/f.otf fonts/first.otf\n\
+             font second panorama/fonts/f.otf fonts/second.otf\n",
+            "",
+        )
+        .unwrap();
+        (dir, game, cache, plan)
+    }
+
+    /// `import_into` for a test that ends the import through its gate: the gate is given to
+    /// `progress`, which is told before each step.
+    fn import_gated(
+        game: &Path,
+        cache: &Path,
+        plan: &Plan,
+        progress: &mut dyn FnMut(&Progress<'_>, &Gate) -> Flow,
+    ) -> Result<Report> {
+        let lock = lock_cache(cache, &mut || Flow::Continue).unwrap().unwrap();
+        let gate = Gate::default();
+        let held = Held {
+            lock: &lock,
+            gate: &gate,
+        };
+        import_held(game, cache, plan, "after", held, &mut |p| {
+            progress(p, &gate)
+        })
+    }
+
+    /// A cancel that arrives while the last step works, after the last time the import looked
+    /// at its stop flag, still ends it: nothing is published.
+    #[test]
+    fn a_cancel_during_the_last_step_publishes_no_cache() {
+        let (dir, game, cache, plan) = two_font_install("cancel-last");
+        let made = import_gated(&game, &cache, &plan, &mut |p, gate| {
+            if p.done + 1 == p.total {
+                assert!(gate.cancel(), "nothing is published yet");
+            }
+            Flow::Continue
+        });
+        assert!(made.is_ok_and(|report| report.stopped));
+        assert!(!cache.exists(), "a cache was published after the cancel");
+        assert!(!sibling(&cache, "importing").unwrap().exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A cancel in the middle of an import ends it at its next step and leaves no cache and no
+    /// staging folder; the cache that was there stays.
+    #[test]
+    fn a_cancel_in_the_middle_of_an_import_leaves_the_old_cache_and_no_staging_folder() {
+        let (dir, game, cache, plan) = two_font_install("cancel-middle");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join(STAMP), b"before").unwrap();
+        let made = import_gated(&game, &cache, &plan, &mut |p, gate| {
+            if p.done == 1 {
+                assert!(gate.cancel());
+            }
+            Flow::Continue
+        });
+        assert!(made.is_ok_and(|report| report.stopped));
+        assert_eq!(read_stamp(&cache).as_deref(), Some("before"));
+        assert!(!sibling(&cache, "importing").unwrap().exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Once the cache is published a cancel is told that it came too late, and the cache is
+    /// there: the screen must not claim to have cancelled.
+    #[test]
+    fn a_cancel_after_the_publication_is_told_it_came_too_late() {
+        let (dir, game, cache, plan) = two_font_install("cancel-late");
+        let lock = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
+        let gate = Gate::default();
+        let held = Held {
+            lock: &lock,
+            gate: &gate,
+        };
+        let made = import_held(&game, &cache, &plan, "after", held, &mut |_| Flow::Continue);
+        assert!(made.is_ok_and(|report| !report.stopped));
+        assert!(!gate.cancel(), "the cache was published already");
+        assert!(!gate.is_cancelled());
+        assert_eq!(read_stamp(&cache).as_deref(), Some("after"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// While another import of the same cache folder holds its lock (also a folder outside the
+    /// managed root), a second one is told it waits and gives up when it is stopped; a
+    /// different folder beside it is not held up.
+    #[test]
+    fn a_second_import_of_the_same_folder_waits_and_can_be_stopped() {
+        let dir = fresh_dir("lock-wait");
+        let cache = dir.join("cache");
+        let first = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
+        let mut waited = 0;
+        let second = lock_cache(&cache, &mut || {
+            waited += 1;
+            Flow::Stop
+        })
+        .unwrap();
+        assert!(second.is_none());
+        assert_eq!(waited, 1);
+        let other = lock_cache(&dir.join("other"), &mut || panic!("another folder waits"));
+        assert!(other.unwrap().is_some());
+        drop(first);
+        let third = lock_cache(&cache, &mut || panic!("a released lock is waited for"));
+        assert!(third.unwrap().is_some());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The index cannot be written (a folder is in its place): the import fails and the half
+    /// copy is not left beside the cache.
+    #[test]
+    fn a_failed_index_write_removes_the_staging_folder() {
+        let (dir, game, cache, plan) = two_font_install("index-fails");
+        let staging = sibling(&cache, "importing").unwrap();
+        let made = import_into(&game, &cache, &plan, "after", &mut |p| {
+            if p.done == 1 {
+                fs::create_dir_all(staging.join(INDEX)).unwrap();
+            }
+            Flow::Continue
+        });
+        let err = made.expect_err("an index that cannot be written fails the import");
+        assert!(err.to_string().contains(INDEX), "{err}");
+        assert!(!staging.exists(), "the staging folder was left");
+        assert!(!cache.exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The old copy of a cache cannot be cleared (a file is in its place): publishing fails and
+    /// the staging folder is removed, the cache that was there kept.
+    #[test]
+    fn a_failed_publish_removes_the_staging_folder_and_keeps_the_old_cache() {
+        let (dir, game, cache, plan) = two_font_install("publish-fails");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join(STAMP), b"before").unwrap();
+        fs::write(cache.join(INDEX), b"").unwrap();
+        fs::write(sibling(&cache, "old").unwrap(), b"in the way").unwrap();
+        let made = import_into(&game, &cache, &plan, "after", &mut |_| Flow::Continue);
+        assert!(made.is_err());
+        assert!(!sibling(&cache, "importing").unwrap().exists());
+        assert_eq!(read_stamp(&cache).as_deref(), Some("before"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The new copy cannot take the cache's place after the cache was moved aside: the cache is
+    /// moved back, not lost.
+    #[test]
+    fn a_publish_that_fails_after_moving_the_cache_aside_puts_it_back() {
+        let dir = fresh_dir("rollback");
+        let cache = dir.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join(STAMP), b"before").unwrap();
+        let missing_staging = dir.join("not-there");
+        assert!(replace(&missing_staging, &cache).is_err());
+        assert_eq!(read_stamp(&cache).as_deref(), Some("before"));
+        assert!(!sibling(&cache, "old").unwrap().exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A link to nowhere where the cache goes is replaced by the cache.
+    #[cfg(unix)]
+    #[test]
+    fn a_broken_link_at_the_cache_path_is_replaced_by_the_cache() {
+        let (dir, game, cache, plan) = two_font_install("broken-link");
+        std::os::unix::fs::symlink(dir.join("nowhere"), &cache).unwrap();
+        let made = import_into(&game, &cache, &plan, "after", &mut |_| Flow::Continue);
+        assert!(made.is_ok(), "{made:?}");
+        assert_eq!(read_stamp(&cache).as_deref(), Some("after"));
+        assert!(cache.is_dir() && !cache.is_symlink());
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -979,6 +1357,26 @@ mod tests {
     }
 
     #[test]
+    fn a_managed_import_waits_for_the_root_lock_and_can_be_stopped() {
+        let root = fresh_dir("managed-wait");
+        let requested = root.join(crate::import::folder_name());
+        let first = lock_managed_root(&root).unwrap();
+        let mut waited = 0;
+        let second = begin_managed_import_at(&root, &requested, now(), &mut || {
+            waited += 1;
+            Flow::Stop
+        });
+        assert!(second.is_ok_and(|lock| lock.is_none()));
+        assert_eq!(waited, 1);
+        drop(first);
+        let third = begin_managed_import_at(&root, &requested, now(), &mut || {
+            panic!("a released lock is waited for")
+        });
+        assert!(third.is_ok_and(|lock| lock.is_some()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn a_ninth_import_is_refused_when_all_eight_caches_are_recent() {
         let root = fresh_dir("prune-admission");
         let caches = many_caches(&root, MAX_CACHES, true);
@@ -986,7 +1384,7 @@ mod tests {
             touch_last_use_at(cache, now()).unwrap();
         }
         let requested = root.join(crate::import::folder_name());
-        let error = begin_managed_import_at(&root, &requested, now())
+        let error = begin_managed_import_at(&root, &requested, now(), &mut || Flow::Continue)
             .err()
             .expect("capacity refusal")
             .to_string();
@@ -1005,7 +1403,7 @@ mod tests {
         }
         fs::write(caches[0].join(LAST_USE_MARKER), b"damaged").unwrap();
         let requested = root.join(crate::import::folder_name());
-        let error = begin_managed_import_at(&root, &requested, now())
+        let error = begin_managed_import_at(&root, &requested, now(), &mut || Flow::Continue)
             .err()
             .expect("damaged owned cache still occupies a slot")
             .to_string();

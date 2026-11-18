@@ -198,15 +198,149 @@ fn cancelling_an_import_leaves_no_copy_and_the_screen_draws_while_it_works() {
                   click:cancel;await:text:Import cancelled.;await:button:import from dota 2;\
                   click:quit dbota";
     played("cancel", client, script);
+    assert_nothing_made(&scratch);
+}
+
+/// Nothing of an import is left: no cache, and none of the folders an import works in beside it
+/// (the lock file is the folder's, and stays).
+fn assert_nothing_made(scratch: &Scratch) {
     let cache = scratch.cache();
     assert!(!cache.exists(), "{} was made", cache.display());
     let left: Vec<_> = std::fs::read_dir(&scratch.root)
         .expect("the scratch folder")
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|name| name.contains("assets"))
+        .filter(|name| name.contains("assets") && !name.ends_with(".lock"))
         .collect();
     assert!(left.is_empty(), "left beside the cache: {left:?}");
+}
+
+/// The steps of the real import, as the screen counts them.
+fn import_steps() -> usize {
+    dbota_import::import::plan()
+        .expect("the plan of this build")
+        .items
+        .len()
+}
+
+/// CANCEL in the middle of a real import (the converter running over the install, held at step
+/// 100 until the press) ends it: no cache, no staging folder, the screen back at its choices.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn cancelling_in_the_middle_of_a_real_import_leaves_no_cache_and_no_staging_folder() {
+    let scratch = Scratch::new("cancel-middle");
+    let mut client = first_run_client(&scratch);
+    steam_with_dota(
+        &mut client,
+        &scratch.root.join("Steam"),
+        &scratch.root.join("games"),
+    );
+    client.args(["--import-hold-at", "100"]);
+    let script = "await:button:import from dota 2;click:import from dota 2;\
+                  await:text:100 of;click:cancel;await:text:Import cancelled.;\
+                  await:button:import from dota 2;click:quit dbota";
+    played("cancel-middle", client, script);
+    assert_nothing_made(&scratch);
+}
+
+/// CANCEL pressed while the LAST step works (after the import last looked at its stop flag)
+/// still publishes nothing, and the screen goes back to its choices, not on to a restart.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn cancelling_during_the_last_step_publishes_no_cache_and_the_screen_does_not_restart() {
+    let scratch = Scratch::new("cancel-last");
+    let mut client = first_run_client(&scratch);
+    steam_with_dota(
+        &mut client,
+        &scratch.root.join("Steam"),
+        &scratch.root.join("games"),
+    );
+    let total = import_steps();
+    client.args(["--import-hold-at", "last"]);
+    let script = format!(
+        "await:button:import from dota 2;click:import from dota 2;\
+         await:text:{} of {total};click:cancel;await:text:Import cancelled.;\
+         expect:nobutton:continue;await:button:import from dota 2;click:quit dbota",
+        total - 1
+    );
+    played("cancel-last", client, &script);
+    assert_nothing_made(&scratch);
+}
+
+/// A window closed while the last step works also publishes nothing: the client ends, and the
+/// worker it waited for removed its half copy.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn closing_the_window_during_the_last_step_publishes_no_cache() {
+    let scratch = Scratch::new("close-last");
+    let mut client = first_run_client(&scratch);
+    steam_with_dota(
+        &mut client,
+        &scratch.root.join("Steam"),
+        &scratch.root.join("games"),
+    );
+    let total = import_steps();
+    client.args(["--import-hold-at", "last"]);
+    let script = format!(
+        "await:button:import from dota 2;click:import from dota 2;await:text:{} of {total};exit",
+        total - 1
+    );
+    played("close-last", client, &script);
+    assert_nothing_made(&scratch);
+}
+
+/// An import that finds another dbota importing into the same folder says so and can be
+/// cancelled at once; the folder is left to the other.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn an_import_waiting_for_another_dbota_says_so_and_cancels_at_once() {
+    let scratch = Scratch::new("waiting");
+    let other = dbota_import::cache_dir::lock_cache(&scratch.cache(), &mut || {
+        dbota_import::import::Flow::Continue
+    })
+    .expect("the lock")
+    .expect("the lock is free");
+    let mut client = first_run_client(&scratch);
+    steam_with_dota(
+        &mut client,
+        &scratch.root.join("Steam"),
+        &scratch.root.join("games"),
+    );
+    let script = "await:button:import from dota 2;click:import from dota 2;\
+                  await:text:Another dbota is making its copy;shot:first-run-waiting.png;\
+                  click:cancel;await:text:Import cancelled.;await:button:import from dota 2;\
+                  click:quit dbota";
+    played("waiting", client, script);
+    drop(other);
+    assert_nothing_made(&scratch);
+}
+
+/// What the partial-copy screen says names the log file the failed assets are in, and the file
+/// has them, also after dbota started again on the copy.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn the_screen_names_the_log_file_that_lists_the_assets_that_did_not_convert() {
+    let scratch = Scratch::new("log");
+    let log = scratch.root.join("dbota.log");
+    let mut client = first_run_client(&scratch);
+    client.env("DBOTA_LOG_FILE", &log);
+    let dota = steam_with_dota(
+        &mut client,
+        &scratch.root.join("Steam"),
+        &scratch.root.join("games"),
+    );
+    let script = format!(
+        "await:text:Dota 2 found: {};click:import from dota 2;await:button:continue;\
+         await:text:{} names them;click:continue;await:button:sign in;{QUIT_MENU}",
+        dota.display(),
+        log.display()
+    );
+    played("log", client, &script);
+    let said = std::fs::read_to_string(&log).expect("the log file");
+    assert!(
+        said.contains("dbota import: ") && said.contains(" did not convert: "),
+        "the log does not name the assets that failed:\n{said}"
+    );
 }
 
 /// A cache another dbota made holds the client at the import screen, which says why, and the
@@ -262,6 +396,25 @@ fn without_dota_in_steam_the_player_picks_its_folder() {
     );
     played("chooser", client, &script);
     assert_cache_made(&scratch.cache());
+}
+
+/// The path typed and refused stays on the screen when it is asked for again, to be corrected.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn a_refused_typed_path_is_still_there_when_the_path_is_asked_for_again() {
+    let scratch = Scratch::new("typed-kept");
+    let nothing = scratch.root.join("nothing");
+    std::fs::create_dir_all(&nothing).expect("a folder without Dota");
+    let mut client = first_run_client(&scratch);
+    client.arg("--no-dialog");
+    let script = format!(
+        "click:choose the dota 2 folder;await:button:use this path;text:{};key:Enter;\
+         await:text:holds no Dota 2;click:choose the dota 2 folder;await:button:use this path;\
+         await:text:{}|;click:back;click:quit dbota",
+        nothing.display(),
+        nothing.display()
+    );
+    played("typed-kept", client, &script);
 }
 
 /// A run nobody watches (a capture) has no import screen to show: without a cache of this build

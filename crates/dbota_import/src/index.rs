@@ -20,7 +20,7 @@ const MAX_SMALL_TOTAL: u64 = 128 << 20;
 pub const MAX_INDEX: u64 = 2 << 20;
 
 /// The folders at the top of a cache: those the manifest's outputs go in, so a folder the
-/// manifest adds (the loading screen's, the faces') is one a prepared cache may hold at once.
+/// manifest adds (the loading screen's, the faces') is one the cache may hold.
 fn folders() -> &'static HashSet<String> {
     static FOLDERS: OnceLock<HashSet<String>> = OnceLock::new();
     FOLDERS.get_or_init(|| {

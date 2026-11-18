@@ -106,6 +106,7 @@ pub fn ask_folder(title: &str) -> Result<Option<PathBuf>, NoDialog> {
 
 #[cfg(windows)]
 fn dialog(title: &str) -> Result<Option<PathBuf>, NoDialog> {
+    use std::os::windows::ffi::OsStringExt;
     use windows::Win32::Foundation::ERROR_CANCELLED;
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
@@ -126,23 +127,39 @@ fn dialog(title: &str) -> Result<Option<PathBuf>, NoDialog> {
                 CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
             dialog.SetOptions(dialog.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_PICKFOLDERS)?;
             dialog.SetTitle(&HSTRING::from(title))?;
-            if let Err(why) = dialog.Show(None) {
+            if let Err(why) = dialog.Show(own_window()) {
                 if why.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
                     return Ok(None);
                 }
                 return Err(why);
             }
             let name = dialog.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
-            let path = name.to_string();
+            // Wide characters as the system names the folder, also when they are not valid
+            // UTF-16 (a name with an unpaired surrogate is a name all the same).
+            let path = std::ffi::OsString::from_wide(name.as_wide());
             CoTaskMemFree(Some(name.0 as *const _));
-            Ok(Some(PathBuf::from(path.map_err(|_| {
-                windows::core::Error::from_hresult(HRESULT(-1))
-            })?)))
+            Ok(Some(PathBuf::from(path)))
         })();
         if initialised {
             CoUninitialize();
         }
         answer.map_err(failed)
+    }
+}
+
+/// This process's window that is in front, which a dialog is made the child of: a dialog with
+/// no owner can open behind a borderless fullscreen window, which is how the client starts.
+/// None when the foreground window is another program's.
+#[cfg(windows)]
+fn own_window() -> Option<windows::Win32::Foundation::HWND> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    // SAFETY: plain queries; the handle is only passed on, and a stale one is refused by the
+    // system.
+    unsafe {
+        let window = GetForegroundWindow();
+        let mut process = 0;
+        GetWindowThreadProcessId(window, Some(&mut process));
+        (!window.is_invalid() && process == std::process::id()).then_some(window)
     }
 }
 
@@ -190,9 +207,12 @@ fn run_dialog(command: &mut std::process::Command) -> Result<Option<PathBuf>, No
     if !ended.success() || said.len() > MAX_ANSWER {
         return Ok(None);
     }
-    let text = String::from_utf8_lossy(&said);
-    let line = text.lines().next().unwrap_or("").trim_end_matches('\r');
-    Ok((!line.is_empty()).then(|| PathBuf::from(line)))
+    // The bytes as the program printed them: a folder whose name is not UTF-8 is still that
+    // folder.
+    use std::os::unix::ffi::OsStrExt;
+    let line = said.split(|&byte| byte == b'\n').next().unwrap_or(&[]);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    Ok((!line.is_empty()).then(|| PathBuf::from(std::ffi::OsStr::from_bytes(line))))
 }
 
 /// The longest path a dialog program may answer with.
@@ -202,6 +222,9 @@ const MAX_ANSWER: usize = 8192;
 /// Bytes free for this user on the drive that holds `path` (or, while it does not exist yet,
 /// its nearest folder that does); none when the system does not tell.
 pub fn free_space(path: &Path) -> Option<u64> {
+    // A relative path's nearest folder that exists is found among its absolute ancestors: its
+    // own ancestors end in an empty path that exists nowhere.
+    let path = std::path::absolute(path).ok()?;
     let existing = path.ancestors().find(|p| p.exists())?;
     free_at(existing)
 }
@@ -246,7 +269,7 @@ pub fn restart(args: &[OsString]) -> std::io::Error {
         Err(why) => return why,
     };
     let mut command = std::process::Command::new(exe);
-    command.args(args);
+    command.args(args).env(CONTINUE_LOG, "1");
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -259,11 +282,17 @@ pub fn restart(args: &[OsString]) -> std::io::Error {
     }
 }
 
-/// Where the log of a client started without a terminal goes: `%LOCALAPPDATA%\dbota\dbota.log`
-/// on Windows; none elsewhere (the log goes to the terminal's stderr).
+/// Where the log of a client started without a terminal goes: `$DBOTA_LOG_FILE` when it names a
+/// full path (any system), else `%LOCALAPPDATA%\dbota\dbota.log` on Windows; none elsewhere
+/// (the log goes to the terminal's stderr).
 pub fn log_file() -> Option<PathBuf> {
-    windows_data().map(|data| data.join("dbota.log"))
+    env_path("DBOTA_LOG_FILE").or_else(|| windows_data().map(|data| data.join("dbota.log")))
 }
+
+/// Set for a client that starts again (see [`restart`]): it goes on with the log of the run that
+/// started it instead of keeping that one as the previous log, so that what an import said
+/// before the restart (the assets that did not convert) stays in the file the screen named.
+const CONTINUE_LOG: &str = "DBOTA_CONTINUE_LOG";
 
 /// The largest log file kept; past it the log stops growing (a run that logs this much
 /// repeats itself, and the beginning says why).
@@ -276,16 +305,28 @@ pub struct LogFile {
 }
 
 impl LogFile {
-    /// The log of this run, at `path`; one that cannot be made writes nowhere.
-    pub fn open(path: Option<&Path>) -> LogFile {
+    /// The log of this run, at `path`; one that cannot be made writes nowhere. A run that
+    /// continues (`continued`) adds to the file that is there; any other keeps it as the
+    /// previous log and starts a new one.
+    pub fn open(path: Option<&Path>, continued: bool) -> LogFile {
+        let mut kept = 0;
         let file = path.and_then(|path| {
             std::fs::create_dir_all(path.parent()?).ok()?;
+            if continued {
+                let file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .ok()?;
+                kept = file.metadata().map_or(0, |meta| meta.len());
+                return Some(file);
+            }
             let _ = std::fs::rename(path, path.with_file_name("dbota.previous.log"));
             std::fs::File::create(path).ok()
         });
         LogFile {
             file: file.map(|file| std::sync::Mutex::new(std::io::BufWriter::new(file))),
-            written: std::sync::atomic::AtomicU64::new(0),
+            written: std::sync::atomic::AtomicU64::new(kept),
         }
     }
 
@@ -314,7 +355,10 @@ impl LogFile {
 /// The process's log file, opened once.
 pub fn log() -> &'static LogFile {
     static LOG: std::sync::OnceLock<LogFile> = std::sync::OnceLock::new();
-    LOG.get_or_init(|| LogFile::open(log_file().as_deref()))
+    LOG.get_or_init(|| {
+        let continued = std::env::var_os(CONTINUE_LOG).is_some();
+        LogFile::open(log_file().as_deref(), continued)
+    })
 }
 
 /// A failure the player must see: on stderr and in the log file, and on Windows (where a
@@ -421,8 +465,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dbota-log-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("dbota.log");
-        LogFile::open(Some(&path)).write(b"first run\n", true);
-        let log = LogFile::open(Some(&path));
+        LogFile::open(Some(&path), false).write(b"first run\n", true);
+        let log = LogFile::open(Some(&path), false);
         let line = vec![b'x'; 1 << 20];
         for _ in 0..(MAX_LOG >> 20) + 4 {
             log.write(&line, false);
@@ -433,5 +477,30 @@ mod tests {
         let previous = std::fs::read(dir.join("dbota.previous.log")).expect("the previous log");
         assert_eq!(previous, b"first run\n");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A client that starts again after an import goes on with the log it was started with:
+    /// what the import said stays in the file the screen named, and the previous run's log is
+    /// not pushed out by the restart.
+    #[test]
+    fn a_restarted_client_adds_to_the_log_of_the_run_that_restarted_it() {
+        let dir = std::env::temp_dir().join(format!("dbota-log-continued-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("dbota.log");
+        LogFile::open(Some(&path), false).write(b"older run\n", true);
+        LogFile::open(Some(&path), false).write(b"import said: asset a did not convert\n", true);
+        LogFile::open(Some(&path), true).write(b"started again\n", true);
+        let log = std::fs::read_to_string(&path).expect("the log");
+        assert_eq!(log, "import said: asset a did not convert\nstarted again\n");
+        let previous = std::fs::read_to_string(dir.join("dbota.previous.log")).expect("previous");
+        assert_eq!(previous, "older run\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The space check of a cache folder given as a relative name that does not exist yet
+    /// (`--cache-dir assets`) looks at the drive of the working folder instead of giving none.
+    #[test]
+    fn a_relative_cache_folder_that_does_not_exist_yet_has_free_space_known() {
+        assert!(free_space(Path::new("dbota-no-such-folder-for-space")).is_some());
     }
 }

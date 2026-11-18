@@ -9,7 +9,7 @@
 //! (u32 LE), data
 //! ```
 //!
-//! A pack is untrusted (a cache can be handed on): every length is bounded before anything is
+//! A pack is untrusted (the cache is a folder anyone may write): every length is bounded before anything is
 //! taken, names are plain and unique, and the records must fill the file exactly.
 
 use std::fmt;

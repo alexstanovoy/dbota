@@ -22,7 +22,6 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
     mpsc::{Receiver, Sender, channel},
 };
 
@@ -37,6 +36,7 @@ use bevy::{
     ui_widgets::Button,
     window::Ime,
 };
+use dbota_import::cache_dir::Gate;
 use dbota_import::import::Flow;
 use heatel::locate::Install;
 
@@ -79,7 +79,11 @@ enum Screen {
     Typing,
     /// The copy is being made.
     Working(Work),
-    /// CANCEL was pressed: the worker is ending, its half copy removed.
+    /// Another dbota is making its copy in the same folder: this one starts when it is done,
+    /// or is cancelled.
+    Waiting,
+    /// CANCEL was pressed and nothing will be published: the worker is ending, its half copy
+    /// removed. The screen leaves this for the ways to a copy, never for a restart.
     Stopping,
     /// The copy is in place, some assets missing: CONTINUE or TRY AGAIN.
     Partial { files: usize, failed: usize },
@@ -100,6 +104,8 @@ struct Work {
 enum Told {
     Found(Vec<Install>),
     Picked(Result<Option<PathBuf>, NoDialog>),
+    /// The import waits for another's import of the same folder.
+    Waiting,
     Progress(Work),
     Imported(Result<Imported, String>),
 }
@@ -117,8 +123,9 @@ struct FirstRun {
     typed: String,
     tell: Sender<Told>,
     told: Mutex<Receiver<Told>>,
-    /// Set to stop the copy under way; its worker checks it before each step.
-    cancel: Arc<AtomicBool>,
+    /// Ends the copy under way: its worker publishes nothing once it was cancelled, and a
+    /// copy's cancel finds out whether it came too late. One per copy (see `start`).
+    gate: Arc<Gate>,
     /// The worker making a copy, joined when the client ends (see `Drop`).
     worker: Option<std::thread::JoinHandle<()>>,
     /// Debug (`--dialog-answer`): the answers the dialogs give instead of opening.
@@ -127,17 +134,55 @@ struct FirstRun {
     no_dialog: bool,
     /// Debug (`--import-hold`): a copy waits before its first step until this file exists.
     hold: Option<PathBuf>,
+    /// Debug (`--import-hold-at`): a copy waits at this step until it is cancelled.
+    hold_at: Option<HoldAt>,
     cache: PathBuf,
+}
+
+/// Debug (`--import-hold-at`): the step of a copy at which it waits until CANCEL is pressed (or
+/// the window closed), after the screen was told of the step and before it is made. The step is
+/// then made all the same, and the cancel is looked at only after it: a cancel that arrives
+/// while a step works, which a test cannot time otherwise.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoldAt {
+    /// The step with this number (the screen's count of steps done).
+    Step(usize),
+    /// The last step.
+    Last,
+}
+
+impl std::str::FromStr for HoldAt {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<HoldAt, String> {
+        match text {
+            "last" => Ok(HoldAt::Last),
+            number => number
+                .parse()
+                .map(HoldAt::Step)
+                .map_err(|_| format!("'{text}' is neither a step number nor 'last'")),
+        }
+    }
+}
+
+impl HoldAt {
+    fn is(self, step: usize, total: usize) -> bool {
+        match self {
+            HoldAt::Step(number) => step == number,
+            HoldAt::Last => step + 1 == total,
+        }
+    }
 }
 
 /// How long a client that is closed mid-copy waits for its worker to remove the half copy.
 const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl Drop for FirstRun {
-    /// A window closed mid-copy stops the worker and waits (a bounded while) for it to remove
-    /// what it made: the cache that was there stays, no half copy beside it.
+    /// A window closed mid-copy cancels the copy, which from then on publishes nothing even if
+    /// the worker outlives this wait, and waits (a bounded while) for the worker to remove what
+    /// it made: the cache that was there stays, no half copy beside it.
     fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
+        let _ = self.gate.cancel();
         let Some(worker) = self.worker.take() else {
             return;
         };
@@ -162,11 +207,12 @@ impl FirstRun {
             typed: String::new(),
             tell,
             told: Mutex::new(told),
-            cancel: Arc::new(AtomicBool::new(false)),
+            gate: Arc::new(Gate::default()),
             worker: None,
             answers: args.dialog_answer.clone(),
             no_dialog: args.no_dialog,
             hold: args.import_hold.clone(),
+            hold_at: args.import_hold_at,
             cache: args.cache_dir.clone(),
         };
         let (tell, steam) = (run.tell.clone(), args.steam_folder.clone());
@@ -210,36 +256,38 @@ impl FirstRun {
         }
     }
 
-    /// Starts `work` on a worker thread; it is told how far it is and whether to stop.
-    fn start(&mut self, work: impl FnOnce(&Sender<Told>, &dyn Fn() -> bool) + Send + 'static) {
+    /// Starts `work` on a worker thread; it is told how far it is and may be ended through its
+    /// gate. Each copy has a gate of its own: one that published stays published.
+    fn start(&mut self, work: impl FnOnce(&Sender<Told>, &Gate) + Send + 'static) {
         self.note = None;
-        self.cancel.store(false, Ordering::Relaxed);
+        self.gate = Arc::new(Gate::default());
         self.screen = Screen::Working(Work {
             done: 0,
             total: 0,
             item: String::new(),
             bytes: 0,
         });
-        let (tell, cancel, hold) = (self.tell.clone(), self.cancel.clone(), self.hold.clone());
+        let (tell, gate) = (self.tell.clone(), self.gate.clone());
+        // Debug: the copy waits at its start until the test lifts the barrier (or CANCEL).
+        let hold = self.hold.clone();
         self.worker = Some(std::thread::spawn(move || {
-            let stopped = || cancel.load(Ordering::Relaxed);
-            // Debug: the copy waits at its start until the test lifts the barrier (or CANCEL).
             while let Some(hold) = &hold
                 && !hold.exists()
-                && !stopped()
+                && !gate.is_cancelled()
             {
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
-            work(&tell, &stopped);
+            work(&tell, &gate);
         }));
     }
 
-    fn import(&mut self) {
+    fn import(&mut self, force: bool) {
         let Some(install) = self.install.clone() else {
             return;
         };
         let cache = self.cache.clone();
-        self.start(move |tell, stopped| {
+        let hold_at = self.hold_at;
+        self.start(move |tell, gate| {
             let mut progress = |p: &dbota_import::import::Progress<'_>| {
                 let _ = tell.send(Told::Progress(Work {
                     done: p.done,
@@ -247,19 +295,40 @@ impl FirstRun {
                     item: p.item.to_owned(),
                     bytes: p.bytes_written,
                 }));
-                if stopped() {
+                if hold_at.is_some_and(|at| at.is(p.done, p.total)) {
+                    while !gate.is_cancelled() {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                    return Flow::Continue;
+                }
+                if gate.is_cancelled() {
                     Flow::Stop
                 } else {
                     Flow::Continue
                 }
             };
-            let made = if stopped() {
+            let mut told_waiting = false;
+            let mut waiting = || {
+                if !std::mem::replace(&mut told_waiting, true) {
+                    let _ = tell.send(Told::Waiting);
+                }
+            };
+            let made = if gate.is_cancelled() {
                 Ok(Imported {
                     stopped: true,
                     ..Imported::default()
                 })
             } else {
-                crate::import::import_from(&install, &cache, true, &mut progress)
+                crate::import::import_from(
+                    &install,
+                    &cache,
+                    force,
+                    &mut crate::import::Watcher {
+                        gate,
+                        progress: &mut progress,
+                        waiting: &mut waiting,
+                    },
+                )
             };
             let _ = tell.send(Told::Imported(made));
         });
@@ -278,21 +347,32 @@ impl FirstRun {
             }
             Told::Picked(Ok(Some(path))) => self.picked(path),
             Told::Picked(Ok(None)) => self.screen = Screen::Ready,
-            Told::Picked(Err(NoDialog::Missing)) => {
-                self.typed.clear();
-                self.screen = Screen::Typing;
-            }
+            Told::Picked(Err(NoDialog::Missing)) => self.screen = Screen::Typing,
             Told::Picked(Err(NoDialog::Failed(why))) => {
                 self.screen = Screen::Ready;
                 self.note = Some(format!("The folder dialog failed: {why}"));
             }
-            Told::Progress(work) => {
+            Told::Waiting => {
                 if matches!(self.screen, Screen::Working(_)) {
+                    self.screen = Screen::Waiting;
+                }
+            }
+            Told::Progress(work) => {
+                if matches!(self.screen, Screen::Working(_) | Screen::Waiting) {
                     self.screen = Screen::Working(work);
                 }
             }
             Told::Imported(made) => {
                 self.worker = None;
+                // A cancel that took effect (see `Press::Cancel`) means nothing was published,
+                // whatever the worker found out meanwhile.
+                if self.screen == Screen::Stopping {
+                    if let Err(why) = &made {
+                        warn!("dbota import: ended by a cancel after: {why}");
+                    }
+                    self.screen = self.ended("Import cancelled.");
+                    return;
+                }
                 self.screen = match made {
                     Ok(imported) if imported.stopped => self.ended("Import cancelled."),
                     Err(why) => {
@@ -395,13 +475,22 @@ fn presses(
         return;
     };
     match (*press, run.screen.clone()) {
-        (Press::Import, Screen::Ready | Screen::Partial { .. }) => run.import(),
+        // Importing again from the screen of a partial copy remakes it; a first import over a copy
+        // another dbota finished meanwhile finds it done (and a requested one is a remake).
+        (Press::Import, Screen::Ready) => {
+            let remake = run.need == Need::Requested;
+            run.import(remake);
+        }
+        (Press::Import, Screen::Partial { .. }) => run.import(true),
         (Press::ChooseDota, Screen::Ready) => run.ask(),
         (Press::Take, Screen::Typing) => take_typed(&mut run),
         (Press::Back, Screen::Typing) => run.screen = Screen::Ready,
-        (Press::Cancel, Screen::Working(_)) => {
-            run.cancel.store(true, Ordering::Relaxed);
-            run.screen = Screen::Stopping;
+        (Press::Cancel, Screen::Working(_) | Screen::Waiting) => {
+            // Too late when the copy was published meanwhile: the screen then goes on as it
+            // does for a finished copy, when the worker says so.
+            if run.gate.cancel() {
+                run.screen = Screen::Stopping;
+            }
         }
         (Press::Continue, Screen::Partial { .. }) => run.screen = Screen::Restarting,
         (Press::Keep, Screen::Ready) => request_restart(restart_args(script.as_deref()), &mut exit),
@@ -457,6 +546,12 @@ fn restart(
     request_restart(restart_args(script.as_deref()), &mut exit);
 }
 
+/// Whether a character key types its character: not while Ctrl is held (a shortcut), except
+/// the AltGr of a Windows layout, which arrives as Ctrl+Alt.
+fn types_characters(control: bool, alt_gr: bool, windows: bool) -> bool {
+    !control || (windows && alt_gr)
+}
+
 /// The longest path typed or pasted, in characters.
 const MAX_PATH: usize = 1024;
 /// The most of a paste taken into the path, in characters.
@@ -479,6 +574,8 @@ fn typing(
         return;
     }
     let control = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    // Windows reports AltGr, which its layouts type their extra characters with, as Ctrl+Alt.
+    let alt_gr = keys.pressed(KeyCode::ControlLeft) && keys.pressed(KeyCode::AltRight);
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let mut typed = String::new();
     let mut erase = 0;
@@ -501,7 +598,9 @@ fn typing(
                 }
             }
             Key::Space => typed.push(' '),
-            Key::Character(chars) if !control => typed.push_str(chars),
+            Key::Character(chars) if types_characters(control, alt_gr, cfg!(windows)) => {
+                typed.push_str(chars)
+            }
             _ => {}
         }
     }
@@ -539,6 +638,19 @@ const PRIVACY: &str = "Your Dota 2 files never leave your computer: dbota reads 
 /// Where a player finds the folder of their install.
 const WHERE: &str = "In Steam, right-click Dota 2 → Manage → Browse local files: that is the \
                      \"dota 2 beta\" folder.";
+
+/// What the screen says of a copy some assets of which did not convert, and where they are
+/// named: the client's log (the same file after dbota starts again on the copy).
+fn partial_words(files: usize, failed: usize) -> String {
+    let log = match crate::desktop::log_file() {
+        Some(file) => format!("the log file {}", file.display()),
+        None => "the output of this run (the terminal dbota was started from)".to_owned(),
+    };
+    format!(
+        "Imported {files} files. {failed} assets could not be converted and are missing; dbota \
+         plays without them. {log} names them."
+    )
+}
 
 /// What the screen shows: its title, its lines, a note of what went wrong, and its buttons.
 struct Shown {
@@ -646,15 +758,20 @@ fn shown(run: &FirstRun) -> Shown {
             bar = Some(work.done as f32 / work.total.max(1) as f32);
             vec![("CANCEL", Press::Cancel)]
         }
+        Screen::Waiting => {
+            lines.push(
+                "Another dbota is making its copy in the same folder. This one starts when \
+                 it is done, or press CANCEL."
+                    .to_owned(),
+            );
+            vec![("CANCEL", Press::Cancel)]
+        }
         Screen::Stopping => {
             lines.push("Stopping; what was made so far is removed...".to_owned());
             vec![]
         }
         Screen::Partial { files, failed } => {
-            lines.push(format!(
-                "Imported {files} files. {failed} assets could not be converted and are \
-                 missing (the log names them); dbota plays without them."
-            ));
+            lines.push(partial_words(*files, *failed));
             vec![
                 ("CONTINUE", Press::Continue),
                 ("IMPORT AGAIN", Press::Import),
@@ -843,4 +960,101 @@ fn draw(
         commands.entity(entity).despawn();
     }
     draw_screen(&mut commands, &fonts, &shown);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn run() -> FirstRun {
+        FirstRun::new(Need::Import, &crate::Args::parse_from(["dbota"]))
+    }
+
+    /// A press of CANCEL that took effect means nothing is published: whatever the worker then
+    /// reports (a clean end, even a copy it found done), the screen goes back to its choices and
+    /// never on to a restart or to the partial-copy screen.
+    #[test]
+    fn a_cancelled_screen_never_leaves_stopping_for_a_restart() {
+        for told in [
+            Ok(Imported::default()),
+            Ok(Imported {
+                stopped: true,
+                ..Imported::default()
+            }),
+            Ok(Imported {
+                files: 3,
+                failed: vec![("a".to_owned(), "b".to_owned())],
+                stopped: false,
+            }),
+            Err("a file could not be written".to_owned()),
+        ] {
+            let mut run = run();
+            run.screen = Screen::Stopping;
+            run.heard(Told::Imported(told));
+            assert_eq!(run.screen, Screen::Ready);
+            assert_eq!(run.note.as_deref(), Some("Import cancelled."));
+        }
+    }
+
+    /// A copy that was published before the cancel came is told as finished, not as cancelled.
+    #[test]
+    fn a_copy_published_before_the_cancel_goes_on_to_the_restart() {
+        let mut published = run();
+        published.screen = Screen::Working(Work {
+            done: 1,
+            total: 1,
+            item: String::new(),
+            bytes: 0,
+        });
+        published.heard(Told::Imported(Ok(Imported {
+            files: 3,
+            ..Imported::default()
+        })));
+        assert_eq!(published.screen, Screen::Restarting);
+    }
+
+    /// A progress report after the wait ended turns the waiting screen into the working one.
+    #[test]
+    fn a_screen_that_waited_shows_the_work_when_it_starts() {
+        let mut run = run();
+        run.start(|_, _| {});
+        run.heard(Told::Waiting);
+        assert_eq!(run.screen, Screen::Waiting);
+        let work = Work {
+            done: 2,
+            total: 9,
+            item: "a".to_owned(),
+            bytes: 0,
+        };
+        run.heard(Told::Progress(work.clone()));
+        assert_eq!(run.screen, Screen::Working(work));
+    }
+
+    /// Windows types AltGr characters as Ctrl+Alt; a Ctrl shortcut elsewhere types nothing.
+    #[test]
+    fn altgr_characters_are_typed_on_windows_and_ctrl_shortcuts_are_not() {
+        assert!(types_characters(false, false, false));
+        assert!(!types_characters(true, false, true));
+        assert!(types_characters(true, true, true));
+        assert!(!types_characters(true, true, false));
+    }
+
+    #[test]
+    fn the_step_to_hold_at_is_a_number_or_the_last() {
+        assert_eq!("12".parse(), Ok(HoldAt::Step(12)));
+        assert_eq!("last".parse(), Ok(HoldAt::Last));
+        assert!("first".parse::<HoldAt>().is_err());
+        assert!(HoldAt::Last.is(4, 5));
+        assert!(!HoldAt::Last.is(3, 5));
+    }
+
+    /// The partial-copy screen names where the failed assets are told, and `$DBOTA_LOG_FILE`'s
+    /// place is the log file there.
+    #[test]
+    fn the_partial_copy_words_name_the_log() {
+        let words = partial_words(10, 2);
+        assert!(words.contains("2 assets could not be converted"), "{words}");
+        assert!(words.contains("names them"), "{words}");
+    }
 }

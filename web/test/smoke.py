@@ -1786,7 +1786,7 @@ def check_native_links(page):
 
 
 def check_start_page(directory):
-    """The start window: two buttons without a copy, "Play" and "Delete and import again" with one,
+    """The start window: the import button without a copy, "Play" and "Delete and import again" with one,
     the delete leaving only the page's own copy behind it, and the native client's links in both."""
     with sync_playwright() as p:
         server, base, browser, page, console, problems = opened(p, directory)

@@ -1,7 +1,6 @@
 //! What a sound file of the asset cache is decoded with. The importer writes WAV files and MP3
-//! files, an MP3 perhaps after an ID3v2 tag; the cache is a folder anyone may write (or a
-//! prepared one someone handed on), and rodio takes any bytes: what its WAV reader refuses goes
-//! to symphonia, which searches the file for any format or tag it knows and reads an ID3v2 tag it
+//! files, an MP3 perhaps after an ID3v2 tag; the cache is a folder anyone may write, and rodio
+//! takes any bytes: what its WAV reader refuses goes to symphonia, which searches the file for any format or tag it knows and reads an ID3v2 tag it
 //! finds with allocations of what the tag says (gigabytes from 20 bytes) and panics on some. So a
 //! file is decoded only as WAV when the WAV reader takes its header, or as MP3 from an MPEG audio
 //! frame, which symphonia then takes at once without searching further: at the file's start, or

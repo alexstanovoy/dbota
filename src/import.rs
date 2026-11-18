@@ -5,8 +5,8 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use dbota_import::cache_dir::{
-    ManagedCacheLock, PruneReport, begin_managed_import, import_into, is_current,
-    lock_managed_root, prune, read_stamp, record_managed, stamp, touch_last_use,
+    Gate, Held, ManagedCacheLock, PruneReport, begin_managed_import, import_held, is_current,
+    lock_cache, lock_managed_root, prune, read_stamp, record_managed, stamp, touch_last_use,
 };
 use dbota_import::import::{Flow, IDS, MANIFEST, plan, plan_id, stamped_here};
 use heatel::locate::Install;
@@ -143,28 +143,68 @@ pub struct Imported {
 /// How far an import is, told before each step; the answer stops it or lets it go on.
 pub type Progress<'a> = &'a mut dyn FnMut(&dbota_import::import::Progress<'_>) -> Flow;
 
+/// Who watches an import and may end it.
+pub struct Watcher<'a> {
+    /// What publishes the cache, and what [`Gate::cancel`] ends the import through.
+    pub gate: &'a Gate,
+    pub progress: Progress<'a>,
+    /// Called again and again while the import waits for another dbota's import of the same
+    /// cache folder to end.
+    pub waiting: &'a mut dyn FnMut(),
+}
+
 /// Imports into `cache` from `install`; does nothing when the cache was made from the same
 /// install already, unless `force`. A stopped or failed import leaves the cache that was there.
 pub fn import_from(
     install: &Install,
     cache: &Path,
     force: bool,
-    progress: Progress,
+    watcher: &mut Watcher<'_>,
 ) -> Result<Imported, String> {
     let root = managed_cache_root();
-    import_in(install, cache, force, progress, root.as_deref())
+    import_in(install, cache, force, watcher, root.as_deref())
+}
+
+/// Tells a problem of an import where the player can find it later: on stderr, and in the
+/// client's log file (see [`crate::desktop::log_file`]), which a client started without a
+/// terminal has instead of stderr.
+fn say(line: &str) {
+    eprintln!("{line}");
+    crate::desktop::log().write(format!("{line}\n").as_bytes(), true);
 }
 
 fn import_in(
     install: &Install,
     cache: &Path,
     force: bool,
-    progress: Progress,
+    watcher: &mut Watcher<'_>,
     root: Option<&Path>,
 ) -> Result<Imported, String> {
     let plan = plan()?;
     let stamp = stamp(&install.game, &plan_id(plan)).map_err(|e| e.to_string())?;
-    let _lease = managed_import(root, cache)?;
+    let stopped = || {
+        Ok(Imported {
+            stopped: true,
+            ..Imported::default()
+        })
+    };
+    let gate = watcher.gate;
+    let mut wait = || {
+        (watcher.waiting)();
+        if gate.is_cancelled() {
+            Flow::Stop
+        } else {
+            Flow::Continue
+        }
+    };
+    let Some(_lease) = managed_import(root, cache, &mut wait)? else {
+        return stopped();
+    };
+    let lock = lock_cache(cache, &mut wait).map_err(|why| why.to_string())?;
+    let Some(lock) = lock else {
+        return stopped();
+    };
+    // Whoever held the lock may have made the cache we wait to make: it is looked at again.
     if !force && is_current(cache, &stamp) && dbota_import::import::layouts_current(cache) {
         println!("dbota import: {} is up to date", cache.display());
         report_maintenance(root, cache);
@@ -177,25 +217,28 @@ fn import_in(
         cache.display()
     );
     let started = std::time::Instant::now();
-    let report =
-        import_into(&install.game, cache, plan, &stamp, progress).map_err(|e| match &e {
-            heatel::Error::Io { source, .. }
-                if source.kind() == std::io::ErrorKind::StorageFull =>
-            {
-                no_room(
-                    cache,
-                    IMPORT_ROOM,
-                    crate::desktop::free_space(cache).unwrap_or(0),
-                )
-            }
-            _ => e.to_string(),
-        })?;
+    let held = Held { lock: &lock, gate };
+    let report = import_held(
+        &install.game,
+        cache,
+        plan,
+        &stamp,
+        held,
+        &mut *watcher.progress,
+    )
+    .map_err(|e| match &e {
+        heatel::Error::Io { source, .. } if source.kind() == std::io::ErrorKind::StorageFull => {
+            no_room(
+                cache,
+                IMPORT_ROOM,
+                crate::desktop::free_space(cache).unwrap_or(0),
+            )
+        }
+        _ => e.to_string(),
+    })?;
     if report.stopped {
         println!("dbota import: stopped; {} stays as it was", cache.display());
-        return Ok(Imported {
-            stopped: true,
-            ..Imported::default()
-        });
+        return stopped();
     }
     let bytes: u64 = report.files.values().sum();
     println!(
@@ -215,10 +258,10 @@ fn import_in(
         );
     }
     for (asset, why) in &report.warnings {
-        eprintln!("dbota import: warning: {asset}: {why}");
+        say(&format!("dbota import: warning: {asset}: {why}"));
     }
     for (asset, why) in &report.failed {
-        eprintln!("dbota import: {asset} did not convert: {why}");
+        say(&format!("dbota import: {asset} did not convert: {why}"));
     }
     Ok(Imported {
         files: report.files.len(),
@@ -232,14 +275,31 @@ fn import_in(
 pub fn run(dota: Option<&Path>, cache: &Path, force: bool) -> Result<bool, String> {
     let install = locate(dota)?;
     let mut shown = 0;
-    let imported = import_from(&install, cache, force, &mut |p| {
-        let tenth = (p.done * 10 / p.total.max(1)) as u32;
-        if tenth > shown {
-            shown = tenth;
-            println!("  {tenth}0% ({})", p.item);
-        }
-        Flow::Continue
-    })?;
+    let mut waited = false;
+    let imported = import_from(
+        &install,
+        cache,
+        force,
+        &mut Watcher {
+            gate: &Gate::default(),
+            progress: &mut |p| {
+                let tenth = (p.done * 10 / p.total.max(1)) as u32;
+                if tenth > shown {
+                    shown = tenth;
+                    println!("  {tenth}0% ({})", p.item);
+                }
+                Flow::Continue
+            },
+            waiting: &mut || {
+                if !std::mem::replace(&mut waited, true) {
+                    println!(
+                        "dbota import: waiting for another dbota that imports into {}",
+                        cache.display()
+                    );
+                }
+            },
+        },
+    )?;
     Ok(imported.failed.is_empty())
 }
 
@@ -276,11 +336,19 @@ fn matching_root<'a>(root: Option<&'a Path>, cache: &Path) -> Option<&'a Path> {
     })
 }
 
-fn managed_import(root: Option<&Path>, cache: &Path) -> Result<Option<ManagedCacheLock>, String> {
-    matching_root(root, cache)
-        .map(|root| begin_managed_import(root, cache))
-        .transpose()
-        .map_err(|why| why.to_string())
+/// The managed root's lock when `cache` is a managed cache, held through the import (none
+/// inside when it is not one); none outside when the wait for it was stopped.
+fn managed_import(
+    root: Option<&Path>,
+    cache: &Path,
+    wait: &mut dyn FnMut() -> Flow,
+) -> Result<Option<Option<ManagedCacheLock>>, String> {
+    match matching_root(root, cache) {
+        None => Ok(Some(None)),
+        Some(root) => begin_managed_import(root, cache, wait)
+            .map(|lock| lock.map(Some))
+            .map_err(|why| why.to_string()),
+    }
 }
 
 fn maintain_managed_cache(root: Option<&Path>, cache: &Path) -> Result<PruneReport, String> {
@@ -466,7 +534,11 @@ mod tests {
             &install,
             &caches.current,
             false,
-            &mut |_| panic!("an up-to-date cache is not converted"),
+            &mut Watcher {
+                gate: &Gate::default(),
+                progress: &mut |_| panic!("an up-to-date cache is not converted"),
+                waiting: &mut || panic!("nobody holds the cache"),
+            },
             Some(&caches.root),
         )
         .unwrap();
@@ -494,5 +566,119 @@ mod tests {
                 .join(dbota_import::import::LAST_USE_MARKER)
                 .is_file()
         );
+    }
+
+    /// A custom cache folder (outside the managed root) with an install of an empty package
+    /// directory, whose import takes the folder's own lock.
+    struct Custom {
+        scratch: PathBuf,
+        install: Install,
+        cache: PathBuf,
+    }
+
+    impl Custom {
+        fn new(label: &str) -> Custom {
+            let scratch =
+                std::env::temp_dir().join(format!("dbota-import-{label}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&scratch);
+            let folder = scratch.join("dota 2 beta");
+            let game = folder.join("game/dota");
+            fs::create_dir_all(&game).unwrap();
+            fs::write(
+                game.join("pak01_dir.vpk"),
+                [0x34, 0x12, 0xaa, 0x55, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+            )
+            .unwrap();
+            Custom {
+                install: Install { folder, game },
+                cache: scratch.join("cache"),
+                scratch,
+            }
+        }
+    }
+
+    impl Drop for Custom {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.scratch);
+        }
+    }
+
+    /// A second client that waits for the first one's import of the same (custom) folder says so
+    /// at once, is stopped at once by its cancel, and leaves the folder to the first.
+    #[test]
+    fn an_import_that_waits_for_another_says_so_and_ends_at_a_cancel() {
+        let custom = Custom::new("wait-cancel");
+        let first = dbota_import::cache_dir::lock_cache(&custom.cache, &mut || Flow::Continue)
+            .unwrap()
+            .unwrap();
+        let gate = Gate::default();
+        let (tell, told) = std::sync::mpsc::channel();
+        let imported = std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                import_in(
+                    &custom.install,
+                    &custom.cache,
+                    true,
+                    &mut Watcher {
+                        gate: &gate,
+                        progress: &mut |_| panic!("a waiting import converts nothing"),
+                        waiting: &mut || {
+                            let _ = tell.send(());
+                        },
+                    },
+                    None,
+                )
+            });
+            told.recv().expect("the import says it waits");
+            assert!(gate.cancel());
+            worker.join().expect("the import ends")
+        });
+        drop(first);
+        assert!(imported.unwrap().stopped);
+        assert!(!custom.cache.exists());
+    }
+
+    /// A second client that waited for the first one's import finds its cache when the lock is
+    /// free and does not convert everything again over it.
+    #[test]
+    fn an_import_that_waited_does_not_import_again_over_the_cache_the_other_made() {
+        let custom = Custom::new("wait-recheck");
+        let first = dbota_import::cache_dir::lock_cache(&custom.cache, &mut || Flow::Continue)
+            .unwrap()
+            .unwrap();
+        let (tell, told) = std::sync::mpsc::channel();
+        let gate = Gate::default();
+        let imported = std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                import_in(
+                    &custom.install,
+                    &custom.cache,
+                    false,
+                    &mut Watcher {
+                        gate: &gate,
+                        progress: &mut |_| panic!("the cache is current: nothing is converted"),
+                        waiting: &mut || {
+                            let _ = tell.send(());
+                        },
+                    },
+                    None,
+                )
+            });
+            told.recv().expect("the import says it waits");
+            // What the first import finished with: this install's stamp and an index.
+            fs::create_dir_all(&custom.cache).unwrap();
+            let stamp = stamp(&custom.install.game, &plan_id(plan().unwrap())).unwrap();
+            fs::write(custom.cache.join(STAMP), stamp).unwrap();
+            fs::write(
+                custom.cache.join(INDEX),
+                format!("{}\n", CacheIndex::header()),
+            )
+            .unwrap();
+            drop(first);
+            worker.join().expect("the import ends")
+        });
+        let imported = imported.unwrap();
+        assert!(!imported.stopped);
+        assert_eq!(imported.files, 0);
     }
 }

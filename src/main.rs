@@ -245,6 +245,12 @@ pub struct Args {
     /// file exists, or until it is cancelled (for the tests of its screen while it works).
     #[arg(long, value_name = "FILE", hide = true)]
     pub import_hold: Option<PathBuf>,
+    /// Debug: a copy on the import screen waits at this step (a number, or `last`) until it is
+    /// cancelled, then makes the step all the same (for the tests of a cancel that arrives while
+    /// a step works).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "STEP", hide = true)]
+    pub import_hold_at: Option<crate::firstrun::HoldAt>,
     /// The settings file; `~/.config/dbota/settings.conf` when absent.
     #[arg(long, value_name = "FILE")]
     pub config: Option<PathBuf>,
