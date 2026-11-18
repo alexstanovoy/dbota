@@ -564,7 +564,7 @@ fn some_shop_cells(client: &mut Client) -> Vec<(String, Vec2)> {
         })
         .map(|(cell, _, _, at, _)| (cell.0, at.translation))
         .collect();
-    cells.sort_by(|a, b| a.0.cmp(&b.0));
+    cells.sort_by_key(|cell| cell.0);
     cells
         .into_iter()
         .step_by(3)
