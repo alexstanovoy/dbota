@@ -414,6 +414,13 @@ pub enum Extent {
     Corner,
 }
 
+/// A part that stands outside the part that holds it, or over a sibling, on purpose (a comment where
+/// it is spawned says why). The layout tests (`e2e::hud_bounds`) hold every other part of the HUD
+/// inside its holder and apart from its siblings, so a part that slides out by a wrong number
+/// fails them.
+#[derive(Component, Clone, Copy)]
+pub struct Overhangs;
+
 /// Interface pixels to one of Dota's: Dota lays its HUD out for a 1080-line
 /// screen, dbota for a [`HUD_DESIGN_HEIGHT`] one.
 pub const DOTA: f32 = HUD_DESIGN_HEIGHT / 1080.0;
@@ -429,9 +436,15 @@ pub const CORNER_MARGIN: f32 = 8.0;
 /// The room the hero panel keeps right of itself in the bottom row, which the scale leaves it too.
 pub const BAR_MARGIN: f32 = 23.7;
 
+/// Pixels of the window's width and height that the fit leaves for the layout's rounding.
+const FIT_ROUNDING: f32 = 4.0;
+
 /// The largest scale at which every [`Extent`] fits the window, given the
 /// size of each in interface pixels.
 fn fitting_scale(window: Vec2, size: impl Fn(Extent) -> Vec2) -> f32 {
+    // The layout snaps the bottom row's columns to whole pixels, which can add a pixel to each: the
+    // right dock would leave the window by it, were the width to fit exactly.
+    let window = window - Vec2::splat(FIT_ROUNDING);
     let (left, bar, right) = (size(Extent::Left), size(Extent::Bar), size(Extent::Right));
     let (top, corner) = (size(Extent::TopCentre), size(Extent::Corner));
     // The top centre stays clear of the corner on both sides.

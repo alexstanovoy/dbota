@@ -213,12 +213,14 @@ const PARTS: &[Part] = &[
         (Middle, End),
         (1775.0, 1559.0, 89.0, 48.0),
     ),
+    // Level with the first row of items, inside the panel: placed 14 over the panel's top edge, as
+    // first measured, it stood out of the interface.
     part(
         "hero panel",
         "neutral item slot",
         Named("hud neutral"),
         (Middle, End),
-        (2074.0, 1388.0, 64.0, 64.0),
+        (2074.0, 1414.0, 64.0, 64.0),
     ),
     part(
         "hero panel",

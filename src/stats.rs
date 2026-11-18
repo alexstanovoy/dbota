@@ -279,7 +279,7 @@ fn spawn_foot(
             Foot,
             Node {
                 align_self: AlignSelf::FlexEnd,
-                height: px(FOOT_HEIGHT),
+                min_height: px(FOOT_HEIGHT),
                 align_items: AlignItems::Center,
                 ..default()
             },

@@ -77,8 +77,10 @@ const PANEL_RIGHT: f32 = ui::BAR_MARGIN;
 /// How far the level ring reaches out of the panel's left edge.
 const LEVEL_RING_OUT: f32 = 7.0;
 const SLOTS_RIGHT: f32 = 9.6;
-/// How far the round slots column reaches over the panel's top, and under it.
-const SLOTS_TOP: f32 = -10.0;
+/// Where the round slots column starts under the panel's top edge, so that the neutral slot is level
+/// with the inventory's first row: inside the panel, where the layout of the reference game's numbers
+/// had it stand 10 over its top edge, out of the interface.
+const SLOTS_TOP: f32 = 12.0;
 const SLOTS_BOTTOM: f32 = 14.0;
 /// Pips an ability box has room for.
 const MAX_PIPS: u8 = 4;
@@ -566,6 +568,8 @@ fn spawn_level(kit: &mut Spawner, bar: Entity) {
         .commands
         .spawn((
             XpRing,
+            // Overhangs on purpose: Dota's level ring overlaps the portrait's lower left corner.
+            ui::Overhangs,
             Name::new("hud level"),
             Node {
                 width: px(LEVEL_RING),
@@ -634,6 +638,8 @@ fn spawn_portrait(kit: &mut Spawner, bar: Entity) {
     let banner = kit
         .commands
         .spawn((
+            // Overhangs on purpose: Dota's hero name stands on the portrait's top edge.
+            ui::Overhangs,
             Name::new("hud name"),
             Node {
                 position_type: PositionType::Absolute,
@@ -679,6 +685,8 @@ fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
     let float = kit
         .commands
         .spawn((
+            // Overhangs on purpose: the buffs and the level-up plates float over the ability row.
+            ui::Overhangs,
             Node {
                 position_type: PositionType::Absolute,
                 bottom: percent(100),
@@ -836,6 +844,8 @@ fn spawn_level_up(kit: &mut Spawner, cell: Entity, slot: u8) {
         .commands
         .spawn((
             LevelUp(slot),
+            // Overhangs on purpose: Dota's level-up plate stands over the ability it raises.
+            ui::Overhangs,
             Name::new(format!("hud level up {slot}")),
             Button,
             Hovered::default(),

@@ -641,6 +641,10 @@ fn marks(
         (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
         |(lo, hi), c| (lo.min(*c), hi.max(*c)),
     );
+    // The frame shows what the camera sees of the map, not what lies past its rim: Dota's minimap
+    // crops it, and so does this.
+    let rim = Vec2::splat(SIDE - 6.0);
+    let (min, max) = (min.clamp(Vec2::ZERO, rim), max.clamp(Vec2::ZERO, rim));
     if let Ok((mut node, _, _)) = nodes.get_mut(minimap.view) {
         node.set_if_neq(Node {
             left: px(min.x),

@@ -55,6 +55,7 @@ mod hero_page;
 mod hero_voice;
 mod hero_walk;
 mod home_hero;
+mod hud_bounds;
 mod hud_layout;
 mod icons;
 mod item_drop_range;

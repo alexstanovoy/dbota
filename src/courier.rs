@@ -366,6 +366,8 @@ fn spawn_key(commands: &mut Commands, fonts: &Fonts, button: Entity, which: Cour
     let key = commands
         .spawn((
             CourierKey(which),
+            // Overhangs on purpose: a button's key box stands over its top left corner, as Dota's.
+            crate::ui::Overhangs,
             Node {
                 position_type: PositionType::Absolute,
                 left: dota(-space),
