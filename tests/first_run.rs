@@ -58,6 +58,19 @@ fn dota_in(library: &Path) -> PathBuf {
     let game = folder.join("game/dota");
     std::fs::create_dir_all(&game).expect("an install");
     std::fs::write(game.join("pak01_dir.vpk"), EMPTY_PACKAGE).expect("a package directory");
+    // The typefaces are loose files of an install: these convert, so an import under way has
+    // written files by the time a test stops it.
+    let face = include_bytes!("../assets/fonts/bota-sans-regular.ttf");
+    for item in &dbota_import::import::plan()
+        .expect("the plan of this build")
+        .items
+    {
+        if let dbota_import::import::Item::Font { src, .. } = item {
+            let target = game.join(src);
+            std::fs::create_dir_all(target.parent().expect("a folder")).expect("a font folder");
+            std::fs::write(target, face).expect("a typeface");
+        }
+    }
     folder
 }
 
@@ -223,8 +236,21 @@ fn import_steps() -> usize {
         .len()
 }
 
-/// CANCEL in the middle of a real import (the converter running over the install, held at step
-/// 100 until the press) ends it: no cache, no staging folder, the screen back at its choices.
+/// The step after the typefaces, which write files: a cancel there finds a staging folder with
+/// files in it.
+fn steps_through_fonts() -> usize {
+    let plan = dbota_import::import::plan().expect("the plan of this build");
+    let last = plan
+        .items
+        .iter()
+        .rposition(|item| matches!(item, dbota_import::import::Item::Font { .. }))
+        .expect("the manifest has typefaces");
+    last + 1
+}
+
+/// CANCEL in the middle of a real import (the converter running over the install, held after its
+/// typefaces were written until the press) ends it: no cache, no staging folder, the screen back
+/// at its choices.
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn cancelling_in_the_middle_of_a_real_import_leaves_no_cache_and_no_staging_folder() {
@@ -235,11 +261,14 @@ fn cancelling_in_the_middle_of_a_real_import_leaves_no_cache_and_no_staging_fold
         &scratch.root.join("Steam"),
         &scratch.root.join("games"),
     );
-    client.args(["--import-hold-at", "100"]);
-    let script = "await:button:import from dota 2;click:import from dota 2;\
-                  await:text:100 of;click:cancel;await:text:Import cancelled.;\
-                  await:button:import from dota 2;click:quit dbota";
-    played("cancel-middle", client, script);
+    let (step, total) = (steps_through_fonts(), import_steps());
+    client.args(["--import-hold-at", &step.to_string()]);
+    let script = format!(
+        "await:button:import from dota 2;click:import from dota 2;\
+         await:text:{step} of {total};click:cancel;await:text:Import cancelled.;\
+         await:button:import from dota 2;click:quit dbota"
+    );
+    played("cancel-middle", client, &script);
     assert_nothing_made(&scratch);
 }
 

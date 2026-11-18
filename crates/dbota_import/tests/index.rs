@@ -5,6 +5,66 @@ fn index(lines: &str) -> Vec<u8> {
     format!("{}\n{lines}", CacheIndex::header()).into_bytes()
 }
 
+/// A scratch folder of a test's own, removed when it ends.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> Scratch {
+        let root = std::env::temp_dir().join(format!("dbota-index-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        Scratch(root)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The index of a cache folder is judged by its length before any of it is read: a corrupt file
+/// that advertises 64 GiB (sparse here: nothing is allocated or read) reserves no memory.
+#[test]
+fn a_cache_index_file_over_its_bound_is_refused_from_its_length_alone() {
+    let scratch = Scratch::new("sparse");
+    let path = scratch.0.join("index.txt");
+    std::fs::write(&path, index("file 1 icons/items/blink.png\n")).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(64 << 30)
+        .unwrap();
+    let why = CacheIndex::read(&scratch.0)
+        .expect_err("a sparse oversized index")
+        .to_string();
+    assert!(
+        why.contains("index.txt is 68719476736 bytes, at most 2097152"),
+        "{why}"
+    );
+}
+
+/// A cache folder's index file is read whole and validated like any other.
+#[test]
+fn a_valid_cache_index_file_is_read_and_a_link_in_its_place_is_refused() {
+    let scratch = Scratch::new("read");
+    let bytes = index("file 1 icons/items/blink.png\n");
+    std::fs::write(scratch.0.join("index.txt"), &bytes).unwrap();
+    let read = CacheIndex::read(&scratch.0).expect("a valid index");
+    assert_eq!(read.files()[0].path, "icons/items/blink.png");
+    #[cfg(unix)]
+    {
+        let elsewhere = scratch.0.join("elsewhere.txt");
+        std::fs::rename(scratch.0.join("index.txt"), &elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, scratch.0.join("index.txt")).unwrap();
+        let why = CacheIndex::read(&scratch.0)
+            .expect_err("a link")
+            .to_string();
+        assert!(why.contains("index.txt is not a regular file"), "{why}");
+    }
+}
+
 #[test]
 fn cache_indexes_reject_corruption_with_specific_errors() {
     let valid = "file 1 icons/items/blink.png\n";
