@@ -930,7 +930,7 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offer: DemoO
         column,
         "Try a hero alone with every cheat: levels, gold, items, free spells, enemies to fight.",
         16.0,
-        theme::INK_4,
+        theme::INK_1,
     );
     if let Some(reason) = offer.reason() {
         kit.text(column, reason, 16.0, theme::ERROR_TEXT);
