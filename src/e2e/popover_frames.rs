@@ -705,6 +705,7 @@ pub(super) fn owner_hovered(client: &mut Client) -> bool {
             With<crate::hud::ItemBox>,
             With<crate::hud::AbilityBox>,
             With<crate::hud::InnateButton>,
+            With<crate::scan::ScanButton>,
             With<crate::tips::AbilityTile>,
             With<crate::tips::TalentTile>,
             With<crate::shop::ShopCell>,
