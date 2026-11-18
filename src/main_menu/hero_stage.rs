@@ -172,23 +172,31 @@ pub(super) fn draw(
         Name::new("home contact shadow"),
         ChildOf(root),
     ));
-    kit.commands.spawn((
-        HeroImage(hero),
-        MaterialNode::<crate::wash::Washed>::default(),
-        Node {
-            position_type: PositionType::Absolute,
-            left: percent(share),
-            margin: UiRect::left(px(offset - SIZE.0 as f32 / 2.0)),
-            top: px(TOP + drop),
-            width: px(SIZE.0 as f32),
-            height: px(SIZE.1 as f32),
-            ..default()
-        },
-        Pickable::IGNORE,
-        Visibility::Hidden,
-        Name::new("home hero"),
-        ChildOf(root),
-    ));
+    let image = kit
+        .commands
+        .spawn((
+            HeroImage(hero),
+            MaterialNode::<crate::wash::Washed>::default(),
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(share),
+                margin: UiRect::left(px(offset - SIZE.0 as f32 / 2.0)),
+                top: px(TOP + drop),
+                width: px(SIZE.0 as f32),
+                height: px(SIZE.1 as f32),
+                ..default()
+            },
+            Pickable::IGNORE,
+            Visibility::Hidden,
+            Name::new("home hero"),
+            ChildOf(root),
+        ))
+        .id();
+    // The hero page turns its hero about, so it lights it stronger and from above too, as a screen
+    // of its own does: from behind it would be black on the page's dark ground.
+    if matches!(anchor, Anchor::Page) {
+        kit.commands.entity(image).insert(Front);
+    }
 }
 
 /// The zone that takes the drag turning the hero page's hero, over where it stands.
