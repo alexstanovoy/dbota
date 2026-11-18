@@ -324,9 +324,10 @@ impl EventSight<'_> {
             | EventKind::ItemTaken { .. }
             | EventKind::ItemPlaced { .. } => self.placement(subject, true),
             // A side's Scan is told to that side alone: a spectator watching through the other
-            // side's eyes is shown none of it.
+            // side's eyes is shown none of it, and neither is a stream the server told to the
+            // other side, were it ever to hold one.
             EventKind::Scan { team, .. } => {
-                told || self.fog.team.is_none_or(|watching| watching == team)
+                self.fog.team.is_none_or(|watching| watching == team)
             }
             EventKind::MegaCreeps { team } => {
                 let lost = match team {
@@ -460,6 +461,49 @@ mod tests {
                 "an unseen attacker or target grants no placement"
             );
         }
+    }
+
+    #[test]
+    fn a_scan_is_shown_to_the_side_that_scanned_and_never_to_the_other_live_or_in_a_replay() {
+        let scan = |team| EventKind::Scan {
+            team,
+            charges: 1,
+            next_charge_in: None,
+            radars: Vec::new(),
+        };
+        for side_stream in [true, false] {
+            for watching in [Team::Radiant, Team::Dire] {
+                let other = match watching {
+                    Team::Radiant => Team::Dire,
+                    _ => Team::Radiant,
+                };
+                let (mut app, ..) = attack_app(Some(watching), side_stream);
+                let shown = app
+                    .world_mut()
+                    .run_system_once(move |sight: EventSight| {
+                        [watching, other].map(|team| sight.allows(&scan(team), EventSubject::Event))
+                    })
+                    .expect("event visibility system");
+                assert_eq!(
+                    shown,
+                    [true, false],
+                    "watching {watching:?}, a stream the server told to the side: {side_stream}"
+                );
+            }
+        }
+        let (mut app, ..) = attack_app(None, false);
+        let shown = app
+            .world_mut()
+            .run_system_once(move |sight: EventSight| {
+                [Team::Radiant, Team::Dire]
+                    .map(|team| sight.allows(&scan(team), EventSubject::Event))
+            })
+            .expect("event visibility system");
+        assert_eq!(
+            shown,
+            [true, true],
+            "an unrestricted spectator sees both sides' scans"
+        );
     }
 
     #[test]
