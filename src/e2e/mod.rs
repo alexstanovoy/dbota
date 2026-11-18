@@ -8,6 +8,7 @@ mod anim;
 mod animation_reference;
 mod announcer;
 mod arcane_tips;
+mod backdrop;
 mod backpack_rules;
 mod bars;
 mod base_gates;

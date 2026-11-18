@@ -15,7 +15,7 @@ mod archive_storage;
 pub(crate) mod availability;
 mod avatar;
 mod avatar_draw;
-mod backdrop;
+pub(crate) mod backdrop;
 pub(crate) mod catalogue;
 mod core;
 mod form;
