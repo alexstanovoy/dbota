@@ -8,7 +8,7 @@ use super::harness::{Client, Server};
 use crate::loading::Loading;
 use crate::main_menu::{Act, MenuCore, Page};
 
-fn act(client: &mut Client, act: Act) {
+pub(super) fn act(client: &mut Client, act: Act) {
     client.world_mut().non_send_mut::<MenuCore>().act(act);
 }
 
@@ -414,7 +414,7 @@ fn leaving_preparation_does_not_suppress_the_next_games_purchase_sound() {
     disconnect(&mut client);
 }
 
-fn connect(client: &mut Client, server: &Server) {
+pub(super) fn connect(client: &mut Client, server: &Server) {
     act(client, Act::Go(Page::LocalLobby));
     replace(client, 1, server.address.clone());
     act(client, Act::Direct(false));
@@ -422,7 +422,7 @@ fn connect(client: &mut Client, server: &Server) {
     client.frames(1);
 }
 
-fn pick(client: &mut Client) {
+pub(super) fn pick(client: &mut Client) {
     client.until("the hero picked", |c| {
         if c.core().view().is_none() && !c.core().ready {
             c.core_mut().act(Intent::PickHero(HeroId::SHADOW_FIEND.0));

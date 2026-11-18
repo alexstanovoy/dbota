@@ -592,6 +592,57 @@ fn an_abilitys_tooltip_stands_beside_its_row_and_never_over_it() {
     }
 }
 
+/// A window as small as the menu allows, or the menu drawn large in it: the popup of an ability
+/// still shows, inside the window, wherever it can be put, even where no side of the row has room
+/// for it clear of the row.
+#[test]
+fn an_abilitys_tooltip_is_shown_inside_a_small_window_or_a_large_scale() {
+    let mut client = hero_page();
+    let mut complaints = Vec::new();
+    for (width, height, scale) in [
+        (1024.0, 600.0, 1.0),
+        (1024.0, 600.0, 2.0),
+        (1280.0, 720.0, 2.0),
+    ] {
+        {
+            let world = client.world_mut();
+            world.resource_mut::<crate::config::Settings>().ui_scale = scale;
+            let mut window = world
+                .query_filtered::<&mut Window, With<PrimaryWindow>>()
+                .single_mut(world)
+                .expect("the window");
+            window.resolution.set(width, height);
+        }
+        client.frames(10);
+        for tile in ability_tiles(&mut client) {
+            let anchor = rect(&client, tile);
+            client.mouse(anchor.center());
+            client.frames(8);
+            let name = client.world().get::<Name>(tile).map(|n| n.to_string());
+            let Some(popup) = tooltip(&mut client) else {
+                complaints.push(format!(
+                    "{width}x{height} x{scale}: no popup over {name:?} at {anchor:?}"
+                ));
+                continue;
+            };
+            let popup = rect(&client, popup);
+            let over = popup.size().cmpgt(Vec2::new(width, height));
+            let inside =
+                |low: f32, high: f32, room: f32, over: bool| low >= 0.0 && (over || high <= room);
+            if !inside(popup.min.x, popup.max.x, width, over.x)
+                || !inside(popup.min.y, popup.max.y, height, over.y)
+            {
+                complaints.push(format!(
+                    "{width}x{height} x{scale}: the popup {popup:?} over {name:?} is not inside the window"
+                ));
+            }
+            client.mouse(Vec2::new(width - 2.0, height - 2.0));
+            client.frames(3);
+        }
+    }
+    assert!(complaints.is_empty(), "{}", complaints.join("\n"));
+}
+
 /// The popup is set in the game's faces (the shipped ones only where the cache has none).
 #[test]
 fn the_tooltip_is_set_in_the_games_faces() {

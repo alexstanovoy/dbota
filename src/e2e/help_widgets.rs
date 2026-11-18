@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::text::TextLayoutInfo;
 use std::time::Duration;
 
-fn button(client: &mut Client, name: &str) -> Option<Entity> {
+pub(super) fn button(client: &mut Client, name: &str) -> Option<Entity> {
     let world = client.world_mut();
     world
         .query::<(Entity, &Name)>()
@@ -135,7 +135,7 @@ fn shift_tab_to(client: &mut Client, name: &str) {
     panic!("context help {name} must be reachable through real Shift+Tab navigation");
 }
 
-fn tab_to(client: &mut Client, name: &str) {
+pub(super) fn tab_to(client: &mut Client, name: &str) {
     for _ in 0..64 {
         if button(client, name).is_some_and(|control| {
             client
@@ -471,7 +471,7 @@ fn question_ink(client: &mut Client) -> Option<(Rect, Vec2)> {
     ))
 }
 
-fn fonts_ready(client: &mut Client) {
+pub(super) fn fonts_ready(client: &mut Client) {
     client.within(Duration::from_secs(30), "all interface fonts loaded", |c| {
         let world = c.world();
         let Some(fonts) = world.get_resource::<crate::ui::Fonts>() else {

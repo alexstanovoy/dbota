@@ -251,6 +251,49 @@ fn an_ability_in_the_pick_panel_opens_its_popup() {
     });
 }
 
+/// A tooltip never outlives its owner: the popup of the pick screen's ability, up under the pointer,
+/// is not drawn on any frame of the strategy phase that follows in which the pointer is over nothing
+/// that has one.
+#[test]
+fn an_ability_popup_of_the_pick_screen_is_gone_with_its_tile_when_the_strategy_phase_begins() {
+    use super::popover_frames::{owner_hovered, seen};
+    let (_server, mut client) = on_the_pick_screen("600", &[]);
+    hover(&mut client, "pick shadow fiend");
+    client.within(PATIENCE, "the hovered hero's skills", |c| {
+        named(c, "hero ability 0").is_some()
+    });
+    hover(&mut client, "hero ability 0");
+    client.within(PATIENCE, "the ability's popup", |c| {
+        seen::<crate::tips::Tip>(c).is_some()
+    });
+    client
+        .core_mut()
+        .act(bota_client_core::Intent::PickHero(HeroId::SHADOW_FIEND.0));
+    client.core_mut().act(bota_client_core::Intent::ToggleReady);
+    let mut stale = Vec::new();
+    let mut frames_since = None;
+    for frame in 0..2_000 {
+        client.step_frames(1);
+        if frames_since.is_none() && client.core().in_tactical_phase() {
+            frames_since = Some(frame);
+        }
+        if frames_since.is_some()
+            && seen::<crate::tips::Tip>(&mut client).is_some()
+            && !owner_hovered(&mut client)
+        {
+            stale.push(frame);
+        }
+        if frames_since.is_some_and(|began| frame > began + 30) {
+            break;
+        }
+    }
+    assert!(frames_since.is_some(), "the strategy phase never began");
+    assert!(
+        stale.is_empty(),
+        "the pick screen's popup is drawn without its tile on frames {stale:?}"
+    );
+}
+
 /// The server's pool of one hero is a forced pick: the seat is given it, so while the other seats
 /// are still to come the screen says so, shows that hero alone and offers neither LOCK IN nor
 /// RANDOM.

@@ -15,12 +15,36 @@ use crate::session::Session;
 use crate::shop::ShopCell;
 use crate::theme::Face;
 use crate::tip_content::{Content, Cost, Kind, Lookup, Run, Section, Tone};
-use crate::ui::help::{Side, placement::position};
+use crate::ui::help::{
+    Side,
+    placement::{is_placed, position_within},
+};
 use crate::ui::{self, Fonts};
 
-/// The popup box.
+/// A box of the popup. There are two: see [`Boxes`].
 #[derive(Component)]
 pub(crate) struct Tip;
+
+/// What a box of the popup is drawn from, if it holds anything.
+#[derive(Component, Default)]
+struct Holds(Option<Content>);
+
+/// A box of the popup with the node that holds its parts (a pane of the popup's two).
+#[derive(Clone, Copy)]
+struct Pane {
+    tip: Entity,
+    body: Entity,
+}
+
+/// The popup's two boxes: the one on show, and a spare in which the next content is drawn and laid
+/// out out of sight. The one on show stays up until the spare is ready at its place, so that moving
+/// from one owner to the next shows no blank frame and none at a provisional place or size: new
+/// content has a size nobody measured yet, which only a layout tells.
+#[derive(Resource)]
+struct Boxes {
+    front: Pane,
+    back: Pane,
+}
 
 /// An ability's icon on the hero page of the menu: under the cursor, the popup the game shows
 /// for the ability (its first level, as the strategy phase shows it).
@@ -136,6 +160,15 @@ fn tone_color(tone: Tone, palette: &Palette) -> Color {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Shown>()
         .init_resource::<ShownAnchor>()
+        // A tooltip never outlives the thing it describes: the game that begins is not the last one.
+        .add_systems(
+            First,
+            (
+                crate::loading::reset::<Shown>,
+                crate::loading::reset::<ShownAnchor>,
+            )
+                .in_set(crate::loading::Begin),
+        )
         .add_systems(Startup, spawn)
         .add_systems(
             Update,
@@ -156,34 +189,42 @@ pub fn plugin(app: &mut App) {
 }
 
 fn spawn(mut commands: Commands) {
-    let tip = commands
-        .spawn((
-            Tip,
-            Node {
-                position_type: PositionType::Absolute,
-                width: px(WIDTH),
-                border: UiRect::all(px(2)),
-                flex_direction: FlexDirection::Column,
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.07, 0.09, 0.11)),
-            BorderColor::all(Color::BLACK),
-            // Over the menu's page (60) and its overlay (70).
-            GlobalZIndex(TIP_Z),
-            Pickable::IGNORE,
-            Visibility::Hidden,
-        ))
-        .id();
-    commands.spawn((
-        TipBody,
-        Node {
-            flex_direction: FlexDirection::Column,
-            width: percent(100),
-            ..default()
-        },
-        Pickable::IGNORE,
-        ChildOf(tip),
-    ));
+    let mut face = || {
+        let tip = commands
+            .spawn((
+                Tip,
+                Holds::default(),
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: px(WIDTH),
+                    border: UiRect::all(px(2)),
+                    flex_direction: FlexDirection::Column,
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.07, 0.09, 0.11)),
+                BorderColor::all(Color::BLACK),
+                // Over the menu's page (60) and its overlay (70).
+                GlobalZIndex(TIP_Z),
+                Pickable::IGNORE,
+                Visibility::Hidden,
+            ))
+            .id();
+        let body = commands
+            .spawn((
+                TipBody,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    width: percent(100),
+                    ..default()
+                },
+                Pickable::IGNORE,
+                ChildOf(tip),
+            ))
+            .id();
+        Pane { tip, body }
+    };
+    let (front, back) = (face(), face());
+    commands.insert_resource(Boxes { front, back });
 }
 
 /// What the cursor is over, as a popup.
@@ -282,8 +323,9 @@ fn pick(
 
 /// What the cursor is over on the pick screen, before any hero is one's own, and on a hero's page
 /// of the menu: an ability or the talent tree of the hero shown. The popup stands beside the tile
-/// (see [`ShownAnchor`]) and stays up exactly while the cursor is over one, so it leaves alone
-/// what the menu's other pages show.
+/// (see [`ShownAnchor`]) and stays up exactly while the cursor is over one. It runs on every frame
+/// of every screen but the match's, so that the popup of the match, which [`pick`] leaves when the
+/// match does, is taken down on the first.
 fn pick_pregame(
     texts: Res<Texts>,
     manifest: Res<Manifest>,
@@ -305,7 +347,6 @@ fn pick_pregame(
     )>,
     mut shown: ResMut<Shown>,
     mut anchor: ResMut<ShownAnchor>,
-    mut was_up: Local<bool>,
 ) {
     let look = Lookup {
         texts: &texts,
@@ -332,16 +373,13 @@ fn pick_pregame(
         .or_else(|| {
             over_talents.map(|(.., node, at)| Rect::from_center_size(at.translation, node.size()))
         });
-    if content.is_some() || *was_up {
-        *was_up = content.is_some();
-        if shown.0 != content {
-            shown.0 = content;
-        }
-        // The menu's tiles take the popup beside them.
-        let rect = rect.map(|rect| (rect, Side::Right));
-        if anchor.0 != rect {
-            anchor.0 = rect;
-        }
+    if shown.0 != content {
+        shown.0 = content;
+    }
+    // The menu's tiles take the popup beside them.
+    let rect = rect.map(|rect| (rect, Side::Right));
+    if anchor.0 != rect {
+        anchor.0 = rect;
     }
 }
 
@@ -541,83 +579,140 @@ fn shop_tip(look: &Lookup, core: &bota_client_core::App, id: u16) -> Option<Cont
     Some(content)
 }
 
-/// Draws the popup anew when what it holds changes.
+/// Draws what the popup should show in the box that is not on show, unless the box on show shows
+/// it already; takes down what is shown no more.
 fn rebuild(
     mut commands: Commands,
     shown: Res<Shown>,
-    body: Single<Entity, With<TipBody>>,
-    mut tip: Single<&mut Visibility, With<Tip>>,
+    boxes: Res<Boxes>,
+    mut holds: Query<&mut Holds>,
     fonts: Res<Fonts>,
     server: Res<AssetServer>,
     manifest: Res<Manifest>,
 ) {
-    if !shown.is_changed() {
+    if !shown.is_changed() && !boxes.is_changed() {
         return;
     }
-    commands.entity(*body).despawn_children();
-    let Some(content) = &shown.0 else {
-        tip.set_if_neq(Visibility::Hidden);
-        return;
+    let wanted = shown.0.as_ref();
+    let on_show = holds
+        .get(boxes.front.tip)
+        .ok()
+        .and_then(|held| held.0.clone());
+    let mut fill = |face: Pane, content: Option<&Content>| {
+        let Ok(mut held) = holds.get_mut(face.tip) else {
+            return;
+        };
+        if held.0.as_ref() == content {
+            return;
+        }
+        commands.entity(face.body).despawn_children();
+        if let Some(content) = content {
+            let mut draw = Draw {
+                commands: &mut commands,
+                fonts: &fonts,
+                server: &server,
+                manifest: &manifest,
+                parent: face.body,
+            };
+            draw.content(content);
+        }
+        held.0 = content.cloned();
     };
-    let mut draw = Draw {
-        commands: &mut commands,
-        fonts: &fonts,
-        server: &server,
-        manifest: &manifest,
-        parent: *body,
-    };
-    draw.content(content);
+    match wanted {
+        None => {
+            fill(boxes.front, None);
+            fill(boxes.back, None);
+        }
+        // The spare is for what the box on show does not show: it is cleared when it is no use.
+        Some(_) if on_show.as_ref() == wanted => fill(boxes.back, None),
+        Some(_) => fill(boxes.back, wanted),
+    }
 }
 
-/// How far (physical pixels) the drawn box may be from its wanted corner and still count as there:
-/// the layout rounds the edges of a box to whole pixels.
-const PLACED_WITHIN: f32 = 1.0;
-
-/// Puts a popup that is about something beside it, clear of it, and shows it only on a frame in
-/// which the box that layout drew is already at the wanted corner.
-///
-/// It runs after layout, so the size and the place it reads are the ones drawn this frame, never
-/// the last frame's: new content has a size nobody measured yet, a moved anchor or a resized window
-/// wants another corner, and in each case the corner is written for the next layout while the popup
-/// stays hidden for this frame, rather than drawn for a frame at a provisional place or size.
-///
-/// The corner is a whole number of pixels, so that the popup's measured size, which rounds one pixel
-/// up or down with a fractional corner, cannot make it jump between two places on every frame.
-fn place_beside(
-    anchor: Rect,
-    side: Side,
-    window: &Window,
-    tip: (
-        &mut Node,
-        &mut Mut<Visibility>,
-        &ComputedNode,
-        &UiGlobalTransform,
-    ),
-) {
-    let (node, visibility, computed, at) = tip;
-    let unit = computed.inverse_scale_factor;
-    let size = computed.size();
+/// Where a popup of `size` physical pixels stands in a window, beside `anchor` on its `side`: a
+/// whole number of pixels, so that the popup's measured size, which rounds one pixel up or down
+/// with a fractional corner, cannot make it jump between two places on every frame. None for a
+/// popup that has no size yet.
+fn corner(anchor: Rect, side: Side, window: &Window, computed: &ComputedNode) -> Option<Vec2> {
+    let unit = computed.inverse_scale_factor.max(1e-3);
     let extent = Vec2::new(
         window.physical_width() as f32,
         window.physical_height() as f32,
     );
-    let margin = Vec2::splat(8.0 / unit.max(1e-3));
+    let margin = Vec2::splat(8.0 / unit);
     let bounds = Rect::from_corners(margin, extent - margin);
-    let gap = 12.0 / unit.max(1e-3);
-    // The shared help widget's rule: clear of the whole anchor, the preferred side then the others, within the window.
-    let Some(corner) = position(anchor, size, anchor.center(), bounds, gap, side)
-        .filter(|_| size.min_element() > 0.0)
-        .map(Vec2::round)
-    else {
+    let gap = 12.0 / unit;
+    // The shared help widget's rule, made to place whatever the room: a side clear of the whole
+    // anchor, else the side with the most room, within the window.
+    position_within(anchor, computed.size(), anchor.center(), bounds, gap, side).map(Vec2::round)
+}
+
+/// Where the popup is wanted: beside the box it is about, else by the cursor.
+fn wanted_anchor(anchor: &ShownAnchor, window: &Window, forced: bool) -> Option<(Rect, Side)> {
+    if let Some(anchor) = anchor.0 {
+        return Some(anchor);
+    }
+    // A popup forced by `--tip` has no box: it hangs by a point (the cursor, else a fixed one).
+    window
+        .cursor_position()
+        .or_else(|| forced.then(|| Vec2::new(60.0, window.height() * 0.5)))
+        .map(|point| {
+            (
+                Rect::from_center_size(point * window.scale_factor(), Vec2::ZERO),
+                Side::Above,
+            )
+        })
+}
+
+/// Puts the box that holds what is shown beside its owner, and puts it on show on the first frame
+/// in which the box that layout drew is already at the wanted corner, never before.
+///
+/// It runs after layout, so the size and the place it reads are the ones drawn this frame, never
+/// the last frame's: a moved anchor or a resized window wants another corner, and then the corner
+/// is written for the next layout while the box stays hidden for this frame, rather than drawn for
+/// a frame at a provisional place. Content that is new waits in the spare box; the box on show
+/// stays up until the spare is at its place, and then the two change roles.
+fn place(
+    shown: Res<Shown>,
+    anchor: Res<ShownAnchor>,
+    args: Res<crate::Args>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut boxes: ResMut<Boxes>,
+    mut tips: Query<
+        (
+            &mut Node,
+            &mut Visibility,
+            &ComputedNode,
+            &UiGlobalTransform,
+            &Holds,
+        ),
+        With<Tip>,
+    >,
+) {
+    let (front, back) = (boxes.front, boxes.back);
+    let anchor = wanted_anchor(&anchor, &window, args.tip.is_some());
+    let (Some(wanted), Some((anchor, side))) = (shown.0.as_ref(), anchor) else {
+        for (_, mut visibility, ..) in &mut tips {
+            visibility.set_if_neq(Visibility::Hidden);
+        }
+        return;
+    };
+    let target = [front, back].into_iter().find(|face| {
+        tips.get(face.tip)
+            .is_ok_and(|tip| tip.4.0.as_ref() == Some(wanted))
+    });
+    // Not drawn yet (the spare is filled in the next frame's update): what is on show stays.
+    let Some(target) = target else {
+        return;
+    };
+    let Ok((mut node, mut visibility, computed, at, _)) = tips.get_mut(target.tip) else {
+        return;
+    };
+    let Some(corner) = corner(anchor, side, &window, computed) else {
         visibility.set_if_neq(Visibility::Hidden);
         return;
     };
-    let drawn = Rect::from_center_size(at.translation, size);
-    if (drawn.min - corner).abs().max_element() <= PLACED_WITHIN {
-        visibility.set_if_neq(Visibility::Inherited);
-        return;
-    }
-    visibility.set_if_neq(Visibility::Hidden);
+    let unit = computed.inverse_scale_factor;
     let (left, top) = (px(corner.x * unit), px(corner.y * unit));
     if node.left != left {
         node.left = left;
@@ -625,52 +720,20 @@ fn place_beside(
     if node.top != top {
         node.top = top;
     }
-}
-
-/// Puts the popup beside the box it is about, else by the cursor.
-fn place(
-    shown: Res<Shown>,
-    anchor: Res<ShownAnchor>,
-    args: Res<crate::Args>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    mut tip: Single<
-        (
-            &mut Node,
-            &mut Visibility,
-            &ComputedNode,
-            &UiGlobalTransform,
-        ),
-        With<Tip>,
-    >,
-) {
-    let (node, visibility, computed, at) = &mut *tip;
-    if shown.0.is_none() {
+    let drawn = Rect::from_center_size(at.translation, computed.size());
+    if !is_placed(drawn, corner) {
         visibility.set_if_neq(Visibility::Hidden);
         return;
     }
-    if let Some((anchor, side)) = anchor.0 {
-        place_beside(anchor, side, &window, (node, visibility, computed, at));
-        return;
-    }
-    // A popup forced by `--tip` has no box: it hangs by a point (the cursor, else a fixed one).
-    let point = window
-        .cursor_position()
-        .or_else(|| {
-            args.tip
-                .is_some()
-                .then(|| Vec2::new(60.0, window.height() * 0.5))
-        })
-        .map(|point| point * window.scale_factor());
-    let Some(point) = point else {
+    visibility.set_if_neq(Visibility::Inherited);
+    let other = if target.tip == front.tip { back } else { front };
+    if let Ok((_, mut visibility, ..)) = tips.get_mut(other.tip) {
         visibility.set_if_neq(Visibility::Hidden);
-        return;
-    };
-    place_beside(
-        Rect::from_center_size(point, Vec2::ZERO),
-        Side::Above,
-        &window,
-        (node, visibility, computed, at),
-    );
+    }
+    if target.tip == back.tip {
+        let boxes = &mut *boxes;
+        std::mem::swap(&mut boxes.front, &mut boxes.back);
+    }
 }
 
 /// Spawns the parts of a popup.
