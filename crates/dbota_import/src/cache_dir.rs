@@ -219,7 +219,7 @@ fn prune_records(
 /// A managed import holds the root lock through publication, so concurrent imports cannot
 /// both admit a ninth cache. Startup use updates take the same lock before protecting a cache.
 pub struct ManagedCacheLock {
-    _file: fs::File,
+    _held: lock_file::Held,
 }
 
 pub fn lock_managed_root(root: &Path) -> Result<ManagedCacheLock> {
@@ -228,7 +228,7 @@ pub fn lock_managed_root(root: &Path) -> Result<ManagedCacheLock> {
 }
 
 /// [`lock_managed_root`] for an import: while another holds the lock, `wait` is called about
-/// every [`LOCK_POLL`], and answering [`Flow::Stop`] gives up (none).
+/// every 25 ms, and answering [`Flow::Stop`] gives up (none).
 pub fn lock_managed_root_waiting(
     root: &Path,
     wait: &mut dyn FnMut() -> Flow,
@@ -236,81 +236,192 @@ pub fn lock_managed_root_waiting(
     fs::create_dir_all(root).map_err(|e| managed_io(root, e))?;
     plain_directory(root)?;
     ensure_marker(&root.join(ROOT_MARKER), ROOT_TEXT.as_bytes())?;
-    let path = root.join(".dbota-cache-lock");
-    let file = open_lock_file(&path)?;
-    Ok(lock_polling(&file, &path, wait)?.then_some(ManagedCacheLock { _file: file }))
-}
-
-/// Opens (making it when it is not there) the file whose lock stands for a folder. This is the
-/// only place that opens a lock file, and it opens it for writing only: nothing ever reads a
-/// lock file's contents, which on Windows (where a lock is mandatory for the other handles'
-/// reads) would fail for as long as another process holds the lock instead of waiting for it.
-/// The file is empty and stays so; a link or a folder in its place is refused.
-fn open_lock_file(path: &Path) -> Result<fs::File> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) if !meta.is_file() => {
-            return Err(managed_io(
-                path,
-                io::Error::other("a lock file must be a plain file, not a link or a folder"),
-            ));
-        }
-        Ok(_) => {}
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => return Err(managed_io(path, e)),
-    }
-    fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .map_err(|e| managed_io(path, e))
-}
-
-/// How often an import waiting for another's lock looks whether it was stopped.
-const LOCK_POLL: Duration = Duration::from_millis(25);
-
-/// The most looks at a lock another holds: about half an hour, which no import takes.
-const LOCK_LOOKS: u32 = 72_000;
-
-/// Takes the exclusive lock of `file` (`path` is named in errors), calling `wait` while another
-/// holds it; whether it was taken (not when `wait` stopped).
-fn lock_polling(file: &fs::File, path: &Path, wait: &mut dyn FnMut() -> Flow) -> Result<bool> {
-    for _ in 0..LOCK_LOOKS {
-        match file.try_lock() {
-            Ok(()) => return Ok(true),
-            Err(fs::TryLockError::WouldBlock) => {
-                if wait() == Flow::Stop {
-                    return Ok(false);
-                }
-                std::thread::sleep(LOCK_POLL);
-            }
-            Err(fs::TryLockError::Error(source)) => return Err(managed_io(path, source)),
-        }
-    }
-    Err(managed_io(
-        path,
-        io::Error::other("another dbota has held the lock for half an hour"),
-    ))
+    Ok(lock_file::in_root(root)?
+        .acquire(wait)?
+        .map(|held| ManagedCacheLock { _held: held }))
 }
 
 /// The lock of one cache folder, held while an import makes that cache: two imports of the
 /// same folder (also one outside the managed root) would otherwise delete each other's
 /// staging folder. It is a file beside the cache, so it belongs to the folder it guards.
 pub struct CacheLock {
-    _file: fs::File,
+    _held: lock_file::Held,
 }
 
 /// Takes the lock of the cache at `cache`; see [`lock_managed_root_waiting`] for `wait`.
 pub fn lock_cache(cache: &Path, wait: &mut dyn FnMut() -> Flow) -> Result<Option<CacheLock>> {
-    let path = sibling(cache, "lock")?;
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent).map_err(|e| managed_io(parent, e))?;
+    Ok(lock_file::beside(cache)?
+        .acquire(wait)?
+        .map(|held| CacheLock { _held: held }))
+}
+
+/// Where the lock files are made and taken. Nothing outside this module can spell their names
+/// or obtain a handle to one: it hands out only a [`Held`](lock_file::Held) lock, opened for
+/// writing only and never read, so no code reads a lock file, by visibility. That matters on
+/// Windows, where a lock is mandatory for the reads of other handles: a reader would fail for as
+/// long as another process holds the lock instead of waiting for it.
+mod lock_file {
+    use super::*;
+
+    /// The lock file of the managed root, in the root.
+    const ROOT_FILE: &str = ".dbota-cache-lock";
+
+    /// What names the lock file of a cache folder beside it (see [`sibling`]).
+    const CACHE_SUFFIX: &str = "lock";
+
+    /// How often an import waiting for another's lock looks whether it was stopped.
+    const POLL: Duration = Duration::from_millis(25);
+
+    /// The most looks at a lock another holds: about half an hour, which no import takes.
+    const LOOKS: u32 = 72_000;
+
+    /// A lock file opened, not yet locked. The path is kept for error messages only.
+    pub(super) struct Opened {
+        file: fs::File,
+        path: PathBuf,
     }
-    let file = open_lock_file(&path)?;
-    Ok(lock_polling(&file, &path, wait)?.then_some(CacheLock { _file: file }))
+
+    /// A lock file whose exclusive lock is held until this is dropped.
+    pub(super) struct Held {
+        _file: fs::File,
+    }
+
+    pub(super) fn in_root(root: &Path) -> Result<Opened> {
+        open(root.join(ROOT_FILE))
+    }
+
+    /// The lock file beside the cache folder `cache` (made, with its folder, when it is not
+    /// there).
+    pub(super) fn beside(cache: &Path) -> Result<Opened> {
+        let path = sibling(cache, CACHE_SUFFIX)?;
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent).map_err(|e| managed_io(parent, e))?;
+        }
+        open(path)
+    }
+
+    /// Opens (making it when it is not there) the file whose lock stands for a folder, for
+    /// writing only. The file is empty and stays so; a link or a folder in its place is refused.
+    fn open(path: PathBuf) -> Result<Opened> {
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if !meta.is_file() => {
+                return Err(managed_io(
+                    &path,
+                    io::Error::other("a lock file must be a plain file, not a link or a folder"),
+                ));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(managed_io(&path, e)),
+        }
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| managed_io(&path, e))?;
+        Ok(Opened { file, path })
+    }
+
+    impl Opened {
+        /// Takes the exclusive lock, calling `wait` while another holds it; none when `wait`
+        /// stopped.
+        pub(super) fn acquire(self, wait: &mut dyn FnMut() -> Flow) -> Result<Option<Held>> {
+            for _ in 0..LOOKS {
+                match self.file.try_lock() {
+                    Ok(()) => return Ok(Some(Held { _file: self.file })),
+                    Err(fs::TryLockError::WouldBlock) => {
+                        if wait() == Flow::Stop {
+                            return Ok(None);
+                        }
+                        std::thread::sleep(POLL);
+                    }
+                    Err(fs::TryLockError::Error(source)) => {
+                        return Err(managed_io(&self.path, source));
+                    }
+                }
+            }
+            Err(managed_io(
+                &self.path,
+                io::Error::other("another dbota has held the lock for half an hour"),
+            ))
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::tests::fresh_dir;
+        use super::*;
+
+        /// A lock file that cannot be opened for reading stands for Windows' mandatory lock: locking,
+        /// waiting and releasing all work with it, and the file stays empty.
+        #[cfg(unix)]
+        #[test]
+        fn a_lock_file_is_only_ever_opened_for_writing_and_stays_empty() {
+            use std::os::unix::fs::PermissionsExt;
+            let write_only = |path: &Path| {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o200)).unwrap();
+            };
+            let root = fresh_dir("lock-unreadable");
+            let requested = root.join(crate::import::folder_name());
+            let first = lock_managed_root(&root).unwrap();
+            let root_lock = root.join(ROOT_FILE);
+            write_only(&root_lock);
+            assert!(
+                fs::File::open(&root_lock).is_err(),
+                "this test needs a user that cannot read a write-only file; \
+                 run it without elevated privileges"
+            );
+            let mut waited = 0;
+            let second = begin_managed_import_at(
+                &root,
+                &requested,
+                UNIX_EPOCH + Duration::from_secs(1_000_000),
+                &mut || {
+                    waited += 1;
+                    Flow::Stop
+                },
+            );
+            assert!(second.is_ok_and(|lock| lock.is_none()), "waits, no error");
+            assert_eq!(waited, 1);
+            drop(first);
+            assert!(lock_managed_root(&root).is_ok());
+            assert_eq!(fs::metadata(&root_lock).unwrap().len(), 0);
+
+            let cache = root.join("cache");
+            let first = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
+            let cache_lock = sibling(&cache, CACHE_SUFFIX).unwrap();
+            write_only(&cache_lock);
+            let second = lock_cache(&cache, &mut || Flow::Stop);
+            assert!(second.is_ok_and(|lock| lock.is_none()), "waits, no error");
+            drop(first);
+            assert!(lock_cache(&cache, &mut || Flow::Stop).unwrap().is_some());
+            assert_eq!(fs::metadata(&cache_lock).unwrap().len(), 0);
+            fs::remove_dir_all(&root).unwrap();
+        }
+
+        /// A link or a folder where a lock file goes is refused, not followed.
+        #[cfg(unix)]
+        #[test]
+        fn a_link_in_the_place_of_a_lock_file_is_refused() {
+            let root = fresh_dir("lock-link");
+            let cache = root.join("cache");
+            std::os::unix::fs::symlink(
+                root.join("elsewhere"),
+                sibling(&cache, CACHE_SUFFIX).unwrap(),
+            )
+            .unwrap();
+            let why = lock_cache(&cache, &mut || Flow::Stop)
+                .err()
+                .expect("refused");
+            assert!(why.to_string().contains("a plain file"), "{why}");
+            assert!(!root.join("elsewhere").exists());
+            fs::remove_dir_all(&root).unwrap();
+        }
+    }
 }
 
 pub fn begin_managed_import(
@@ -1182,116 +1293,6 @@ mod tests {
         assert!(!gate.is_cancelled());
         assert_eq!(read_stamp(&cache).as_deref(), Some("after"));
         fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// No code path reads a lock file's contents: on Windows a lock is mandatory for another
-    /// handle's reads, so a reader would fail while the lock is held instead of waiting for it.
-    /// Here (Unix) a lock file that cannot be opened for reading stands for that: locking, waiting
-    /// and releasing all work with it, and the file stays empty.
-    #[cfg(unix)]
-    #[test]
-    fn a_lock_file_is_only_ever_opened_for_writing_and_stays_empty() {
-        use std::os::unix::fs::PermissionsExt;
-        let write_only = |path: &Path| {
-            fs::set_permissions(path, fs::Permissions::from_mode(0o200)).unwrap();
-        };
-        let root = fresh_dir("lock-unreadable");
-        let requested = root.join(crate::import::folder_name());
-        let first = lock_managed_root(&root).unwrap();
-        let root_lock = root.join(".dbota-cache-lock");
-        write_only(&root_lock);
-        assert!(
-            fs::File::open(&root_lock).is_err(),
-            "this test cannot prove its property as this user: a write-only file can be read \
-             (a privileged user reads anything); \
-             the lock files are only ever opened by one function is checked by \
-             `no_other_code_names_the_lock_files`, which does not depend on permissions"
-        );
-        let mut waited = 0;
-        let second = begin_managed_import_at(&root, &requested, now(), &mut || {
-            waited += 1;
-            Flow::Stop
-        });
-        assert!(second.is_ok_and(|lock| lock.is_none()), "waits, no error");
-        assert_eq!(waited, 1);
-        drop(first);
-        assert!(lock_managed_root(&root).is_ok());
-        assert_eq!(fs::metadata(&root_lock).unwrap().len(), 0);
-
-        let cache = root.join("cache");
-        let first = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
-        let cache_lock = sibling(&cache, "lock").unwrap();
-        write_only(&cache_lock);
-        let second = lock_cache(&cache, &mut || Flow::Stop);
-        assert!(second.is_ok_and(|lock| lock.is_none()), "waits, no error");
-        drop(first);
-        assert!(lock_cache(&cache, &mut || Flow::Stop).unwrap().is_some());
-        assert_eq!(fs::metadata(&cache_lock).unwrap().len(), 0);
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    /// The lock files are named in one place, which opens them for writing only: no other code
-    /// of this crate or of the client names them, so nothing else can read their contents. This
-    /// holds for any user (the permission test above needs one that cannot read a write-only
-    /// file).
-    #[test]
-    fn no_other_code_names_the_lock_files() {
-        fn sources(dir: &Path, found: &mut Vec<(PathBuf, String)>) {
-            for entry in fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    sources(&path, found);
-                } else if path.extension().is_some_and(|e| e == "rs") {
-                    found.push((path.clone(), fs::read_to_string(&path).unwrap()));
-                }
-            }
-        }
-        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files = Vec::new();
-        sources(&manifest.join("src"), &mut files);
-        sources(&manifest.join("../../src"), &mut files);
-        let mut root_named = 0;
-        let mut sibling_named = 0;
-        for (path, text) in &files {
-            // This module's tests name them to test them.
-            let code = text.split("#[cfg(test)]").next().unwrap();
-            let root = code.matches("dbota-cache-lock").count();
-            let sibling = code.matches("\"lock\")").count();
-            assert!(
-                path.ends_with("cache_dir.rs") || root + sibling == 0,
-                "{} names a lock file",
-                path.display()
-            );
-            if path.ends_with("cache_dir.rs") {
-                (root_named, sibling_named) = (root, sibling);
-            }
-        }
-        assert_eq!((root_named, sibling_named), (1, 1));
-        let code = include_str!("cache_dir.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .unwrap();
-        assert_eq!(
-            code.matches("open_lock_file(").count(),
-            3,
-            "its definition and two uses"
-        );
-    }
-
-    /// A link or a folder where a lock file goes is refused, not followed.
-    #[cfg(unix)]
-    #[test]
-    fn a_link_in_the_place_of_a_lock_file_is_refused() {
-        let root = fresh_dir("lock-link");
-        let cache = root.join("cache");
-        std::os::unix::fs::symlink(root.join("elsewhere"), sibling(&cache, "lock").unwrap())
-            .unwrap();
-        let why = lock_cache(&cache, &mut || Flow::Stop)
-            .err()
-            .expect("refused");
-        assert!(why.to_string().contains("a plain file"), "{why}");
-        assert!(!root.join("elsewhere").exists());
-        fs::remove_dir_all(&root).unwrap();
     }
 
     /// What is in a scratch folder, as a sorted list of names, with the stamp of the folders
