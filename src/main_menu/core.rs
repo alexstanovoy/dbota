@@ -2870,7 +2870,12 @@ pub fn error_text(error: &Error) -> String {
         Error::BadLogin => "A login is 3 to 20 characters: a-z, 0-9 and _".to_owned(),
         Error::WeakPassword => "A password is 8 to 128 characters".to_owned(),
         Error::BadSession => "Your login has expired: log in again".to_owned(),
-        Error::VersionRequired => "A bot account must choose a version".to_owned(),
+        // The menu is a person's and states no version, so this is what a bot account's sign-in
+        // through it comes to: the person is told where such an account signs in.
+        Error::VersionRequired => {
+            "This is a bot account: bot accounts sign in from a bot client, not from this menu"
+                .to_owned()
+        }
         Error::VersionNotAllowed => "Human accounts cannot choose a bot version".to_owned(),
         Error::BadVersion => error.to_string(),
         Error::VersionLimit => error.to_string(),

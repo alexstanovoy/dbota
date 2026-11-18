@@ -1279,8 +1279,10 @@ fn allowing_matchmaking_with_bots_is_a_drawn_switch() {
     accept_matchmaking_with_bot(&mut client, &mut bot, &service);
 }
 
+/// The menu is a person's: a bot account signs in from a bot client, which states its version.
+/// The service refuses the menu's sign-in of one, and the menu says so in words a person follows.
 #[test]
-fn a_bot_account_finds_matches_only_in_everyone_with_either_switch_setting() {
+fn a_bot_account_signing_in_through_the_menu_is_told_to_use_a_bot_client() {
     let service = crate::main_menu::tests::service();
     let mut client = signed_up(&service, "viewer");
     act(&mut client, Act::Logout);
@@ -1311,46 +1313,28 @@ fn a_bot_account_finds_matches_only_in_everyone_with_either_switch_setting() {
     act(&mut client, Act::Submit);
     client.within(
         Duration::from_secs(120),
-        "the bot account signed in",
-        |client| client.world().non_send::<MenuCore>().page() == Page::Home,
-    );
-    for allow_bots in [false, true] {
-        click_menu_button(&mut client, "play");
-        if allow_bots {
-            click_menu_button(&mut client, "allow matchmaking with bots");
-        }
-        click_menu_button(&mut client, "find match");
-        client.within(
-            Duration::from_secs(120),
-            "the queue request answered",
-            |client| {
-                let view = client.world().non_send::<MenuCore>().view();
-                !view.searches.is_empty() || view.status.as_ref().is_some_and(|status| status.error)
-            },
-        );
-        let snapshot = matchmaking_snapshot(&service, "bot");
-        assert_eq!(
-            snapshot.queued.len(),
-            1,
-            "bot admission with allow_bots={allow_bots}: {:?}",
-            client.shown_texts()
-        );
-        assert_eq!(
-            snapshot.queued[0].audience,
-            bota_radovid::Audience::Everyone
-        );
-        act(&mut client, Act::Go(Page::MyGames));
-        click_menu_button(&mut client, "cancel");
-        client.within(Duration::from_secs(120), "the search cancelled", |client| {
+        "the bot account's sign-in answered",
+        |client| {
             client
                 .world()
                 .non_send::<MenuCore>()
                 .view()
-                .searches
-                .is_empty()
-        });
-        act(&mut client, Act::Go(Page::Home));
-    }
+                .status
+                .is_some()
+        },
+    );
+    let menu = client.world().non_send::<MenuCore>();
+    assert_eq!(
+        menu.page(),
+        Page::Login,
+        "a refused sign-in stays on the login page"
+    );
+    let status = menu.view().status.clone().expect("the refusal is told");
+    assert!(status.error, "the refusal is shown as an error");
+    assert_eq!(
+        status.text,
+        "This is a bot account: bot accounts sign in from a bot client, not from this menu"
+    );
 }
 
 fn waiting_matchmaking_bot(service: &crate::main_menu::tests::Service) -> bota_radovid::Client {
