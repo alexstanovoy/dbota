@@ -542,7 +542,7 @@ pub(crate) fn service_from_demo_example() -> Service {
     )
 }
 
-fn start_service(save_replays: bool, change: impl FnOnce(String) -> String) -> Service {
+pub(crate) fn start_service(save_replays: bool, change: impl FnOnce(String) -> String) -> Service {
     start_configured_service(save_replays, change, |_| {})
 }
 
@@ -841,6 +841,9 @@ fn two_players_register_find_accept_play_and_see_their_result() {
         // and the server bounds the messages a second.
         std::thread::sleep(Duration::from_millis(2));
     }
+    // The clients leave the ended match, as the real one does once it has shown the end: the
+    // game server, which keeps its players until they leave, then exits and the service rates.
+    drop(games);
     alice.menu.left_game(None, false);
     bob.menu.left_game(None, false);
     settle(&mut [&mut alice, &mut bob], |p| {

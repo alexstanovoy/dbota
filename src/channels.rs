@@ -5,7 +5,7 @@
 //! The channels are the ones the sound code routes: the world's effects ([`crate::sound`],
 //! [`crate::mixer`]), the hero's own voice ([`crate::hero_voice`]), the announcer and the
 //! day and night calls ([`crate::voice`]), the map's ambience ([`crate::soundscape`]) and the
-//! interface's clicks. The game has no music, so the mixer has none.
+//! interface's clicks, and the music of the music pack ([`crate::finale`]: the end of a match).
 
 use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, PlaybackSettings, Volume};
 use bevy::prelude::*;
@@ -26,10 +26,12 @@ pub enum Channel {
     Ambience,
     /// The clicks of the menu and the interface.
     Interface,
+    /// The music pack's music: the stinger that ends a match.
+    Music,
 }
 
 impl Channel {
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 6;
     /// In the order the mixer lays them out.
     pub const ALL: [Channel; Channel::COUNT] = [
         Channel::Effects,
@@ -37,6 +39,7 @@ impl Channel {
         Channel::Announcer,
         Channel::Ambience,
         Channel::Interface,
+        Channel::Music,
     ];
 
     fn index(self) -> usize {
@@ -54,6 +57,7 @@ impl Channel {
             Channel::Announcer => "announcer",
             Channel::Ambience => "ambience",
             Channel::Interface => "interface",
+            Channel::Music => "music",
         }
     }
 
@@ -65,6 +69,7 @@ impl Channel {
             Channel::Announcer => "Announcer",
             Channel::Ambience => "Ambience",
             Channel::Interface => "Interface",
+            Channel::Music => "Music",
         }
     }
 
@@ -198,6 +203,7 @@ fn sample_name(channel: Channel) -> Option<&'static str> {
         Channel::Effects => Some("sound.set.creep_good_melee.attack"),
         Channel::Announcer => Some("sound.announcer.battle_begins"),
         Channel::Interface => Some("sound.ui.click"),
+        Channel::Music => Some("sound.music.radiant_win"),
         Channel::Voices | Channel::Ambience => None,
     }
 }

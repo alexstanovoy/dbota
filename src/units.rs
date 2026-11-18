@@ -9,7 +9,7 @@ use bevy::{
     world_serialization::WorldAsset,
     world_serialization::WorldInstanceReady,
 };
-use bota_client_core::{ClientSession, bodies};
+use bota_client_core::{ClientSession, FeedKind, bodies};
 use bota_core::{MapDef, NEUTRALS, NeutralKind, kind_def};
 use bota_proto::{
     CreepTier, EffectId, EntityId, LotusTier, ProjectileModel, Team, UnitKind, UnitView, WorldView,
@@ -1334,22 +1334,34 @@ fn remove_missing_units(p: &mut SyncParams, seen: &[EntityId], core: &bota_clien
         .filter(|id| seen.binary_search(id).is_err())
         .copied()
         .collect();
+    let now = core.view().map_or(0, |view| view.tick);
     for id in gone {
         let Some(entity) = p.index.0.remove(&id) else {
             continue;
         };
         // It falls when its side was told it died since it was last seen;
-        // one that only left the sight goes.
+        // one that only left the sight goes. An Ancient that is destroyed ends the match, and
+        // everyone sees it fall wherever it stands (`crate::finale` flies to it), unless a
+        // replay was taken past its fall.
         let died = core
             .session()
             .and_then(|session| session.entity(id))
             .is_some_and(|track| {
                 let u = &track.unit;
-                u.kind != UnitKind::Courier
-                    && track.last_death.is_some_and(|death| {
-                        death.tick >= track.last_seen_tick && !p.jumped.over(death.tick)
-                    })
-                    && (!p.fog.on || p.fog.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
+                let seen_to_die = track.last_death.is_some_and(|death| {
+                    death.tick >= track.last_seen_tick && !p.jumped.over(death.tick)
+                }) && (!p.fog.on
+                    || p.fog.lit(u.pos.x.to_f32(), u.pos.y.to_f32()));
+                let ancient_destroyed = u.kind == UnitKind::Ancient
+                    && !p.jumped.over(now)
+                    && core.feed.iter().any(|line| {
+                        matches!(line.kind, FeedKind::StructureFell {
+                            team,
+                            kind: UnitKind::Ancient,
+                            ..
+                        } if team == u.team)
+                    });
+                u.kind != UnitKind::Courier && (seen_to_die || ancient_destroyed)
             });
         if died {
             p.commands.entity(entity).insert(Dying(0.0));

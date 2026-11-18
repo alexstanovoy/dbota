@@ -293,12 +293,19 @@ fn load(origin: &Origin) -> Option<Loading> {
     task
 }
 
-/// Has the summary of a match that is over.
-fn drive(session: NonSend<Session>, mut post: NonSendMut<PostGame>) {
+/// Has the summary of a match that is over, once the end of it has been shown.
+fn drive(
+    session: NonSend<Session>,
+    mut post: NonSendMut<PostGame>,
+    finale: Res<crate::finale::Finale>,
+) {
     if session.0.over.is_none() {
         if !matches!(post.stage, Stage::Idle) || post.shown.is_some() {
             post.reset();
         }
+        return;
+    }
+    if finale.showing() {
         return;
     }
     let post = &mut *post;

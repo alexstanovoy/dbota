@@ -149,9 +149,12 @@ mod window;
 mod wisdom_contest;
 
 mod dead_purchases;
+mod end_frames;
 mod lobbies;
 mod match_end;
 mod mega_creeps;
 mod menu_pages;
+mod victory;
+mod victory_service;
 
 mod player_names;

@@ -66,6 +66,7 @@ impl Toggle {
             Toggle::ChannelMuted(Channel::Announcer) => "Mute the announcer",
             Toggle::ChannelMuted(Channel::Ambience) => "Mute ambience",
             Toggle::ChannelMuted(Channel::Interface) => "Mute the interface",
+            Toggle::ChannelMuted(Channel::Music) => "Mute music",
             Toggle::SaveReplays => "Save the replays of my matches",
             Toggle::AutoQuality => "Lower quality when the game runs slowly",
             Toggle::Props => "Map decorations",

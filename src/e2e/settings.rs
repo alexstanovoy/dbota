@@ -1006,6 +1006,7 @@ fn dragging_a_fader_sets_its_channel_and_sounds_it_while_it_moves() {
         Channel::Announcer,
         Channel::Ambience,
         Channel::Interface,
+        Channel::Music,
     ] {
         assert_eq!(
             after.mix.level(other),

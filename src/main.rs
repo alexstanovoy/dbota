@@ -51,6 +51,7 @@ mod face;
 mod faces;
 mod feed;
 mod firstrun;
+mod finale;
 mod fog;
 mod fortified;
 mod framestats;
@@ -854,7 +855,7 @@ fn client_plugins(app: &mut App, read_environment: bool) {
             heap::plugin,
         ))
         .add_plugins(kept_targets::plugin)
-        .add_plugins(pregame::plugin)
+        .add_plugins((pregame::plugin, finale::plugin))
         .add_plugins(scan::plugin)
         .add_plugins((
             bag::plugin,

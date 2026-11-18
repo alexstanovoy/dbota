@@ -875,7 +875,10 @@ mod tests {
     fn every_setting_survives_the_file() {
         let default = Settings::default();
         let mut mix = Mix::default();
-        for (channel, level) in Channel::ALL.into_iter().zip([0.1, 0.25, 0.4, 0.55, 0.7]) {
+        for (channel, level) in Channel::ALL
+            .into_iter()
+            .zip([0.1, 0.25, 0.4, 0.55, 0.7, 0.85])
+        {
             mix.set_level(channel, level);
             mix.set_muted(channel, true);
         }
@@ -1055,7 +1058,7 @@ mod tests {
         assert_eq!(read.mix, mix);
         let (_, complaints) = Settings::parse("volume_effects = 1.5");
         assert!(complaints[0].contains("outside"), "{complaints:?}");
-        let (_, complaints) = Settings::parse("mute_music = true");
+        let (_, complaints) = Settings::parse("mute_cinematics = true");
         assert!(
             complaints[0].contains("no setting called"),
             "{complaints:?}"

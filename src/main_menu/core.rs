@@ -1064,6 +1064,17 @@ impl MenuCore {
         self.leave_finished(&leaving, told);
     }
 
+    /// The end of the match on screen has been shown ([`crate::finale`]): a match with a result
+    /// page here (the service's, played or watched) and a replay are left as the player's own
+    /// leaving leaves them, for the result and for where the replay was opened from. A game of
+    /// this machine, which has no result page, stays on its post-game screen.
+    pub fn end_shown(&mut self) {
+        if matches!(self.on_screen, Some(OnScreen::Match(_) | OnScreen::Replay)) && !self.launching
+        {
+            self.leave = true;
+        }
+    }
+
     /// The player left the game on screen or under the dashboard, once.
     pub fn take_leave(&mut self) -> bool {
         if self.leave_at.is_some_and(|at| Instant::now() >= at) {

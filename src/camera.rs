@@ -33,12 +33,19 @@ pub struct CursorPicked;
 #[derive(Resource, Default, Debug)]
 pub struct CursorGround(pub Option<Vec3>);
 
+/// The player's camera placed for the frame: what places it otherwise (the end of a match)
+/// comes after.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Placed;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<CursorGround>()
         .add_systems(Startup, spawn_camera)
         .add_systems(
             Update,
-            (pan_and_zoom, follow, apply_camera_transform).chain(),
+            (pan_and_zoom, follow, apply_camera_transform)
+                .chain()
+                .in_set(Placed),
         )
         // Picking needs the camera's GlobalTransform of this frame.
         .add_systems(

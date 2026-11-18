@@ -552,6 +552,17 @@ fn choose(
     clip: impl Fn(&str) -> Option<(f32, Option<f32>)>,
 ) -> Wanted {
     let unit = drawn.unit;
+    // A match that is over stands as it ended: what was under way is carried out no more, and
+    // nobody swings or walks on the spot while its end is shown.
+    if core.over.is_some() {
+        pose.swing = None;
+        pose.since_strike = None;
+        pose.struck_at = None;
+        let name = standing(core, u);
+        let name = if clip(name).is_some() { name } else { "idle" };
+        let duration = clip(name).map_or(1.0, |c| c.0);
+        return looping(pose, name, duration, dt, 1.0);
+    }
     let rate = f32::from(core.tick_rate().max(1));
     let sub = core.smooth.alpha();
     let tick = core.view().map_or(0, |view| view.tick);

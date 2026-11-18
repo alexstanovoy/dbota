@@ -776,14 +776,20 @@ fn a_game_of_the_service_shows_the_fetched_file_or_the_final_numbers_when_there_
             }
             c.core().over.is_some()
         });
-        client.frames(3);
-        assert!(
-            client
-                .world()
-                .non_send::<PostGame>()
-                .summary()
-                .is_some_and(|summary| summary.detail == Detail::Stats),
-            "final numbers are shown immediately while metadata is unavailable"
+        // The end is shown before the summary (the finale); a player who goes on from it gets the
+        // final numbers at once, with no wait for the metadata.
+        client
+            .world_mut()
+            .resource_mut::<crate::finale::Finale>()
+            .skip();
+        client.until(
+            "the final numbers are shown while metadata is unavailable",
+            |c| {
+                c.world()
+                    .non_send::<PostGame>()
+                    .summary()
+                    .is_some_and(|summary| summary.detail == Detail::Stats)
+            },
         );
         client
             .world_mut()
