@@ -28,7 +28,7 @@ use heatel::tooltips::Wanted;
 use heatel::world::{Band, EntityLump, ExportedWorld, WorldOptions, export_world, lighting};
 use heatel::{Error, Model, Resource, Result, Sound, Source, Texture, Vpk};
 
-use crate::catalog::{self, Catalog, ControlPointModel, FileKind, Id, Line, LineError};
+use crate::catalog::{self, Catalog, ControlPointModel, FileKind, Id, Line, LineError, Soften};
 use crate::text::{
     DEFAULT_SOUND_LEVEL, ParticleMaterial, ParticleModel, ParticleModelBinding, ParticleTexture,
     ResolvedEvent, ambient_txt, background_png, buildings_txt, effect_stem, expression_txt,
@@ -52,7 +52,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 51;
+pub const IMPORT_REV: u32 = 52;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -354,11 +354,13 @@ pub enum Item {
         keys: Vec<(String, String)>,
         out: String,
     },
-    /// A texture written as a PNG (the first frame of a sprite sheet, or a PNG copied whole).
+    /// A texture written as a PNG (the first frame of a sprite sheet, or a PNG copied whole),
+    /// softened when the line asks for it.
     Texture {
         logical: String,
         src: String,
         out: String,
+        soften: Option<Soften>,
     },
     /// A particle system and every child under it, as one JSON file (see [`particle_json`]),
     /// their textures as KTX2 under `textures/` beside it.
@@ -547,6 +549,7 @@ impl Plan {
                         logical: f.logical.clone(),
                         src: f.src.clone(),
                         out: f.out.clone(),
+                        soften: f.soften,
                     },
                     FileKind::Particle => Item::Particle {
                         logical: f.logical.clone(),
@@ -1303,6 +1306,7 @@ fn make(
         Item::Texture {
             src: path,
             out: dest,
+            soften,
             ..
         } => {
             // A PNG the install ships as it is (the cursors) is copied whole.
@@ -1317,7 +1321,11 @@ fn make(
                 return out.put_owned(dest, bytes);
             }
             let texture = Texture::parse(&read_any(src, pak, path)?)?;
-            out.put_owned(dest, texture.first_frame_png()?)
+            let png = match soften {
+                Some(soften) => softened_png(&texture, *soften)?,
+                None => texture.first_frame_png()?,
+            };
+            out.put_owned(dest, png)
         }
         Item::Particle {
             src: path,
@@ -2075,6 +2083,17 @@ fn background(src: &impl Source, pak: &Vpk, vmat: &str, out: &mut Out<'_>) -> Re
         .ok_or_else(|| malformed("portraits", "a background material has no image"))?;
     let texture = Texture::parse(&read_from(src, &[pak], &format!("{vtex}_c"))?)?;
     out.put_owned(&background_png(vmat), texture.first_frame_png()?)
+}
+
+/// The PNG of `texture` softened as `soften` says: its whole picture, which is no sprite sheet.
+fn softened_png(texture: &Texture, soften: Soften) -> Result<Vec<u8>> {
+    if texture.first_frame_rect().is_some() {
+        return Err(malformed("texture", "a sprite sheet cannot be softened"));
+    }
+    let mut pixels = texture.to_rgba8()?;
+    let (width, height) = (texture.width(), texture.height());
+    crate::soften::apply(&mut pixels, width as usize, height as usize, soften);
+    Texture::from_rgba8(width, height, pixels)?.to_png()
 }
 
 /// The index of map package `vpk` among `maps`, opened on first use.

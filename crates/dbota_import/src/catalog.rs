@@ -98,6 +98,24 @@ pub enum FileKind {
     Font,
 }
 
+/// How a texture is softened on its way into the cache (`soften=<sigma> [grain=<levels>]`): a
+/// Gaussian blur and a fixed grain over it, made once at import so that no client spends time on
+/// it (see [`crate::soften`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Soften {
+    /// The Gaussian's standard deviation, in the texture's own pixels.
+    pub sigma: f32,
+    /// The grain's amplitude, in levels of 255 either way.
+    pub grain: u8,
+}
+
+impl Soften {
+    /// The widest Gaussian a manifest may ask for: the blur's cost grows with it.
+    pub const MAX_SIGMA: f32 = 8.0;
+    /// The strongest grain a manifest may ask for.
+    pub const MAX_GRAIN: u8 = 16;
+}
+
 /// A line that converts one file of the install into one of the cache.
 #[derive(Clone, Debug, PartialEq)]
 pub struct File {
@@ -108,6 +126,8 @@ pub struct File {
     /// For a particle (`models=<control point>:<vmdl>[,..]`): the model the game's engine binds to
     /// each control point a model renderer reads its model from.
     pub models: Vec<ControlPointModel>,
+    /// Only a texture is softened.
+    pub soften: Option<Soften>,
 }
 
 /// The model bound to a particle control point, and the socket placed at the particle.
@@ -488,6 +508,35 @@ fn control_point_models(text: Option<&str>) -> Result<Vec<ControlPointModel>, St
     Ok(models)
 }
 
+/// The `soften=` and `grain=` of a texture line; `grain=` alone asks for nothing and is refused.
+fn soften_of(fields: &Fields) -> Result<Option<Soften>, String> {
+    let Some(sigma) = fields.float("soften")? else {
+        return match fields.get("grain") {
+            Some(_) => Err("'grain=' needs 'soften='".to_owned()),
+            None => Ok(None),
+        };
+    };
+    if !(sigma > 0.0 && sigma <= Soften::MAX_SIGMA) {
+        return Err(format!(
+            "'soften={sigma}' is not in 0 to {}",
+            Soften::MAX_SIGMA
+        ));
+    }
+    let grain = match fields.get("grain") {
+        None => 0,
+        Some(text) => match text.parse::<u8>() {
+            Ok(levels) if levels <= Soften::MAX_GRAIN => levels,
+            _ => {
+                return Err(format!(
+                    "'grain={text}' is not a whole number up to {}",
+                    Soften::MAX_GRAIN
+                ));
+            }
+        },
+    };
+    Ok(Some(Soften { sigma, grain }))
+}
+
 fn number(what: &str, text: &str) -> Result<f64, String> {
     text.parse::<f64>()
         .ok()
@@ -538,15 +587,14 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
             }))
         }
         "texture" | "particle" | "expression" | "phonemes" | "font" => {
-            let f = Fields::of(
-                rest,
-                if *kind == "particle" {
-                    &["models"]
-                } else {
-                    &[]
-                },
-            )?;
+            let allowed: &[&str] = match *kind {
+                "particle" => &["models"],
+                "texture" => &["soften", "grain"],
+                _ => &[],
+            };
+            let f = Fields::of(rest, allowed)?;
             let [logical, src, out] = f.exactly::<3>(kind)?;
+            let soften = soften_of(&f)?;
             let kind = match *kind {
                 "texture" => FileKind::Texture,
                 "particle" => FileKind::Particle,
@@ -560,6 +608,7 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
                 src: own(src),
                 out: own(out),
                 models: control_point_models(f.get("models"))?,
+                soften,
             }))
         }
         "sound" => {
@@ -1000,6 +1049,26 @@ mod tests {
                 "no field 'heard='",
             ),
             ("shop s s.txt s.json\n", "no 'strings='"),
+            (
+                "texture a a.vtex_c a.png grain=2\n",
+                "'grain=' needs 'soften='",
+            ),
+            (
+                "texture a a.vtex_c a.png soften=9\n",
+                "'soften=9' is not in 0 to 8",
+            ),
+            (
+                "texture a a.vtex_c a.png soften=NaN\n",
+                "soften: 'NaN' is no number",
+            ),
+            (
+                "texture a a.vtex_c a.png soften=1 grain=99\n",
+                "'grain=99' is not a whole number up to 16",
+            ),
+            (
+                "particle p p.vpcf_c p.json soften=1\n",
+                "no field 'soften='",
+            ),
             ("clip nobody idle idle 1.0\n", "no model nobody"),
             (
                 "state item.bottle mode=wisdom icon=icon.item.bottle\n",

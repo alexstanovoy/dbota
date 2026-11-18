@@ -77,7 +77,6 @@ pub fn plugin(app: &mut App) {
     );
     super::hero_stage::plugin(app);
     super::hero_turn::plugin(app);
-    super::backdrop::plugin(app);
     super::preview::plugin(app);
     app.init_resource::<super::lobby_scroll::Positions>()
         .init_resource::<GameEpoch>()

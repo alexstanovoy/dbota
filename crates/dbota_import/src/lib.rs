@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod import;
 pub mod index;
 pub mod pack;
+pub mod soften;
 pub mod source;
 pub mod text;
 #[cfg(any(unix, windows))]

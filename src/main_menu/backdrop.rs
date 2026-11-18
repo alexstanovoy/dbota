@@ -5,10 +5,8 @@
 //! radiant` / `_dire`); until dbota renders that, the menu shows the still art the install has of
 //! the side's Ancient. [`Backdrop`] is where the scene takes over.
 
-use bevy::image::{ImageSampler, ImageSamplerDescriptor};
-use bevy::platform::collections::HashSet;
+use bevy::image::{ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
-use bevy::render::render_resource::TextureFormat;
 
 use super::kit::Kit;
 use super::view::Side;
@@ -29,127 +27,17 @@ impl Backdrop {
     }
 }
 
-/// How far the still's painting is softened on purpose, in its own pixels (the standard deviation
-/// of a Gaussian). The install holds the Ancient's painting at 2048 by 1024, block-compressed, which
-/// a 4K window magnifies two times over: unsoftened, its compression blocks show as a pixel grid.
-/// Softened, it reads as depth of field behind the hero and the panels, at any window size.
-const SOFTNESS: f32 = 1.4;
-/// The grain laid over the softened picture, in levels of 255 either way: it keeps the dark
-/// gradients (the darkening over them as well) from banding.
-const GRAIN: i32 = 2;
-
-/// Marks the backdrop's picture: its image is softened once it has loaded (see [`SOFTNESS`]).
+/// Marks the backdrop's picture.
 #[derive(Component)]
-pub struct Soft;
+pub struct Painting;
 
-/// The images already softened: an image is changed in place, once, however often the page that
-/// shows it is drawn.
-#[derive(Resource, Default)]
-pub struct Softened(HashSet<AssetId<Image>>);
-
-impl Softened {
-    pub fn has(&self, image: AssetId<Image>) -> bool {
-        self.0.contains(&image)
-    }
-}
-
-pub fn plugin(app: &mut App) {
-    app.init_resource::<Softened>().add_systems(Update, soften);
-}
-
-fn soften(
-    pictures: Query<&ImageNode, With<Soft>>,
-    mut images: ResMut<Assets<Image>>,
-    mut done: ResMut<Softened>,
-) {
-    for picture in &pictures {
-        let id = picture.image.id();
-        if done.has(id) {
-            continue;
-        }
-        let Some(mut image) = images.get_mut(id) else {
-            continue;
-        };
-        // Sampled linearly whatever the engine's default: a nearest sampler would show the
-        // painting's every pixel.
-        image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
-        blur(&mut image, SOFTNESS, GRAIN);
-        done.0.insert(id);
-    }
-}
-
-/// Blurs an 8-bit RGBA image by a Gaussian of `sigma` pixels (edges repeat) and lays `grain`
-/// levels of fixed noise over its colour. Anything else is left as it is.
-fn blur(image: &mut Image, sigma: f32, grain: i32) {
-    if !matches!(
-        image.texture_descriptor.format,
-        TextureFormat::Rgba8UnormSrgb | TextureFormat::Rgba8Unorm
-    ) {
-        return;
-    }
-    let (width, height) = (
-        image.texture_descriptor.size.width as usize,
-        image.texture_descriptor.size.height as usize,
-    );
-    let Some(data) = image
-        .data
-        .as_mut()
-        .filter(|d| d.len() == width * height * 4)
-    else {
-        return;
-    };
-    let radius = (sigma * 3.0).ceil() as i32;
-    let mut kernel: Vec<f32> = (-radius..=radius)
-        .map(|at| (-((at * at) as f32) / (2.0 * sigma * sigma)).exp())
-        .collect();
-    let total: f32 = kernel.iter().sum();
-    kernel.iter_mut().for_each(|weight| *weight /= total);
-    let mut across = vec![0.0_f32; data.len()];
-    for y in 0..height {
-        for x in 0..width {
-            for channel in 0..4 {
-                let sum: f32 = kernel
-                    .iter()
-                    .zip(-radius..=radius)
-                    .map(|(weight, at)| {
-                        let sx = (x as i32 + at).clamp(0, width as i32 - 1) as usize;
-                        weight * f32::from(data[(y * width + sx) * 4 + channel])
-                    })
-                    .sum();
-                across[(y * width + x) * 4 + channel] = sum;
-            }
-        }
-    }
-    for y in 0..height {
-        for x in 0..width {
-            for channel in 0..4 {
-                let sum: f32 = kernel
-                    .iter()
-                    .zip(-radius..=radius)
-                    .map(|(weight, at)| {
-                        let sy = (y as i32 + at).clamp(0, height as i32 - 1) as usize;
-                        weight * across[(sy * width + x) * 4 + channel]
-                    })
-                    .sum();
-                let at = (y * width + x) * 4 + channel;
-                let noise = if channel < 3 {
-                    grain_at(x, y) * grain
-                } else {
-                    0
-                };
-                data[at] = (sum.round() as i32 + noise).clamp(0, 255) as u8;
-            }
-        }
-    }
-}
-
-/// Fixed noise of a pixel, -1, 0 or 1: the same picture every run (no random seed to log).
-fn grain_at(x: usize, y: usize) -> i32 {
-    let mut hash = (x as u32).wrapping_mul(0x9E37_79B1) ^ (y as u32).wrapping_mul(0x85EB_CA6B);
-    hash ^= hash >> 15;
-    hash = hash.wrapping_mul(0x2C1B_3C6D);
-    hash ^= hash >> 12;
-    (hash % 3) as i32 - 1
+/// The install holds the Ancient's painting at 2048 by 1024, block-compressed, which a 4K window
+/// magnifies two times over: unsoftened, its compression blocks would show as a pixel grid. The
+/// importer softens it once, into the cache (`soften=` of the manifest's lines), so that no
+/// client does any work on it; what is left here is to sample it linearly, by name, whatever the
+/// engine's default is.
+fn sampled_linearly(settings: &mut ImageLoaderSettings) {
+    settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
 }
 
 /// The darkening over the background, left to right and top to bottom: `(alpha, at %)`, the
@@ -190,8 +78,24 @@ pub fn draw(kit: &mut Kit, root: Entity, backdrop: Backdrop, top: f32) {
         Side::Radiant => "menu.background.radiant",
         Side::Dire => "menu.background.dire",
     };
-    let picture = kit.art(area, art, crate::ui::fill());
-    kit.commands.entity(picture).insert((Cover, Soft));
+    let image = match kit.manifest.file(art) {
+        Some(path) => ImageNode::new(
+            kit.server
+                .load_builder()
+                .with_settings(sampled_linearly)
+                .load(path),
+        ),
+        None => ImageNode::default().with_color(Color::NONE),
+    };
+    kit.commands.spawn((
+        crate::ui::fill(),
+        image,
+        BackgroundColor(Color::NONE),
+        Pickable::IGNORE,
+        ChildOf(area),
+        Cover,
+        Painting,
+    ));
     for (stops, across) in [(&ACROSS[..], true), (&DOWN[..], false)] {
         let stops = stops
             .iter()
@@ -210,54 +114,5 @@ pub fn draw(kit: &mut Kit, root: Entity, backdrop: Backdrop, top: f32) {
             Pickable::IGNORE,
             ChildOf(area),
         ));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bevy::asset::RenderAssetUsages;
-    use bevy::render::render_resource::{Extent3d, TextureDimension};
-
-    /// The largest step between neighbouring pixels of the first colour channel.
-    fn sharpest_step(image: &Image) -> i32 {
-        let data = image.data.as_ref().expect("pixels");
-        let width = image.texture_descriptor.size.width as usize;
-        (0..data.len() / 4 - 1)
-            .filter(|at| (at + 1) % width != 0)
-            .map(|at| (i32::from(data[at * 4]) - i32::from(data[(at + 1) * 4])).abs())
-            .max()
-            .expect("pixels")
-    }
-
-    /// A checkerboard of the compression's blocks is softened to a gentle ramp, grain included.
-    #[test]
-    fn softening_turns_the_hard_edges_of_blocks_into_gentle_steps() {
-        let size = 16;
-        let data: Vec<u8> = (0..size * size)
-            .flat_map(|at| {
-                let on = (at % size / 4 + at / size / 4) % 2 == 0;
-                let level = if on { 200 } else { 40 };
-                [level, level, level, 255]
-            })
-            .collect();
-        let mut image = Image::new(
-            Extent3d {
-                width: size as u32,
-                height: size as u32,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            data,
-            TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::default(),
-        );
-        assert_eq!(sharpest_step(&image), 160, "hard edges before");
-        blur(&mut image, SOFTNESS, GRAIN);
-        assert!(
-            sharpest_step(&image) < 80,
-            "no edge keeps more than half its step: {}",
-            sharpest_step(&image)
-        );
     }
 }

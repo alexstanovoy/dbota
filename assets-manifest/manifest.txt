@@ -34,7 +34,10 @@
 #   shop    <logical> <vpk scripts/shops.txt> <out .json> strings=<localization .txt>
 #           the shop's categories and the items each lists, in Dota's order, and the shop's words
 #           (category, tab and button names) out of the localization. Written by the Rust importer only.
-#   texture <logical> <vpk .vtex_c> <out .png>
+#   texture <logical> <vpk .vtex_c> <out .png> [soften=<sigma pixels, up to 8> [grain=<levels, up to 16>]]
+#           soften= blurs the picture by a Gaussian of that many pixels, grain= lays fixed noise of that
+#           amplitude over its colour (a texture that is no sprite sheet; made once here, so a client
+#           spends nothing on it).
 #   font    <logical> <loose file under game/dota: panorama/fonts/x.otf> <out .otf>
 #           a typeface the install keeps beside its packages, copied whole once it reads as one.
 #   particle <logical> <vpk .vpcf_c> <out .json> [models=<control point>:<vpk .vmdl>[@<attachment>][,...]]
@@ -1011,13 +1014,16 @@ texture hud.menu_scoreboard panorama/images/control_icons/hamburger_png.vtex_c h
 # The dashboard's way back to a game (#DOTAReturnToGameButton), on the HUD's menu.
 texture menu.return_to_game panorama/images/control_icons/return_to_game_png.vtex_c hud/return_to_game_png.png
 # The main menu: the top bar's Dota logo, settings cog and quit button, a window's close cross,
-# and the main menu's background for each side (the Radiant or Dire Ancient's art).
+# and the main menu's background for each side (the Radiant or Dire Ancient's art). The install holds
+# that painting at 2048 by 1024, block-compressed, which a 4K window magnifies two times over, so its
+# compression blocks would show as a pixel grid: it is softened on purpose, once, at import (a
+# Gaussian of 1.4 pixels and a grain of 2 levels over it, which keeps the dark gradients from banding).
 texture menu.logo panorama/images/topbar/dota_logo_simple_psd.vtex_c menu/dota_logo_simple_psd.png
 texture menu.gear panorama/images/control_icons/gear_png.vtex_c menu/gear_png.png
 texture menu.quit panorama/images/control_icons/quit_png.vtex_c menu/quit_png.png
 texture menu.window_close panorama/images/control_icons/x_close_png.vtex_c menu/x_close_png.png
-texture menu.background.radiant panorama/images/loadingscreens/radiantancient_loadingscreen/loadingscreen_tga.vtex_c menu/radiantancient_loadingscreen.png
-texture menu.background.dire panorama/images/loadingscreens/direancient_loadingscreen/loadingscreen_tga.vtex_c menu/direancient_loadingscreen.png
+texture menu.background.radiant panorama/images/loadingscreens/radiantancient_loadingscreen/loadingscreen_tga.vtex_c menu/radiantancient_loadingscreen.png soften=1.4 grain=2
+texture menu.background.dire panorama/images/loadingscreens/direancient_loadingscreen/loadingscreen_tga.vtex_c menu/direancient_loadingscreen.png soften=1.4 grain=2
 texture menu.postgame.radiant panorama/images/backgrounds/postgameherobackground_psd.vtex_c menu/postgame_radiant.png
 texture menu.postgame.dire panorama/images/backgrounds/postgameherobackground_dire_psd.vtex_c menu/postgame_dire.png
 # The interface's typefaces, loose files beside the packages: Reaver for titles, Radiance for the

@@ -47,8 +47,11 @@ fn manifest_textures() -> Vec<(String, String)> {
         .filter_map(|line| {
             let words: Vec<&str> = line.split('#').next()?.split_whitespace().collect();
             match words.as_slice() {
-                // A source that is a PNG is copied as it is: no compiled texture to compare.
-                ["texture", _, src, out, ..] if !src.ends_with(".png") => {
+                // A source that is a PNG is copied as it is: no compiled texture to compare. A
+                // softened one is no longer what the decoder reads.
+                ["texture", _, src, out, rest @ ..]
+                    if !src.ends_with(".png") && !rest.iter().any(|w| w.starts_with("soften=")) =>
+                {
                     Some(((*src).to_owned(), (*out).to_owned()))
                 }
                 _ => None,

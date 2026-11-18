@@ -988,3 +988,95 @@ fn the_manifests_soundscape_omissions_reach_the_importers_plan() {
         ]]
     );
 }
+
+/// A `vtex_c` of one RGBA8 level, as the game's compiler lays it out (a resource of its `DATA`
+/// block, then the level).
+fn rgba8_vtex(side: u16, pixels: &[u8]) -> Vec<u8> {
+    let words =
+        |values: &[u32]| -> Vec<u8> { values.iter().flat_map(|v| v.to_le_bytes()).collect() };
+    let mut data = Vec::new();
+    data.extend_from_slice(&1u16.to_le_bytes());
+    data.extend_from_slice(&0u16.to_le_bytes());
+    data.extend_from_slice(&[0; 16]);
+    for v in [side, side, 1] {
+        data.extend_from_slice(&v.to_le_bytes());
+    }
+    // The RGBA8 format id and one level, then the extra data: no entries.
+    data.extend_from_slice(&[4, 1]);
+    data.extend_from_slice(&words(&[0, 8, 0]));
+    let table_end = 16 + 12;
+    let file_size = table_end + data.len();
+    let mut out = words(&[file_size as u32]);
+    out.extend_from_slice(&12u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&words(&[8, 1]));
+    let field = out.len() + 4;
+    out.extend_from_slice(b"DATA");
+    out.extend_from_slice(&words(&[(table_end - field) as u32, data.len() as u32]));
+    out.extend_from_slice(&data);
+    out.extend_from_slice(pixels);
+    out
+}
+
+/// The RGBA8 pixels of a PNG file.
+fn png_pixels(file: &[u8]) -> Vec<u8> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(file));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().expect("a PNG");
+    let mut pixels = vec![0; reader.output_buffer_size().expect("a bounded PNG")];
+    let info = reader.next_frame(&mut pixels).expect("a frame");
+    assert_eq!(info.color_type, png::ColorType::Rgba);
+    pixels.truncate(info.buffer_size());
+    pixels
+}
+
+/// A texture line that asks for `soften=` is written softened, the same painting without it as it
+/// is.
+#[test]
+fn a_texture_line_that_softens_writes_the_painting_softened_and_one_that_does_not_writes_it_plain()
+{
+    let side = 16usize;
+    let blocks: Vec<u8> = (0..side * side)
+        .flat_map(|at| {
+            let on = (at % side / 4 + at / side / 4).is_multiple_of(2);
+            let level = if on { 200 } else { 40 };
+            [level, level, level, 255]
+        })
+        .collect();
+    let src = install(&[(
+        "pak01_dir.vpk",
+        package("textures", "t", "vtex_c", &rgba8_vtex(side as u16, &blocks)),
+    )]);
+    let plan = Plan::parse(
+        "texture plain textures/t.vtex_c out/plain.png\n\
+         texture soft textures/t.vtex_c out/soft.png soften=1.4 grain=2\n",
+        "",
+    )
+    .expect("a plan");
+    let plan = Plan {
+        items: plan
+            .items
+            .into_iter()
+            .filter(|i| matches!(i, Item::Texture { .. }))
+            .collect(),
+    };
+    let mut sink = Memory::default();
+    let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).unwrap();
+    assert!(report.failed.is_empty(), "{report:?}");
+    let sharpest = |pixels: &[u8]| {
+        (0..pixels.len() / 4 - 1)
+            .filter(|at| (at + 1) % side != 0)
+            .map(|at| (i32::from(pixels[at * 4]) - i32::from(pixels[(at + 1) * 4])).abs())
+            .max()
+            .expect("pixels")
+    };
+    let plain = png_pixels(&sink.0["out/plain.png"]);
+    let soft = png_pixels(&sink.0["out/soft.png"]);
+    assert_eq!(plain, blocks, "without soften= the painting is as it is");
+    assert_eq!(sharpest(&plain), 160, "hard edges without soften=");
+    assert!(
+        sharpest(&soft) < 80,
+        "with soften= no edge keeps more than half its step: {}",
+        sharpest(&soft)
+    );
+}
