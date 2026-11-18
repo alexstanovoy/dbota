@@ -7,7 +7,10 @@ use bevy::prelude::*;
 
 use super::core::Act;
 use super::kit::{Kit, Tone};
-use super::view::{ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, SearchRow, WaitRow};
+use super::view::{
+    ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, ReplayRow, ReplayShelf, SearchRow,
+    WaitRow,
+};
 use crate::theme;
 use crate::ui;
 
@@ -285,16 +288,30 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
     }
 }
 
+/// What MY GAMES lists.
+pub struct Lists<'a> {
+    pub games: &'a [GameRow],
+    pub finished: &'a [FinishedRow],
+    pub kept: &'a [ReplayRow],
+    pub shelf: &'a ReplayShelf,
+}
+
 /// MY GAMES: every unfinished match of the account with Rejoin and Watch,
-/// every search with Cancel, and the cooldown.
+/// every search with Cancel, the finished matches, every replay this client keeps that those
+/// do not lead to (with Watch and Delete), and the cooldown.
 pub fn my_games(
     kit: &mut Kit,
     body: Entity,
     view: &MenuView,
-    games: &[GameRow],
-    finished: &[FinishedRow],
+    lists: Lists,
     cooldown: Option<&str>,
 ) {
+    let Lists {
+        games,
+        finished,
+        kept,
+        shelf,
+    } = lists;
     let column = kit.node(
         body,
         Node {
@@ -308,7 +325,11 @@ pub fn my_games(
     if games.is_empty() && view.searches.is_empty() && view.waits.is_empty() {
         kit.text(
             column,
-            "Nothing going: find a match under PLAY.",
+            if view.account.is_some() {
+                "Nothing going: find a match under PLAY."
+            } else {
+                "Sign in to see the matches of an account."
+            },
             16.0,
             theme::INK_4,
         );
@@ -425,9 +446,178 @@ pub fn my_games(
             );
         }
     }
+    kept_replays(kit, column, kept, shelf);
     if let Some(cooldown) = cooldown {
         kit.text(column, cooldown, 15.0, theme::ERROR_TEXT);
     }
+}
+
+/// The replays this client keeps that no finished match leads to: where they are kept, and one
+/// row for each with what is known of it.
+fn kept_replays(kit: &mut Kit, column: Entity, kept: &[ReplayRow], shelf: &ReplayShelf) {
+    let (note, colour) = if !shelf.store {
+        (
+            "This browser keeps no replays for the page.".to_owned(),
+            theme::GOLD,
+        )
+    } else if !shelf.keeping {
+        (
+            "Saving replays is off (SETTINGS, Options, REPLAYS): the ones below were kept before."
+                .to_owned(),
+            theme::GOLD,
+        )
+    } else if shelf.folder.is_empty() {
+        (
+            "The replays of your matches are kept in this browser, within the limits of SETTINGS, Options, REPLAYS.".to_owned(),
+            theme::INK_4,
+        )
+    } else {
+        (
+            format!(
+                "The replays of your matches are kept in {}, within the limits of SETTINGS, Options, REPLAYS.",
+                shelf.folder
+            ),
+            theme::INK_4,
+        )
+    };
+    kit.bold(column, "KEPT REPLAYS", 20.0, theme::INK_1);
+    kit.text(column, note, 13.0, colour);
+    if shelf.service_keeps_none {
+        kit.text(
+            column,
+            "The matchmaking service keeps no replays of its matches, so none of them is saved here; local games still are.",
+            13.0,
+            theme::GOLD,
+        );
+    }
+    if kept.is_empty() {
+        kit.text(column, "No other replays are kept.", 16.0, theme::INK_4);
+    }
+    for replay in kept {
+        replay_row(kit, column, replay);
+    }
+}
+
+/// What a replay's row says of where it was played.
+fn mode_label(mode: &str) -> String {
+    match mode {
+        "local" => "Local lobby".to_owned(),
+        "demo" => "Demo Hero".to_owned(),
+        "file" => "Replay file".to_owned(),
+        ruleset => format!("Online match · {ruleset}"),
+    }
+}
+
+fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
+    let row = kit.panel(
+        column,
+        Node {
+            padding: UiRect::all(px(10)),
+            column_gap: px(12),
+            align_items: AlignItems::Center,
+            ..default()
+        },
+    );
+    let label = kit.node(
+        row,
+        Node {
+            flex_grow: 1.0,
+            min_width: px(0),
+            width: px(0),
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+    );
+    use super::replay_info::Summary;
+    let known = |sides: &str| {
+        if sides.is_empty() {
+            mode_label(&replay.mode)
+        } else {
+            sides.to_owned()
+        }
+    };
+    let (headline, line, colour) = match &replay.summary {
+        Summary::Read { sides, outcome, .. } if outcome.is_empty() => (
+            known(&sides.text(kit.texts)),
+            replay.when.clone(),
+            theme::INK_4,
+        ),
+        Summary::Read { sides, outcome, .. } => (
+            known(&sides.text(kit.texts)),
+            format!("{}  ·  {outcome}", replay.when),
+            theme::INK_4,
+        ),
+        Summary::Reading => (
+            mode_label(&replay.mode),
+            format!("{}  ·  reading…", replay.when),
+            theme::INK_4,
+        ),
+        Summary::Broken(why) => (
+            mode_label(&replay.mode),
+            format!("{}  ·  cannot be watched: {why}", replay.when),
+            theme::ERROR_TEXT,
+        ),
+    };
+    if let Summary::Read {
+        identities, sides, ..
+    } = &replay.summary
+        && !identities.is_empty()
+    {
+        for identity in identities.iter().take(bota_proto::limits::MAX_SEATS) {
+            kit.player_name(
+                label,
+                &identity.name,
+                identity.version.as_deref(),
+                theme::Type {
+                    size: 16.0,
+                    face: theme::Face::Bold,
+                    ..theme::BODY
+                },
+                theme::INK_1,
+            );
+        }
+        let heroes = sides.heroes_text(kit.texts);
+        if !heroes.is_empty() {
+            kit.text(label, heroes, 13.0, theme::INK_3);
+        }
+    } else {
+        kit.bold(label, headline, 16.0, theme::INK_1);
+    }
+    kit.text(label, line, 13.0, colour);
+    kit.text(
+        label,
+        format!(
+            "{}  ·  {}  ·  {}",
+            mode_label(&replay.mode),
+            replay.name,
+            replay.size
+        ),
+        12.0,
+        theme::INK_4,
+    );
+    let name = &replay.name;
+    if !matches!(replay.summary, Summary::Broken(_)) {
+        let watch = kit.button(
+            row,
+            "WATCH",
+            Act::OpenReplay(name.clone()),
+            Tone::Secondary,
+            34.0,
+        );
+        kit.commands
+            .entity(watch)
+            .insert(Name::new(format!("watch {name}")));
+    }
+    let delete = kit.button(
+        row,
+        "DELETE",
+        Act::DeleteReplay(name.clone()),
+        Tone::Danger,
+        34.0,
+    );
+    kit.commands
+        .entity(delete)
+        .insert(Name::new(format!("delete {name}")));
 }
 
 fn offer_card(kit: &mut Kit, root: Entity) -> Entity {

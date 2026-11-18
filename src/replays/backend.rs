@@ -72,10 +72,6 @@ pub trait Backend {
     }
 
     /// The folder replays are kept in, where they are files.
-    #[cfg_attr(
-        target_arch = "wasm32",
-        allow(dead_code, reason = "a browser keeps replays in no folder")
-    )]
     fn dir(&self) -> Option<std::path::PathBuf> {
         None
     }

@@ -518,6 +518,74 @@ impl MenuCore {
             .cloned();
         self.queue_fetch(match_id, result, true);
     }
+
+    /// Opens the replay listed under `name`.
+    pub(super) fn open_listed(&mut self, name: &str) {
+        let Some(record) = self
+            .library
+            .records()
+            .iter()
+            .find(|r| r.name == name)
+            .cloned()
+        else {
+            return;
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        if let super::replay_info::Summary::Broken(why) = self.summary_of(&record) {
+            self.tell(format!("That replay cannot be watched: {why}"), true);
+            return;
+        }
+        self.open_kept(&record.name);
+    }
+
+    /// MY GAMES lists the replays kept: what is not known of them is read.
+    pub(super) fn read_summaries(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        for record in self.library.records() {
+            if record.players.is_empty()
+                && self.local_history.identities(&record.name).is_empty()
+                && let Some(path) = self.library.path(&record.name)
+            {
+                self.shelf.summary(&path, stamp_of(record));
+            }
+        }
+    }
+
+    /// The summary of a listed replay.
+    pub(super) fn summary_of(&self, record: &replays::Record) -> super::replay_info::Summary {
+        use super::replay_info::Summary;
+        let identities = self.local_history.identities(&record.name);
+        if !record.players.is_empty() || !identities.is_empty() {
+            let sides = if record.players.is_empty() {
+                super::replay_info::Sides::of_heroes(self.local_history.heroes(&record.name))
+            } else {
+                record.players.clone().into()
+            };
+            return Summary::Read {
+                identities,
+                sides,
+                outcome: record.outcome.clone(),
+            };
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = self.library.path(&record.name) {
+            return self.shelf.peek(&path, stamp_of(record));
+        }
+        Summary::Read {
+            identities: Vec::new(),
+            sides: String::new().into(),
+            outcome: record.outcome.clone(),
+        }
+    }
+}
+
+/// The identity of a listed file, which a change of reads anew.
+#[cfg(not(target_arch = "wasm32"))]
+fn stamp_of(record: &replays::Record) -> super::replay_info::Stamp {
+    super::replay_info::Stamp {
+        len: record.bytes,
+        modified: std::time::UNIX_EPOCH + std::time::Duration::from_secs(record.when),
+    }
 }
 
 /// Who played and how it ended, as the match's result tells it. The names carry no version: the

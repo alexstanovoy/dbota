@@ -610,6 +610,83 @@ fn a_hero_page_without_a_demo_shows_a_dimmed_button_and_says_why() {
     }
 }
 
+/// The cards of the Demo Hero page.
+fn demo_cards(client: &mut Client) -> Vec<Entity> {
+    let world = client.world_mut();
+    world
+        .query_filtered::<(Entity, &Name, &InheritedVisibility), With<Button>>()
+        .iter(world)
+        .filter(|(_, name, seen)| {
+            seen.get() && name.starts_with("demo ") && name.as_str() != "demo hero tab"
+        })
+        .map(|(entity, ..)| entity)
+        .collect()
+}
+
+/// The Demo Hero page lays a roster longer than a row in rows of its own: its cards stay inside
+/// the window and the rest go below instead of running off its edge.
+#[test]
+fn the_demo_hero_page_wraps_a_roster_longer_than_a_row_instead_of_running_off_the_window() {
+    let mut client = Client::run(&["--menu-preview", "demo-hero-many"]);
+    client.until("the cards drawn", |c| demo_cards(c).len() == 8);
+    client.frames(3);
+    let width = {
+        let world = client.world_mut();
+        world
+            .query_filtered::<&Window, With<PrimaryWindow>>()
+            .single(world)
+            .expect("the window")
+            .physical_width() as f32
+    };
+    let cards: Vec<Rect> = demo_cards(&mut client)
+        .into_iter()
+        .map(|card| rect(&client, card))
+        .collect();
+    let rows = cards.iter().fold(Vec::<f32>::new(), |mut rows, card| {
+        if !rows.iter().any(|top| (top - card.min.y).abs() < 1.0) {
+            rows.push(card.min.y);
+        }
+        rows
+    });
+    assert!(rows.len() >= 2, "the cards wrap into rows: {cards:?}");
+    assert!(
+        cards
+            .iter()
+            .all(|card| card.min.x >= 0.0 && card.max.x <= width),
+        "every card stays inside the window ({width}): {cards:?}"
+    );
+}
+
+/// The hero page lights its hero from above as well as from the sides, so that its back is not
+/// black while it turns.
+#[test]
+fn the_hero_page_lights_its_hero_from_above_as_well_as_from_the_sides() {
+    use crate::main_menu::hero_stage::HeroLight;
+    let from_above = |client: &mut Client| {
+        let world = client.world_mut();
+        world
+            .query_filtered::<&GlobalTransform, (With<HeroLight>, With<DirectionalLight>)>()
+            .iter(world)
+            .filter(|at| at.forward().y < -0.95)
+            .count()
+    };
+    let lights = |client: &mut Client| {
+        let world = client.world_mut();
+        world
+            .query_filtered::<(), (With<HeroLight>, With<DirectionalLight>)>()
+            .iter(world)
+            .count()
+    };
+    let mut page = hero_page();
+    page.until("the hero standing on the stage", |c| {
+        let stage = c.world().resource::<HeroStage>();
+        stage.hero == Some(HERO) && stage.ready()
+    });
+    page.frames(3);
+    assert_eq!(lights(&mut page), 3, "the hero page: front, back and top");
+    assert_eq!(from_above(&mut page), 1, "one of them stands over the hero");
+}
+
 /// A desktop always has a Demo Hero (the service's, else a game of its own); a browser has the
 /// service's for a signed-in player and says what is missing otherwise.
 #[test]

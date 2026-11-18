@@ -381,6 +381,29 @@ impl Archive {
         }
     }
 
+    pub fn identities(&self, file: &str) -> Vec<bota_proto::SeatIdentity> {
+        self.entries
+            .iter()
+            .find(|entry| entry.file.as_deref() == Some(file))
+            .map_or_else(Vec::new, |entry| entry.card(&[]).players)
+    }
+
+    /// The side and hero of every seat of the match recorded in `file`, where its metadata was
+    /// read.
+    pub fn heroes(&self, file: &str) -> Vec<(bota_proto::Team, bota_proto::HeroId)> {
+        self.entries
+            .iter()
+            .find(|entry| entry.file.as_deref() == Some(file))
+            .and_then(|entry| entry.summary.as_ref())
+            .map_or_else(Vec::new, |summary| {
+                summary
+                    .rows
+                    .iter()
+                    .map(|row| (row.team, row.hero))
+                    .collect()
+            })
+    }
+
     pub fn cards(&self, records: &[Record]) -> Arc<Vec<Match>> {
         let mut cache = self.cards.borrow_mut();
         if cache.revision != self.revision || cache.records != records {

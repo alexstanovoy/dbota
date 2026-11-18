@@ -263,6 +263,33 @@ pub struct ResultView {
     pub seats: Vec<SeatRow>,
 }
 
+/// A replay this client keeps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayRow {
+    /// Its file name, which the buttons of its row name it by.
+    pub name: String,
+    pub size: String,
+    /// When it was played.
+    pub when: String,
+    /// Where it was played: a ruleset's id, `local`, `demo`, `file`.
+    pub mode: String,
+    /// Who played what and how it ended, as far as known.
+    pub summary: super::replay_info::Summary,
+}
+
+/// What MY GAMES says of the place replays are kept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayShelf {
+    /// The folder, on a desktop; empty in a browser, which keeps them in its own storage.
+    pub folder: String,
+    /// Whether replays are kept at all now (the setting, and a store to keep them in).
+    pub keeping: bool,
+    /// Whether there is a store to keep them in.
+    pub store: bool,
+    /// The service said it keeps no replays of its matches, so none of them is fetched.
+    pub service_keeps_none: bool,
+}
+
 /// The page under the top bar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageView {
@@ -302,6 +329,10 @@ pub enum PageView {
         games: Vec<GameRow>,
         /// The account's latest finished matches, newest first.
         finished: Vec<FinishedRow>,
+        /// The replays this client keeps that no finished match above leads to, newest first:
+        /// a local game, a Demo Hero, a file, a match the service no longer lists.
+        kept: Vec<ReplayRow>,
+        shelf: ReplayShelf,
         cooldown: Option<String>,
     },
     /// Ratings per ruleset and the ladder's head.
@@ -607,6 +638,8 @@ impl MenuCore {
                     .map(|g| game_row(g.match_id, g.handoff.is_some()))
                     .collect(),
                 finished: self.history.iter().map(|r| self.finished_row(r)).collect(),
+                kept: self.kept_rows(),
+                shelf: self.replay_shelf(),
                 cooldown: self.cooldown(),
             },
             Page::Profile => self.profile_view(),
@@ -736,8 +769,48 @@ impl MenuCore {
             headline: view.headline,
             won: view.won,
             detail: view.detail,
-            // A match that ran leaves a replay, a lost one too; one nobody came to leaves none.
-            replay: result.reason != EndReason::Abandoned && !self.service_keeps_none(),
+            // A match that ran leaves a replay, a lost one too; one nobody came to leaves none
+            // (unless this client kept a file of it anyway).
+            replay: self.library.kept(result.match_id.0).is_some()
+                || (result.reason != EndReason::Abandoned && !self.service_keeps_none()),
+        }
+    }
+
+    /// The replays this client keeps that no finished row of MY GAMES leads to.
+    fn kept_rows(&self) -> Vec<ReplayRow> {
+        self.library
+            .records()
+            .iter()
+            .filter(|r| {
+                !self
+                    .history
+                    .iter()
+                    .any(|result| Some(result.match_id.0) == r.match_id)
+            })
+            .map(|r| ReplayRow {
+                name: r.name.clone(),
+                size: if r.bytes < 1_000_000 {
+                    format!("{} KB", r.bytes.div_ceil(1000))
+                } else {
+                    format!("{:.1} MB", r.bytes as f64 / 1e6)
+                },
+                when: super::results::when(r.when),
+                mode: r.mode.clone(),
+                summary: self.summary_of(r),
+            })
+            .collect()
+    }
+
+    fn replay_shelf(&self) -> ReplayShelf {
+        ReplayShelf {
+            folder: self
+                .library
+                .dir()
+                .map(|d| text::line(&d.display().to_string(), text::MESSAGE))
+                .unwrap_or_default(),
+            keeping: self.library.keeping(),
+            store: self.library.standing() != crate::replays::Standing::Unavailable,
+            service_keeps_none: self.service_keeps_none(),
         }
     }
 

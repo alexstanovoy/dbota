@@ -2288,11 +2288,10 @@ fn a_profile_keeps_its_match_list_in_the_profile_instead_of_linking_to_replay_im
 }
 
 #[test]
-fn match_history_offers_no_file_import_controls() {
+fn match_history_and_the_kept_replays_offer_no_file_import_controls() {
     use bevy::prelude::*;
     let mut client = local_menu();
-    {
-        let page = Page::MatchHistory;
+    for page in [Page::MyGames, Page::MatchHistory] {
         act(&mut client, Act::Go(page));
         let words = client.shown_texts();
         assert!(

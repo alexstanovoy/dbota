@@ -77,11 +77,7 @@ impl Page {
     pub fn needs_account(self) -> bool {
         matches!(
             self,
-            Page::MyGames
-                | Page::Lobbies
-                | Page::Lobby
-                | Page::Leaderboard
-                | Page::PlayerProfile(_)
+            Page::Lobbies | Page::Lobby | Page::Leaderboard | Page::PlayerProfile(_)
         )
     }
 }
@@ -181,6 +177,10 @@ pub enum Act {
     /// Starts Dota's Demo Hero with a hero: the service's Demo ruleset, started for this account alone
     /// at once.
     Demo(u16),
+    /// Watches a kept replay, by its file name.
+    OpenReplay(String),
+    /// Deletes a kept replay.
+    DeleteReplay(String),
     /// Watches the replay of a finished match of the account's: fetched from the service once.
     WatchReplay(MatchId),
     /// Goes on with plain TCP to a host after the notice.
@@ -679,6 +679,8 @@ pub struct MenuCore {
     after_results: Option<Page>,
     /// The replays this client keeps.
     pub(super) library: Library,
+    /// What a kept replay holds, as read, where the library knows no more.
+    pub(super) shelf: super::replay_info::Shelf,
     /// The fetching of the replays of the player's matches.
     pub(super) keeper: Keeper,
     /// The metadata of the match on screen, fetched for the post-game screen.
@@ -695,8 +697,12 @@ pub struct MenuCore {
     hosted_at: Option<String>,
     /// The hero of the last Demo Hero started.
     demo: Option<bota_proto::HeroId>,
-    /// The hero page that launched the current demo, when there was one.
-    demo_origin: Option<Page>,
+    /// The page the Demo Hero on screen (or being opened) was started from: leaving it comes back
+    /// there.
+    demo_from: Option<Page>,
+    /// MY GAMES, when the replay on screen (or being opened) was opened from its kept replays:
+    /// leaving it comes back there. Any other replay returns to the match history.
+    replay_from: Option<Page>,
     /// The hero of a Demo Hero being made: started, its match waited for.
     demo_asked: Option<bota_proto::HeroId>,
     /// The last Demo Hero's match: its result is no news.
@@ -833,6 +839,7 @@ impl MenuCore {
             list_cache: Default::default(),
             avatar: Default::default(),
             library,
+            shelf: Default::default(),
             keeper: Keeper::default(),
             meta: Default::default(),
             history: Vec::new(),
@@ -849,7 +856,8 @@ impl MenuCore {
             left_in_picks: false,
             hosting: false,
             demo: None,
-            demo_origin: None,
+            demo_from: None,
+            replay_from: None,
             demo_asked: None,
             demo_match: None,
             tried_service: false,
@@ -1108,10 +1116,6 @@ impl MenuCore {
     /// it was not the player's doing); `over` when the match is over, so
     /// there is no seat to take again.
     pub fn left_game(&mut self, why: Option<&str>, over: bool) {
-        let demo_origin = self
-            .demo_origin
-            .take()
-            .filter(|_| self.demo_hero().is_some());
         let left = self.on_screen.take();
         self.keep_left(left);
         self.launching = false;
@@ -1136,7 +1140,7 @@ impl MenuCore {
             Some(OnScreen::Match(id)) if self.games.iter().any(|g| g.match_id == id) => {
                 self.go(Page::MyGames);
             }
-            left => self.page = demo_origin.unwrap_or_else(|| self.rest_page(left)),
+            left => self.page = self.rest_page(left),
         }
         if let Some(page) = self.after_results.take() {
             self.page = page;
@@ -1165,15 +1169,22 @@ impl MenuCore {
     /// else the way in.
     fn rest_page(&self, left: Option<OnScreen>) -> Page {
         match left {
+            Some(OnScreen::Demo(_)) => self.demo_page(),
+            #[cfg(not(target_arch = "wasm32"))]
+            Some(OnScreen::Local) if self.demo.is_some() => self.demo_page(),
             #[cfg(not(target_arch = "wasm32"))]
             Some(OnScreen::Direct | OnScreen::Local) => Page::LocalLobby,
-            Some(OnScreen::Demo(_)) => Page::DemoHero,
-            Some(OnScreen::Replay) => Page::MatchHistory,
+            Some(OnScreen::Replay) => self.replay_from.unwrap_or(Page::MatchHistory),
             _ if self.account => Page::Home,
             #[cfg(not(target_arch = "wasm32"))]
             _ if self.prefs.service.is_empty() => Page::LocalLobby,
             _ => Page::Login,
         }
+    }
+
+    /// Where leaving a Demo Hero goes back to: the page it was started from.
+    fn demo_page(&self) -> Page {
+        self.demo_from.unwrap_or(Page::DemoHero)
     }
 
     fn form_kind(&self) -> FormKind {
@@ -1401,6 +1412,7 @@ impl MenuCore {
             self.accepted.update(client);
         }
         self.poll_lobby_ui();
+        self.shelf.take();
         if let Some(leaving) = self
             .leaving
             .take_if(|leaving| Instant::now() >= leaving.until)
@@ -1415,6 +1427,9 @@ impl MenuCore {
         self.update_avatar();
         self.drive_leaderboard();
         self.drive_profile();
+        if self.page == Page::MyGames {
+            self.read_summaries();
+        }
         self.keep_link();
         #[cfg(test)]
         if self.pause_service_events {
@@ -1930,7 +1945,11 @@ impl MenuCore {
         if bota_core::hero_def(hero).is_none() || self.demo_asked.is_some() {
             return;
         }
-        self.demo_origin = Some(self.page).filter(|page| matches!(page, Page::Hero(_)));
+        if let Some(reason) = self.busy_for_demo() {
+            self.tell(reason.to_owned(), true);
+            return;
+        }
+        self.demo_from = Some(self.page);
         let ruleset = self
             .menu_rulesets()
             .find(|r| bota_radovid::is_demo(r))
@@ -1951,6 +1970,24 @@ impl MenuCore {
         self.demo_asked = Some(hero);
         self.tell("Starting Demo Hero".to_owned(), false);
         self.ask(ClientMsg::StartSolo { ruleset }, Asked::Demo);
+    }
+
+    /// Why a Demo Hero cannot start now, in the player's words: it is a game of its own, and a
+    /// player in a match, seated in a lobby or searching for a game would have two at once.
+    fn busy_for_demo(&self) -> Option<&'static str> {
+        if self.on_screen.is_some() || self.launching {
+            Some("Leave the game you are in before starting a Demo Hero")
+        } else if self.lobby.is_some() {
+            Some("Leave your lobby before starting a Demo Hero")
+        } else if self
+            .client
+            .as_ref()
+            .is_some_and(|client| !client.searches().groups().is_empty())
+        {
+            Some("Stop your search before starting a Demo Hero")
+        } else {
+            None
+        }
     }
 
     fn sit(&mut self, state: LobbyState) -> bool {
@@ -2102,8 +2139,11 @@ impl MenuCore {
         self.plain_host = None;
         match page {
             Page::MyGames => {
-                self.ask(ClientMsg::MyMatches, Asked::Other);
-                self.ask_history();
+                self.read_summaries();
+                if self.logged_in() {
+                    self.ask(ClientMsg::MyMatches, Asked::Other);
+                    self.ask_history();
+                }
             }
             Page::Profile | Page::MatchHistory => {
                 self.ask_profile();
@@ -2125,6 +2165,9 @@ impl MenuCore {
             Launch::Replay(_) | Launch::Blob(_) => OnScreen::Replay,
             Launch::Given => OnScreen::Given,
         });
+        self.replay_from = (matches!(launch, Launch::Replay(_) | Launch::Blob(_))
+            && self.page == Page::MyGames)
+            .then_some(Page::MyGames);
         self.keep_start(launch);
         self.hosted_at = match launch {
             Launch::Host {
@@ -2223,7 +2266,9 @@ impl MenuCore {
             | Act::LobbySlot(_)
             | Act::MoveMember(_)
             | Act::KickMember(_) => self.act_lobby(act),
-            Act::WatchReplay(_)
+            Act::OpenReplay(_)
+            | Act::DeleteReplay(_)
+            | Act::WatchReplay(_)
             | Act::PlainAnyway
             | Act::Dismiss
             | Act::RetryService
@@ -2392,6 +2437,8 @@ impl MenuCore {
     fn act_library(&mut self, act: Act) -> Option<Act> {
         match act {
             Act::Demo(hero) => self.start_demo(bota_proto::HeroId(hero)),
+            Act::OpenReplay(name) => self.open_listed(&name),
+            Act::DeleteReplay(name) => self.library.delete(&name),
             Act::WatchReplay(match_id) => self.watch_replay(match_id),
             Act::PlainAnyway => self.direct(false, true),
             Act::Dismiss => {

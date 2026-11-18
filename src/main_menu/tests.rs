@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use bota_client_core::{App as Core, Phase, Source};
 use bota_core::fountain_pos;
 use bota_proto::{HeroId, MapId, Order, Target};
-use bota_radovid::proto::RulesetId;
+use bota_radovid::proto::{MatchId, MatchResult, RulesetId};
 
 use super::core::{
     Act, Confirm, DemoOffer, GameKind, LOCAL_SEATS, Launch, LocalRules, MenuCore, Page,
@@ -777,6 +777,25 @@ fn both_keep_the_replay(alice: &mut Player, bob: &mut Player) {
             player.menu.library.wanted().is_empty(),
             "nothing is waited for any more"
         );
+        // MY GAMES leads to it from the finished match, and lists it nowhere else.
+        player.menu.act(Act::Go(Page::MyGames));
+        settle(
+            &mut [&mut *player],
+            |p| matches!(&p.menu.view().body, PageView::MyGames { finished, .. } if !finished.is_empty()),
+        );
+        let PageView::MyGames { finished, kept, .. } = player.menu.view().body else {
+            panic!("the MY GAMES page");
+        };
+        assert!(
+            finished
+                .iter()
+                .any(|row| row.match_id.0 == id && row.replay),
+            "the finished match offers its kept replay: {finished:?}"
+        );
+        assert!(
+            kept.is_empty(),
+            "a match of the service is listed once: {kept:?}"
+        );
         // WATCH REPLAY of the finished match (its result, the history's rows) opens it in the viewer.
         player
             .menu
@@ -785,12 +804,17 @@ fn both_keep_the_replay(alice: &mut Player, bob: &mut Player) {
             panic!("the replay opens in the viewer");
         };
         assert_eq!(path, file);
+        let watched = super::replay_info::read(&path);
+        assert!(
+            matches!(&watched, super::replay_info::Summary::Read { outcome, .. } if outcome.contains("victory")),
+            "{watched:?}"
+        );
         player.menu.game_started();
         player.menu.left_game(None, true);
         assert_eq!(
             player.menu.page(),
-            Page::MatchHistory,
-            "back at the history"
+            Page::MyGames,
+            "back where the replay was opened from"
         );
     }
     // After a restart the folder's index lists it again.
@@ -1320,10 +1344,15 @@ fn every_local_path_works_with_no_account_and_no_service() {
     // A lobby whose match never started leaves no replay behind.
     drop(server);
     alice.left_game(None, false);
+    alice.act(Act::Go(Page::MyGames));
     assert!(
         alice.library.records().is_empty(),
         "a lobby that never began leaves no replay"
     );
+    let PageView::MyGames { kept, .. } = alice.view().body else {
+        panic!("the MY GAMES page, reachable with no account");
+    };
+    assert!(kept.is_empty());
 
     // Escape backs out to the top page, then asks to quit; Escape again or
     // Cancel closes the question, OK quits.
@@ -1506,6 +1535,267 @@ fn a_service_without_a_demo_falls_back_to_the_local_sandbox() {
     ));
 }
 
+/// Plants replays in the folder `player` keeps its replays in, as an earlier run left them:
+/// `(file, mode, match id, bytes)` each, newest first, with the index beside them; the library
+/// reads the folder anew.
+fn plant_replays(player: &mut Player, rows: &[(&str, &str, Option<u64>, &[u8])]) {
+    let folder = player._dir.0.join("replays");
+    std::fs::create_dir_all(&folder).expect("the replay folder");
+    let mut index = String::from("dbota-replays 1\n");
+    for (at, (file, mode, id, bytes)) in rows.iter().enumerate() {
+        std::fs::write(folder.join(file), bytes).expect("a replay file");
+        let id = id.map_or_else(|| "-".to_owned(), |id| id.to_string());
+        index.push_str(&format!(
+            "r\t{}\t{}\t{id}\t{mode}\t{file}\t\t\n",
+            1_793_956_218 - at as u64 * 3600,
+            bytes.len()
+        ));
+    }
+    std::fs::write(folder.join("index.txt"), index).expect("the index");
+    player.menu.library = kept_in(&player._dir);
+    let planted = rows.len();
+    settle(&mut [player], |p| p.menu.library.records().len() == planted);
+}
+
+/// The kept replays of MY GAMES as the page shows them, once none is still being read.
+fn kept_replays_read(player: &mut Player) -> Vec<super::view::ReplayRow> {
+    settle(&mut [&mut *player], |p| {
+        matches!(&p.menu.view().body, PageView::MyGames { kept, .. }
+            if kept.iter().all(|row| row.summary != super::replay_info::Summary::Reading))
+    });
+    let PageView::MyGames { kept, .. } = player.menu.view().body else {
+        panic!("the MY GAMES page");
+    };
+    kept
+}
+
+/// Every replay this client keeps is on MY GAMES, with no account too: a local game, a Demo Hero's
+/// recording, a match the service does not list and a file that is broken, each with its date,
+/// where it was played and who played what as far as the file says; each opens in the viewer or
+/// says why it cannot, and each can be deleted, its file with it.
+#[test]
+fn my_games_lists_every_kept_replay_and_each_can_be_watched_or_deleted_with_no_account() {
+    let (real, _) = crate::postgame::recorded_match_for_menu();
+    let real = std::fs::read(real).expect("a recorded match");
+    let mut alice = Player::new(None);
+    plant_replays(
+        &mut alice,
+        &[
+            ("20261118-120000-local.brp", "local", None, &real),
+            ("20261118-110000-demo.brp", "demo", None, &real),
+            (
+                "20261117-090000-solo_mid-31.brp",
+                "solo_mid",
+                Some(31),
+                &real,
+            ),
+            ("20261106-091018-file.brp", "file", None, &[7; 2000]),
+        ],
+    );
+    alice.menu.act(Act::Go(Page::MyGames));
+    assert_eq!(
+        alice.menu.page(),
+        Page::MyGames,
+        "reachable with no account"
+    );
+    let kept = kept_replays_read(&mut alice);
+    let names: Vec<&str> = kept.iter().map(|row| row.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "20261118-120000-local.brp",
+            "20261118-110000-demo.brp",
+            "20261117-090000-solo_mid-31.brp",
+            "20261106-091018-file.brp"
+        ],
+        "every kept file, newest first"
+    );
+    let texts = crate::dota_text::Texts::default();
+    for row in &kept[..3] {
+        let super::replay_info::Summary::Read { sides, .. } = &row.summary else {
+            panic!("{}: {:?}", row.name, row.summary);
+        };
+        assert!(
+            sides.heroes_text(&texts).contains("Shadow Fiend"),
+            "{}: the file's header names the heroes: {}",
+            row.name,
+            sides.heroes_text(&texts)
+        );
+    }
+    assert!(
+        kept.iter()
+            .all(|row| !row.when.is_empty() && !row.mode.is_empty()),
+        "each says when and where it was played"
+    );
+    let super::replay_info::Summary::Broken(why) = &kept[3].summary else {
+        panic!("the broken file is shown as broken: {:?}", kept[3].summary);
+    };
+
+    alice.menu.act(Act::OpenReplay(kept[1].name.clone()));
+    let Some(Launch::Replay(path)) = alice.menu.take_launch() else {
+        panic!("a Demo Hero's recording opens in the viewer");
+    };
+    assert_eq!(path, alice._dir.0.join("replays").join(&kept[1].name));
+    alice.menu.game_started();
+    alice.menu.left_game(None, true);
+    assert_eq!(
+        alice.menu.page(),
+        Page::MyGames,
+        "back where it was opened from"
+    );
+
+    alice.menu.act(Act::OpenReplay(kept[3].name.clone()));
+    assert!(
+        alice.menu.take_launch().is_none(),
+        "a broken file does not open"
+    );
+    assert_eq!(
+        alice.menu.view().status.expect("the refusal is told").text,
+        format!("That replay cannot be watched: {why}")
+    );
+
+    for name in [&kept[3].name, &kept[0].name] {
+        alice.menu.act(Act::DeleteReplay(name.clone()));
+        let gone = name.clone();
+        settle(&mut [&mut alice], |p| {
+            p.menu.library.records().iter().all(|r| r.name != gone)
+                && !p._dir.0.join("replays").join(&gone).exists()
+        });
+    }
+    let left: Vec<String> = kept_replays_read(&mut alice)
+        .into_iter()
+        .map(|row| row.name)
+        .collect();
+    assert_eq!(
+        left,
+        [
+            "20261118-110000-demo.brp",
+            "20261117-090000-solo_mid-31.brp"
+        ],
+        "the others are as they were"
+    );
+}
+
+/// A kept replay of a finished match the service lists is reached from that match's row, even
+/// where the service keeps no replay of an abandoned match, and is listed nowhere else; a finished
+/// match with no file of its own and nothing to fetch offers none.
+#[test]
+fn a_kept_replay_of_an_abandoned_match_is_reached_from_its_finished_row_and_listed_once() {
+    use bota_radovid::proto::{EndReason, Outcome, UnixMs};
+    let (real, _) = crate::postgame::recorded_match_for_menu();
+    let real = std::fs::read(real).expect("a recorded match");
+    let mut alice = Player::new(None);
+    plant_replays(
+        &mut alice,
+        &[(
+            "20261117-090000-solo_mid-99.brp",
+            "solo_mid",
+            Some(99),
+            &real,
+        )],
+    );
+    let abandoned = |id| MatchResult {
+        match_id: MatchId(id),
+        ruleset: RulesetId("solo_mid".into()),
+        rated: false,
+        outcome: Outcome::Draw,
+        reason: EndReason::Abandoned,
+        duration_ms: 1000,
+        game_report: Vec::new(),
+        seats: Vec::new(),
+        finished_at: UnixMs(0),
+    };
+    alice.menu.history = vec![abandoned(99), abandoned(100)];
+    alice.menu.page = Page::MyGames;
+    let PageView::MyGames { finished, kept, .. } = alice.menu.view().body else {
+        panic!("the MY GAMES page");
+    };
+    let offered: Vec<(u64, bool)> = finished
+        .iter()
+        .map(|row| (row.match_id.0, row.replay))
+        .collect();
+    assert_eq!(
+        offered,
+        [(99, true), (100, false)],
+        "the kept file is reached from its row, the unkept match has none"
+    );
+    assert!(kept.is_empty(), "the file is listed once: {kept:?}");
+}
+
+/// What a refused Demo Hero says, and that it started nothing: no launch, no request to the service.
+fn assert_demo_refused(player: &mut Player, reason: &str) {
+    player.menu.act(Act::Demo(HeroId::PUDGE.0));
+    assert!(
+        player.menu.take_launch().is_none(),
+        "{reason}: no demo was started"
+    );
+    assert_eq!(
+        player.menu.view().status.expect("the refusal is told").text,
+        reason
+    );
+}
+
+/// A player who searches for a game does not start a second one beside it.
+#[test]
+fn a_demo_hero_asked_during_a_search_is_refused_and_the_search_goes_on() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    alice.menu.act(Act::Find(solo()));
+    settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
+    assert_demo_refused(&mut alice, "Stop your search before starting a Demo Hero");
+    assert_eq!(alice.menu.view().searches.len(), 1, "the search goes on");
+}
+
+/// A player seated in a lobby does not start a game beside the lobby's.
+#[test]
+fn a_demo_hero_asked_in_a_lobby_is_refused_and_the_player_stays_seated() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    create_lobby(&mut alice, "Practice", None);
+    assert_demo_refused(&mut alice, "Leave your lobby before starting a Demo Hero");
+    assert!(alice.menu.lobby.is_some(), "still seated");
+}
+
+/// A player in a match does not start a second game: the service is not even asked.
+#[test]
+fn a_demo_hero_asked_in_a_match_is_refused_without_asking_the_service() {
+    let service = service();
+    let (mut alice, _game) = running_practice_player(&service);
+    assert_demo_refused(
+        &mut alice,
+        "Leave the game you are in before starting a Demo Hero",
+    );
+    assert!(alice.menu.in_game(), "the match goes on");
+}
+
+/// Leaving a local Demo Hero comes back to the page it was started from: the hero's page, not the
+/// local lobby it borrowed its game from.
+#[test]
+fn leaving_a_local_demo_hero_returns_to_the_page_it_was_started_from() {
+    let dir = Scratch::new("demo-return");
+    for from in [Page::Hero(HeroId::PUDGE), Page::DemoHero] {
+        let (mut menu, _trust) = offline("alice", &dir);
+        menu.act(Act::Go(Page::Heroes));
+        menu.act(match from {
+            Page::Hero(hero) => Act::InspectHero(hero),
+            page => Act::Go(page),
+        });
+        menu.act(Act::Demo(HeroId::PUDGE.0));
+        assert!(
+            matches!(menu.take_launch(), Some(Launch::LocalDemo { .. })),
+            "a local demo from {from:?}"
+        );
+        menu.game_started();
+        menu.act(Act::Dashboard);
+        menu.act(Act::Disconnect);
+        assert!(menu.take_leave_game());
+        menu.left_game(None, false);
+        assert_eq!(menu.page(), from);
+    }
+}
+
 /// A local game the host leaves for good (the match ends: the leaver's side loses) leaves its
 /// replay: the server's own file, finished by the server, kept when the game is left, listed
 /// as a local game and opened by the viewer.
@@ -1577,7 +1867,13 @@ fn a_local_game_left_for_good_leaves_its_replay() {
     );
     assert!(!recording.exists(), "the recording became the kept replay");
     wait_for_recorded_hero(&mut menu, HeroId::SHADOW_FIEND);
-    menu.open_kept(&record.name);
+    menu.act(Act::Go(Page::MyGames));
+    let PageView::MyGames { kept, shelf, .. } = menu.view().body else {
+        panic!("the MY GAMES page");
+    };
+    assert_eq!(kept.len(), 1);
+    assert!(shelf.keeping && shelf.folder.ends_with("replays"));
+    menu.act(Act::OpenReplay(record.name.clone()));
     assert!(matches!(menu.take_launch(), Some(Launch::Replay(_))));
 }
 
@@ -2009,6 +2305,14 @@ fn a_service_that_keeps_no_replays_leaves_the_client_with_none_and_a_note() {
         alice.menu.library.wanted().is_empty(),
         "nothing is waited for"
     );
+    alice.menu.act(Act::Go(Page::MyGames));
+    let PageView::MyGames { kept, shelf, .. } = alice.menu.view().body else {
+        panic!("the MY GAMES page");
+    };
+    assert!(
+        kept.is_empty() && shelf.service_keeps_none && shelf.keeping,
+        "MY GAMES lists no replay and tells that the service keeps none: {kept:?} {shelf:?}"
+    );
     let status = alice.menu.view().status;
     assert!(
         status.as_ref().is_none_or(|s| !s.error),
@@ -2030,7 +2334,8 @@ fn a_match_left_early_still_leaves_its_replay() {
     let record = alice.menu.library.records()[0].clone();
     assert_eq!(record.mode, "practice");
     assert!(alice._dir.0.join("replays").join(&record.name).is_file());
-    alice.menu.open_kept(&record.name);
+    alice.menu.act(Act::Go(Page::MyGames));
+    alice.menu.act(Act::OpenReplay(record.name.clone()));
     assert!(matches!(alice.menu.take_launch(), Some(Launch::Replay(_))));
 }
 
@@ -3916,6 +4221,15 @@ fn a_match_the_service_stops_ends_as_a_match_and_is_recorded_unrated() {
     settle(&mut [&mut alice, &mut bob], |p| {
         p.menu.library.records().len() == 1
     });
+    let record = alice.menu.library.records()[0].clone();
+    let file = alice._dir.0.join("replays").join(&record.name);
+    let super::replay_info::Summary::Read { outcome, .. } = super::replay_info::read(&file) else {
+        panic!("the replay reads");
+    };
+    assert!(
+        outcome.contains("ended before its end") && outcome.contains("STOPPED"),
+        "{outcome}"
+    );
 }
 
 /// A live match that ended is not returned to from the menu bar: its post-game screen is the way
@@ -3945,6 +4259,18 @@ fn the_menu_bar_over_a_match_that_ended_does_not_offer_to_return_to_it() {
         None,
         "an ended one is not"
     );
+}
+
+#[test]
+fn replay_cards_retain_the_recorded_bot_version_as_an_identity() {
+    let replay = crate::postgame::recorded_version_match_for_menu();
+    let super::replay_info::Summary::Read { identities, .. } = super::replay_info::read(&replay)
+    else {
+        panic!("a complete replay");
+    };
+    assert_eq!(identities.len(), 1);
+    assert_eq!(identities[0].name, "engine");
+    assert_eq!(identities[0].version.as_deref(), Some("v1.0.0 (buster)"));
 }
 
 impl Service {

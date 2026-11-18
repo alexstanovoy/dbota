@@ -243,7 +243,6 @@ impl Index {
         dropped
     }
 
-    #[cfg(test)]
     pub fn remove(&mut self, name: &str) -> bool {
         let before = self.records.len();
         self.records.retain(|r| r.name != name);

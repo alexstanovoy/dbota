@@ -12,7 +12,8 @@ use super::core::{GameKind, LocalRules, Page, Status};
 use super::form::FormKind;
 use super::view::{
     ConfirmView, Connection, FieldView, FinishedRow, GameRow, MemberRow, MenuView, OfferBox,
-    PageView, PasswordView, ResultView, RulesetRow, SearchRow, SeatRow, Side, WaitRow,
+    PageView, PasswordView, ReplayRow, ReplayShelf, ResultView, RulesetRow, SearchRow, SeatRow,
+    Side, WaitRow,
 };
 
 #[path = "lobby_preview.rs"]
@@ -102,7 +103,7 @@ fn hover_preview(
 }
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 60] = [
+pub const NAMES: [&str; 62] = [
     "service",
     "login",
     "register",
@@ -113,6 +114,7 @@ pub const NAMES: [&str; 60] = [
     "accepted",
     "waiting",
     "my-games",
+    "my-games-kept",
     "lobbies",
     "lobby-password",
     "lobby",
@@ -153,6 +155,7 @@ pub const NAMES: [&str; 60] = [
     "hero-demo-signin",
     "hero-demo-missing",
     "demo-hero",
+    "demo-hero-many",
     "leaderboard",
     "leaderboard_solo",
     "leaderboard-bots",
@@ -317,7 +320,7 @@ pub fn view(name: &str) -> Option<MenuView> {
         | "play-searching-bots-overloaded" => preview_play(name),
         "loading" => preview_loading(),
         "waiting" => preview_waiting(),
-        "my-games" => preview_my_games(),
+        "my-games" | "my-games-kept" => preview_my_games(name),
         "lobbies" => lobby::browser(false),
         "lobby-password" => lobby::browser(true),
         "lobby" | "lobby-owner" | "lobby-moving" | "lobby-edit" | "lobby-start" => {
@@ -501,7 +504,76 @@ fn preview_waiting() -> MenuView {
     view
 }
 
-fn preview_my_games() -> MenuView {
+/// The kept replays of the previews: a local game, a Demo Hero, a file of a service match it no
+/// longer lists, one that is broken, and one still being read.
+fn kept_replays() -> Vec<ReplayRow> {
+    use super::replay_info::Summary;
+    let row = |name: &str, mode: &str, when: &str, summary: Summary| ReplayRow {
+        name: name.to_owned(),
+        size: "812 KB".to_owned(),
+        when: when.to_owned(),
+        mode: mode.to_owned(),
+        summary,
+    };
+    vec![
+        row(
+            "20261118-181045-local.brp",
+            "local",
+            "2026-11-18 18:10",
+            Summary::Read {
+                sides: "alice (Shadow Fiend) vs Bot (Pudge)".to_owned().into(),
+                identities: Vec::new(),
+                outcome: "Radiant victory, 14:21".to_owned(),
+            },
+        ),
+        row(
+            "20261118-170312-demo.brp",
+            "demo",
+            "2026-11-18 17:03",
+            Summary::Read {
+                sides: "alice (Pudge) vs nobody".to_owned().into(),
+                identities: Vec::new(),
+                outcome: "unfinished, 3:07".to_owned(),
+            },
+        ),
+        row(
+            "20261117-221500-solo_mid-31.brp",
+            "solo_mid",
+            "2026-11-17 22:15",
+            Summary::Reading,
+        ),
+        row(
+            "20261110-090826-file.brp",
+            "file",
+            "2026-11-10 09:08",
+            Summary::Broken("damaged, or not a bota replay".to_owned()),
+        ),
+    ]
+}
+
+fn preview_my_games(name: &str) -> MenuView {
+    let shelf = ReplayShelf {
+        folder: "/home/player/.local/share/dbota/replays".to_owned(),
+        keeping: true,
+        store: true,
+        service_keeps_none: false,
+    };
+    if name == "my-games-kept" {
+        // Without an account only the kept replays are there.
+        let mut view = logged_in(
+            Page::MyGames,
+            PageView::MyGames {
+                games: Vec::new(),
+                finished: Vec::new(),
+                kept: kept_replays(),
+                shelf,
+                cooldown: None,
+            },
+        );
+        view.account = None;
+        view.connection = Connection::Offline;
+        return view;
+    }
     let mut view = logged_in(
         Page::MyGames,
         PageView::MyGames {
@@ -518,6 +590,8 @@ fn preview_my_games() -> MenuView {
                 rating: "1662 (+162)".to_owned(),
                 replay: true,
             }],
+            kept: kept_replays(),
+            shelf,
             cooldown: Some("You can search again in 1:42".to_owned()),
         },
     );

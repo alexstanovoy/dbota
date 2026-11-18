@@ -270,8 +270,21 @@ fn draw_body(kit: &mut Kit, body: Entity, view: &MenuView) {
         PageView::MyGames {
             games,
             finished,
+            kept,
+            shelf,
             cooldown,
-        } => super::overlay::my_games(kit, body, view, games, finished, cooldown.as_deref()),
+        } => super::overlay::my_games(
+            kit,
+            body,
+            view,
+            super::overlay::Lists {
+                games,
+                finished,
+                kept,
+                shelf,
+            },
+            cooldown.as_deref(),
+        ),
         PageView::Lobbies { .. } | PageView::Lobby(_) => {}
         PageView::Result(result) => result_page(kit, body, result),
         PageView::DemoHero { heroes, offer } => demo_page(kit, body, heroes, *offer),
@@ -919,6 +932,7 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offer: DemoO
     let column = kit.node(
         body,
         Node {
+            width: percent(100),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             row_gap: px(14),
@@ -936,10 +950,15 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offer: DemoO
         kit.text(column, reason, 16.0, theme::ERROR_TEXT);
         return;
     }
+    // As many cards in a row as the page is wide for, the rest below: the roster grows.
     let grid = kit.node(
         column,
         Node {
+            max_width: percent(100),
+            flex_wrap: FlexWrap::Wrap,
+            justify_content: JustifyContent::Center,
             column_gap: px(16),
+            row_gap: px(16),
             ..default()
         },
     );

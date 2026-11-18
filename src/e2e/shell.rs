@@ -73,7 +73,7 @@ pub(super) fn settings_open(client: &Client) -> bool {
 fn the_quit_button_stands_at_one_point_on_every_screen() {
     let mut client = local_menu();
     let mut seen = Vec::new();
-    for page in [Page::LocalLobby, Page::Heroes] {
+    for page in [Page::LocalLobby, Page::MyGames, Page::Heroes] {
         act(&mut client, Act::Go(page));
         seen.push((format!("{page:?}"), physical_quit(&mut client)));
     }
@@ -435,7 +435,7 @@ fn the_way_in_lets_a_player_without_an_account_play_and_come_back() {
         !matches!(page(c), Page::Service | Page::Login | Page::Register)
     });
     client.frames(5);
-    for part in ["settings", "local lobby", "sign in"] {
+    for part in ["settings", "local lobby", "my games", "sign in"] {
         interface_rect(&mut client, part);
     }
     click(&mut client, "sign in");
@@ -552,14 +552,15 @@ fn tabs(client: &mut Client) -> Vec<String> {
 }
 
 /// The main menu offers exactly these tabs, in this order: no tab appears or vanishes unnoticed
-/// (there is no REPLAYS tab: a match is watched from the history). Without an account
-/// the service's tabs are absent; signed in, MY GAMES and LEADERBOARD come.
+/// (there is no REPLAYS tab: a match is watched from the history, or from the replays MY GAMES
+/// lists). MY GAMES is for everyone, with the replays this client keeps; without an account the
+/// service's other tab is absent; signed in, LEADERBOARD comes.
 #[test]
 fn the_main_menu_shows_exactly_the_expected_tabs() {
     let mut client = local_menu();
     assert_eq!(
         tabs(&mut client),
-        ["PLAY", "LOCAL LOBBY", "HEROES", "DEMO HERO"],
+        ["PLAY", "MY GAMES", "LOCAL LOBBY", "HEROES", "DEMO HERO"],
         "without an account"
     );
     let service = crate::main_menu::tests::service();

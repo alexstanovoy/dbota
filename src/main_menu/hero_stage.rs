@@ -55,7 +55,7 @@ pub(crate) struct StageShadow {
 #[derive(Component)]
 pub(crate) struct HeroCamera;
 #[derive(Component)]
-struct HeroLight;
+pub(crate) struct HeroLight;
 #[derive(Component)]
 pub(crate) struct StageEntity;
 
