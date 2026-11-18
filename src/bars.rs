@@ -154,6 +154,14 @@ pub fn block_width(w: f32, blocks: usize) -> f32 {
 #[derive(Resource, Default)]
 struct Floaters(Vec<Entity>);
 
+/// The lightning marks beside the pool's texts, one each: shown beside a critical strike's number.
+#[derive(Resource, Default)]
+struct Marks(Vec<Entity>);
+
+/// A mark of the pool, for the queries that tell it from the texts.
+#[derive(Component)]
+struct Mark;
+
 /// The meaning of a rendered floating caption, separate from its localized text.
 #[derive(Component, Default)]
 struct FloaterText(Option<FloaterKind>);
@@ -165,6 +173,7 @@ struct Layer(Entity);
 pub fn plugin(app: &mut App) {
     app.init_resource::<Bars>()
         .init_resource::<Floaters>()
+        .init_resource::<Marks>()
         .add_systems(First, reset.in_set(crate::loading::Begin))
         .add_systems(Startup, spawn_layer)
         // Placed from the camera's own transform, not its propagated one,
@@ -222,7 +231,14 @@ fn hover_outline(
     *lit = now;
 }
 
-fn spawn_layer(mut commands: Commands, fonts: Res<Fonts>, mut pool: ResMut<Floaters>) {
+fn spawn_layer(
+    mut commands: Commands,
+    fonts: Res<Fonts>,
+    mut pool: ResMut<Floaters>,
+    mut marks: ResMut<Marks>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let bolt = images.add(crate::bolt::image());
     let layer = commands
         .spawn((ui::fill(), Pickable::IGNORE, GlobalZIndex(-10)))
         .id();
@@ -241,6 +257,19 @@ fn spawn_layer(mut commands: Commands, fonts: Res<Fonts>, mut pool: ResMut<Float
             ))
             .id();
         pool.0.push(text);
+        let mark = commands
+            .spawn((
+                Mark,
+                ImageNode::new(bolt.clone()),
+                Node {
+                    position_type: PositionType::Absolute,
+                    ..default()
+                },
+                Visibility::Hidden,
+                ChildOf(layer),
+            ))
+            .id();
+        marks.0.push(mark);
     }
     commands.insert_resource(Layer(layer));
 }
@@ -734,6 +763,7 @@ pub fn bar_color(core: &bota_client_core::App, u: &UnitView) -> Color {
 fn floaters(
     session: NonSend<Session>,
     pool: Res<Floaters>,
+    marks: Res<Marks>,
     ground: Res<Ground>,
     settings: Res<Settings>,
     ui_scale: Res<UiScale>,
@@ -748,9 +778,18 @@ fn floaters(
         &mut UiTransform,
         &mut FloaterText,
     )>,
+    mut bolts: Query<
+        (&mut Node, &mut Visibility, &mut ImageNode, &mut UiTransform),
+        (With<Mark>, Without<FloaterText>),
+    >,
     index: Res<crate::units::UnitIndex>,
     units: Query<&crate::units::Unit>,
     fog: Res<crate::fog::FogGrid>,
+    // Kept between frames so that a frame allocates nothing: the floaters drawn (as places in the
+    // core's list, newest first), how far each stands aside, and the words being compared.
+    mut shown: Local<Vec<usize>>,
+    mut sideways: Local<Vec<f32>>,
+    mut words: Local<String>,
 ) {
     let core = &session.0;
     let (camera_entity, camera) = *camera;
@@ -760,26 +799,34 @@ fn floaters(
     let cam_gt = &cam_gt;
     let scale = ui_scale.0.max(0.1);
     let numbers = settings.aids.numbers;
-    let shown: Vec<_> = core
-        .floaters
-        .iter()
-        // A level gained floats no words: Dota marks it with its glow and
-        // sound, and the panel's level.
-        .filter(|f| f.kind != FloaterKind::Level)
-        // Damage numbers are an aid to turn off; the gold, the deny mark and the miss notice are
-        // Dota's own overhead alerts, always shown.
-        .filter(|f| {
-            numbers
-                || matches!(
-                    f.kind,
-                    FloaterKind::Gold | FloaterKind::Deny | FloaterKind::Miss
-                )
-        })
-        // Nothing over what the watched side does not see.
-        .filter(|f| !fog.on || fog.lit(f.world.0, f.world.1))
-        .rev()
-        .take(FLOATERS)
-        .collect();
+    shown.clear();
+    shown.extend(
+        core.floaters
+            .iter()
+            .enumerate()
+            // A level gained floats no words: Dota marks it with its glow and
+            // sound, and the panel's level.
+            .filter(|(_, f)| f.kind != FloaterKind::Level)
+            // Damage numbers are an aid to turn off; the gold, the deny mark, the miss notice and
+            // a critical strike are Dota's own overhead alerts (Dota shows its critical strike
+            // alert whatever its damage numbers setting), always shown.
+            .filter(|(_, f)| {
+                numbers
+                    || matches!(
+                        f.kind,
+                        FloaterKind::Gold
+                            | FloaterKind::Deny
+                            | FloaterKind::Miss
+                            | FloaterKind::Crit
+                    )
+            })
+            // Nothing over what the watched side does not see.
+            .filter(|(_, f)| !fog.on || fog.lit(f.world.0, f.world.1))
+            .map(|(place, _)| place)
+            .rev()
+            .take(FLOATERS),
+    );
+    lanes(&core.floaters, &shown, &mut sideways);
     for (i, entity) in pool.0.iter().enumerate() {
         let Ok((
             mut text,
@@ -793,22 +840,24 @@ fn floaters(
         else {
             continue;
         };
-        let Some(f) = shown.get(i) else {
+        let Some(f) = shown.get(i).map(|place| &core.floaters[*place]) else {
             caption.0 = None;
             visibility.set_if_neq(Visibility::Hidden);
+            hide_mark(&marks, i, &mut bolts);
             continue;
         };
         caption.0 = Some(f.kind);
         // Floaters set off together from one place stack upwards.
         let stacked = shown[..i]
             .iter()
+            .map(|place| &core.floaters[*place])
             .filter(|g| {
                 (g.age - f.age).abs() < 0.6
                     && Vec2::from(g.world).distance(Vec2::from(f.world)) < 120.0
             })
             .count();
         let k = (f.age / f.kind.life()).clamp(0.0, 1.0);
-        let (size, tint) = look(f.kind);
+        let (size, tint) = look(f.kind, f.amount);
         let pop = 1.0 + 0.35 * (1.0 - (k * 6.0).min(1.0));
         let rise = (1.0 - (1.0 - k) * (1.0 - k)) * 110.0;
         // Over its unit while the unit is drawn, else where it was.
@@ -823,11 +872,13 @@ fn floaters(
         let at = Vec3::new(x, ground.at(x, y) + over + rise, -y);
         let Ok(screen) = camera.world_to_viewport(cam_gt, at) else {
             *visibility = Visibility::Hidden;
+            hide_mark(&marks, i, &mut bolts);
             continue;
         };
         let fade = (1.0 - (k - 0.6).max(0.0) / 0.4).clamp(0.0, 1.0);
-        let words = floater_words(f);
-        if text.0 != words {
+        words.clear();
+        write_words(f, &mut words);
+        if text.0 != *words {
             text.0.clone_from(&words);
         }
         // The pop scales the laid-out text: a font size that changed every
@@ -839,34 +890,99 @@ fn floaters(
         transform.scale = Vec2::splat(pop);
         color.0 = tint.with_alpha(fade);
         let width = size * 0.56 * words.chars().count() as f32;
-        node.left = px(screen.x / scale - width / 2.0);
+        node.left = px(screen.x / scale - width / 2.0 + sideways[i]);
         node.top = px(screen.y / scale - size - stacked as f32 * (size + 2.0));
         *visibility = Visibility::Inherited;
+        let beside = (f.kind == FloaterKind::Crit).then(|| {
+            // The mark stands right of the digits, as tall as they are.
+            let height = size * 1.4;
+            let left = screen.x / scale - width / 2.0 + sideways[i] + width + 2.0;
+            (
+                left,
+                screen.y / scale - size * 1.25 - stacked as f32 * (size + 2.0),
+                height,
+            )
+        });
+        if let Some(mark) = marks.0.get(i)
+            && let Ok((mut at, mut shown, mut image, mut turn)) = bolts.get_mut(*mark)
+        {
+            match beside {
+                Some((left, top, height)) => {
+                    at.left = px(left);
+                    at.top = px(top);
+                    at.height = px(height);
+                    at.width = px(height * crate::bolt::WIDTH as f32 / crate::bolt::HEIGHT as f32);
+                    image.color = tint.with_alpha(fade);
+                    turn.scale = Vec2::splat(pop);
+                    *shown = Visibility::Inherited;
+                }
+                None => {
+                    shown.set_if_neq(Visibility::Hidden);
+                }
+            }
+        }
     }
 }
 
-/// What a floater says: the number, with a plus for what is gained, or a word.
-fn floater_words(floater: &Floater) -> String {
+/// Hides the mark beside pool text `at`.
+fn hide_mark(
+    marks: &Marks,
+    at: usize,
+    bolts: &mut Query<
+        (&mut Node, &mut Visibility, &mut ImageNode, &mut UiTransform),
+        (With<Mark>, Without<FloaterText>),
+    >,
+) {
+    if let Some(mark) = marks.0.get(at)
+        && let Ok((_, mut shown, ..)) = bolts.get_mut(*mark)
+    {
+        shown.set_if_neq(Visibility::Hidden);
+    }
+}
+
+/// Writes what a floater says: the number, with a plus for what is gained, or a word.
+fn write_words(floater: &Floater, into: &mut String) {
+    use std::fmt::Write;
     let amount = floater.amount;
-    match floater.kind {
-        FloaterKind::Damage | FloaterKind::Magic => amount.to_string(),
-        FloaterKind::Miss => "miss".to_string(),
-        FloaterKind::Heal | FloaterKind::Gold => format!("+{amount}"),
-        FloaterKind::Level => format!("level {amount}"),
-        FloaterKind::Deny => "!".to_string(),
-    }
+    let _ = match floater.kind {
+        FloaterKind::Damage | FloaterKind::Magic | FloaterKind::Pure | FloaterKind::Crit => {
+            write!(into, "{amount}")
+        }
+        FloaterKind::Miss => write!(into, "miss"),
+        FloaterKind::Heal | FloaterKind::Gold => write!(into, "+{amount}"),
+        FloaterKind::Level => write!(into, "level {amount}"),
+        FloaterKind::Deny => write!(into, "!"),
+    };
 }
 
-/// The font size of a damage number.
-const DAMAGE_SIZE: f32 = 15.0;
+/// The font size of a damage number of a small sum.
+pub(crate) const DAMAGE_SIZE: f32 = 15.0;
+/// The sum a damage number starts to grow at, and the one it stops growing at (a sum of this
+/// many times the first is as large as it gets).
+const GROWTH_FROM: f32 = 10.0;
+const GROWTH_SPAN_DOUBLINGS: f32 = 5.0;
+/// How much larger the largest damage number is than the smallest.
+pub(crate) const GROWTH_MAX: f32 = 1.5;
 /// The miss notice's: at its largest Dota draws it 25/16 the size of a damage digit.
 const MISS_SIZE: f32 = DAMAGE_SIZE * 25.0 / 16.0;
+/// Dota's yellow of a message particle (`msg_damage`'s constant colour), the colour of pure
+/// damage.
+const PURE_YELLOW: Color = Color::srgb_u8(255, 200, 33);
 
-/// The size and colour of a floater by what it tells of.
-fn look(kind: FloaterKind) -> (f32, Color) {
+/// How much larger than a small one a damage number of `amount` is drawn: a sum that grew in a
+/// window reads larger, a little for each doubling, and never more than [`GROWTH_MAX`].
+fn growth(amount: i32) -> f32 {
+    let doublings = (amount.max(1) as f32 / GROWTH_FROM).log2();
+    1.0 + (GROWTH_MAX - 1.0) * (doublings / GROWTH_SPAN_DOUBLINGS).clamp(0.0, 1.0)
+}
+
+/// The size and colour of a floater by what it tells of; a damage number by its sum too.
+fn look(kind: FloaterKind, amount: i32) -> (f32, Color) {
     match kind {
-        FloaterKind::Damage => (DAMAGE_SIZE, Color::srgb(1.0, 0.94, 0.84)),
-        FloaterKind::Magic => (16.0, Color::srgb(0.72, 0.62, 1.0)),
+        // Dota's colours of damage by its type: physical white, magical the purple, pure yellow.
+        FloaterKind::Damage => (DAMAGE_SIZE * growth(amount), Color::WHITE),
+        FloaterKind::Magic => (DAMAGE_SIZE * growth(amount), Color::srgb(0.72, 0.62, 1.0)),
+        FloaterKind::Pure => (DAMAGE_SIZE * growth(amount), PURE_YELLOW),
         // Dota's colour for the miss notice, and as large beside a damage number as Dota draws
         // it at its largest: both established from the installed game (build 6975).
         FloaterKind::Miss => (MISS_SIZE, Color::srgb_u8(163, 38, 38)),
@@ -874,6 +990,75 @@ fn look(kind: FloaterKind) -> (f32, Color) {
         FloaterKind::Level => (18.0, ui::GOLDEN),
         FloaterKind::Gold => (18.0, ui::GOLDEN),
         FloaterKind::Deny => (28.0, Color::srgb(0.6, 0.85, 1.0)),
+        // Red, as Dota's alert for it is, and larger than a damage digit so that it reads at a
+        // glance. The shade is ours (the alert's colour is set in the game's native code); the
+        // installed particle pops to 2.25 where a damage digit's pops to 2.
+        FloaterKind::Crit => (DAMAGE_SIZE * 1.5, Color::srgb_u8(255, 48, 48)),
+    }
+}
+
+/// Interface pixels between damage numbers of two types that run side by side.
+const LANE_GAP: f32 = 8.0;
+
+/// The lanes damage numbers run in, from the left: a number of a damage type stands in the lane
+/// of its type. A new damage type that sums does not compile until it has one.
+const LANES: usize = 3;
+
+/// Which lane a type of damage runs in; none for what does not sum.
+fn lane_of(kind: FloaterKind) -> Option<usize> {
+    match kind {
+        FloaterKind::Damage => Some(0),
+        FloaterKind::Magic => Some(1),
+        FloaterKind::Pure => Some(2),
+        FloaterKind::Crit
+        | FloaterKind::Miss
+        | FloaterKind::Heal
+        | FloaterKind::Level
+        | FloaterKind::Gold
+        | FloaterKind::Deny => None,
+    }
+}
+
+/// How wide a summed damage number is drawn, in interface pixels.
+fn damage_width(floater: &Floater) -> f32 {
+    let (size, _) = look(floater.kind, floater.amount);
+    let digits = floater.amount.max(1).ilog10() + 1;
+    size * 0.56 * digits as f32
+}
+
+/// How far each of the floaters at `shown` (places in `floaters`) moves sideways, in interface
+/// pixels, written to `into` one for one: so that the damage numbers of different types over one
+/// unit (a physical blow during a magical burn) stand side by side, each in its own colour,
+/// instead of one on the other. Numbers of one type (the sum and the one before it that finishes
+/// its climb) share their lane, and anything else floats where it always did. Allocates nothing
+/// once `into` has grown to the most that are shown; the work is the square of how many are, at
+/// most [`FLOATERS`] of them.
+fn lanes(floaters: &[Floater], shown: &[usize], into: &mut Vec<f32>) {
+    into.clear();
+    for place in shown {
+        let f = &floaters[*place];
+        let Some(own) = lane_of(f.kind) else {
+            into.push(0.0);
+            continue;
+        };
+        // The widest number of each lane over this unit.
+        let mut wide = [0.0_f32; LANES];
+        for other in shown.iter().map(|place| &floaters[*place]) {
+            if let Some(lane) = lane_of(other.kind).filter(|_| other.unit == f.unit) {
+                wide[lane] = wide[lane].max(damage_width(other));
+            }
+        }
+        let used = wide.iter().filter(|w| **w > 0.0).count();
+        let total: f32 = wide.iter().sum::<f32>() + LANE_GAP * (used - 1) as f32;
+        let mut left = -total / 2.0;
+        let mut aside = 0.0;
+        for (lane, width) in wide.iter().enumerate().filter(|(_, w)| **w > 0.0) {
+            if lane == own {
+                aside = left + width / 2.0;
+            }
+            left += width + LANE_GAP;
+        }
+        into.push(aside);
     }
 }
 
@@ -914,6 +1099,17 @@ pub(crate) fn drawn_floaters(world: &mut World) -> Vec<DrawnFloater> {
                 color: color.0,
             })
         })
+        .collect()
+}
+
+/// The lightning marks drawn this frame.
+#[cfg(test)]
+pub(crate) fn drawn_marks(world: &mut World) -> Vec<Entity> {
+    world
+        .query_filtered::<(Entity, &Visibility, &InheritedVisibility), With<Mark>>()
+        .iter(world)
+        .filter(|(_, own, inherited)| **own != Visibility::Hidden && inherited.get())
+        .map(|(entity, ..)| entity)
         .collect()
 }
 

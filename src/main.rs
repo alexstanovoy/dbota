@@ -18,6 +18,7 @@ mod audio_output;
 mod bag;
 mod bars;
 mod base_blockers;
+mod bolt;
 mod buff_words;
 mod buffs;
 mod buyback;

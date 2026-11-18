@@ -27,6 +27,7 @@ mod courier_spinner;
 mod creep_sounds;
 mod creep_walk;
 mod cursors;
+mod damage_numbers;
 mod death;
 mod effect_bounds;
 mod enemy_base_shop;
