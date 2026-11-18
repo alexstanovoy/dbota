@@ -2832,3 +2832,191 @@ fn a_lobby_made_at_once_draws_no_details_window_while_the_service_answers() {
         "and no window asks for a name or a password meanwhile"
     );
 }
+
+/// The modes a person gets by searching: the ones the service itself gives a rating window.
+fn queueable(service: &crate::main_menu::tests::Service) -> Vec<bota_radovid::proto::RulesetInfo> {
+    let list: Vec<_> = service
+        .advertised
+        .iter()
+        .filter(|rules| rules.rating_window.is_some())
+        .cloned()
+        .collect();
+    assert!(!list.is_empty(), "the service offers a queue to search");
+    list
+}
+
+/// The modes a person sits a lobby of: everything the service offers except the Demo, which has
+/// its own page.
+fn lobby_modes(
+    service: &crate::main_menu::tests::Service,
+) -> Vec<bota_radovid::proto::RulesetInfo> {
+    let list: Vec<_> = service
+        .advertised
+        .iter()
+        .filter(|rules| !bota_radovid::is_demo(rules))
+        .cloned()
+        .collect();
+    assert!(!list.is_empty(), "the service offers a lobby mode");
+    list
+}
+
+/// What a search of `rules` is called on the finding board.
+fn searching_label(rules: &bota_radovid::proto::RulesetInfo) -> String {
+    format!(
+        "{} · {}",
+        rules.name,
+        if rules.rated { "ranked" } else { "unranked" }
+    )
+}
+
+/// Whether the open Play section has `rules` chosen to be searched.
+fn queue_chosen(client: &Client, rules: &bota_radovid::proto::RulesetInfo) -> bool {
+    let view = client.world().non_send::<MenuCore>().view();
+    let PageView::Home { rulesets, .. } = &view.body else {
+        panic!("Play is drawn over Home");
+    };
+    let listed: Vec<_> = rulesets
+        .iter()
+        .filter(|row| view.play.lists(row.rated))
+        .collect();
+    listed
+        .iter()
+        .find(|row| row.id == rules.id)
+        .is_some_and(|row| view.play.chosen(row, listed.first().copied()))
+}
+
+#[test]
+fn every_queue_the_stand_offers_can_be_searched_from_play_by_clicks() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    for (at, rules) in queueable(&service).iter().enumerate() {
+        let mut client = signed_up(&service, &format!("queuer{at}"));
+        click(&mut client, "play tab");
+        click(&mut client, if rules.rated { "ranked" } else { "unranked" });
+        if !queue_chosen(&client, rules) {
+            click(&mut client, &format!("queue {}", rules.id.0));
+        }
+        assert!(
+            queue_chosen(&client, rules),
+            "{} is chosen after its row is clicked",
+            rules.id.0
+        );
+        click(&mut client, "find match");
+        let wanted = searching_label(rules);
+        client.until(&format!("searching {wanted}"), |client| {
+            let view = client.world().non_send::<MenuCore>().view();
+            view.searches.iter().any(|search| search.ruleset == wanted)
+        });
+    }
+}
+
+#[test]
+fn every_lobby_mode_the_stand_offers_can_be_made_into_a_ten_seat_room_by_clicks() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    for (at, rules) in lobby_modes(&service).iter().enumerate() {
+        let mut client = signed_up(&service, &format!("host{at}"));
+        click(&mut client, "play tab");
+        click(&mut client, "custom lobbies");
+        click(&mut client, "create lobby");
+        client.until("the lobby room", |client| {
+            matches!(
+                client.world().non_send::<MenuCore>().view().body,
+                PageView::Lobby(_)
+            )
+        });
+        if room(&client).settings.mode != rules.name {
+            click(&mut client, "edit  ✎");
+            select_mode(&mut client, &rules.name);
+            click(&mut client, "ok");
+            let wanted = rules.name.clone();
+            client.until(&format!("the room of {wanted}"), |client| {
+                room(client).settings.mode == wanted
+            });
+        }
+        let seats: Vec<_> = room(&client)
+            .teams
+            .iter()
+            .map(|team| team.slots.len())
+            .collect();
+        assert_eq!(
+            seats,
+            service
+                .lobby_teams
+                .iter()
+                .map(|n| usize::from(*n))
+                .collect::<Vec<_>>(),
+            "the room of {} has the service's seats whatever its rules",
+            rules.id.0
+        );
+    }
+}
+
+#[test]
+fn a_standard_5v5_lobby_made_from_play_starts_its_match_with_the_host_alone() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    let standard = service
+        .advertised
+        .iter()
+        .find(|rules| rules.lobby_default)
+        .expect("the service names a mode for a new lobby")
+        .clone();
+    assert_eq!(standard.teams, [5, 5], "the stand's standard mode is 5v5");
+    let mut alice = signed_up(&service, "alice");
+    click(&mut alice, "play tab");
+    click(&mut alice, "custom lobbies");
+    click(&mut alice, "create lobby");
+    alice.until("the lobby room", |client| {
+        matches!(
+            client.world().non_send::<MenuCore>().view().body,
+            PageView::Lobby(_)
+        )
+    });
+    let lobby = room(&alice);
+    assert_eq!(lobby.settings.mode, standard.name, "the standard rules");
+    assert_eq!(lobby.settings.cheats, Some(false), "without cheats");
+    assert_eq!(lobby.teams.len(), 2);
+    assert!(
+        lobby.teams.iter().all(|team| team.slots.len() == 5),
+        "five a side"
+    );
+    assert!(
+        lobby.waiting.is_none(),
+        "the host alone meets the mode's start conditions: {:?}",
+        lobby.waiting
+    );
+    click(&mut alice, "start game");
+    alice.within(
+        std::time::Duration::from_secs(240),
+        "the match under way",
+        |client| client.world().non_send::<MenuCore>().page() == Page::Game,
+    );
+}
+
+/// A player pauses before the next click as long as the menu keeps a link open for: it is hung up
+/// and a request reopens it. The reopened link knows nobody until its session resumes, and the
+/// lobby is still made at once, named after its host.
+#[test]
+fn a_lobby_made_from_play_after_the_link_went_idle_is_made_at_once_named_after_its_host() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    let mut alice = signed_up(&service, "alice");
+    alice.until("the idle link hung up", |client| {
+        let mut menu = client.world_mut().non_send_mut::<MenuCore>();
+        menu.test_let_link_idle();
+        !menu.link_open()
+    });
+    click(&mut alice, "play tab");
+    click(&mut alice, "custom lobbies");
+    click(&mut alice, "create lobby");
+    alice.until("the lobby room", |client| {
+        let view = client.world().non_send::<MenuCore>().view();
+        assert!(
+            !view
+                .lobby_ui
+                .editor
+                .as_ref()
+                .is_some_and(|editor| !editor.saving),
+            "no window asks for the lobby's details while the link reopens"
+        );
+        matches!(view.body, PageView::Lobby(_))
+    });
+    assert_eq!(room(&alice).name, ALICES_LOBBY, "named after its host");
+}

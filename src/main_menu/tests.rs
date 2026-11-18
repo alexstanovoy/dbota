@@ -149,6 +149,10 @@ fn build_server() -> PathBuf {
 /// The service, running until dropped.
 pub(crate) struct Service {
     pub(crate) public_identity: Option<String>,
+    /// What the service itself says it offers a human, as its configuration words it.
+    pub(crate) advertised: Vec<bota_radovid::proto::RulesetInfo>,
+    /// The seats of a lobby, whatever its ruleset.
+    pub(crate) lobby_teams: Vec<u8>,
     runtime: tokio::runtime::Runtime,
     service: Option<radovid::service::Service>,
     pub(crate) url: String,
@@ -162,6 +166,127 @@ impl Drop for Service {
             self.runtime.block_on(service.shutdown());
         }
     }
+}
+
+/// The configuration of the local stand (the modes a person gets when they run the service on
+/// their own machine), as far as the menu sees it: `solo_mid` and `full` (the standard 5v5 All
+/// Pick, rated, whose lobbies may turn cheats on and start with one player) with their unranked
+/// siblings, the lobby default `full`, and the demo. Only the launcher differs, to suit a test:
+/// one game port and the lockstep a test client plays. A mode added to the stand is added here.
+fn stand_config(scratch: &Scratch, binary: &Path) -> String {
+    let dir = &scratch.0;
+    let port = scratch.lease_port();
+    let fingerprint = bota_radovid::fingerprint();
+    let launcher = |map_args: &str, artifact: bool, cheats: bool| {
+        format!(
+            r#"[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{{port}}"
+version_probe = ["--wire-fingerprint"]
+start_timeout_secs = {PATIENCE}
+args = [{map_args}, "--mode", "lockstep", "--ack-timeout-ticks", "900",
+        "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
+        "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
+        "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
+env = {{ BOTA_SEATS = "{{seats_with_versions}}" }}
+{artifact}{cheats}
+"#,
+            binary = binary.display(),
+            artifact = if artifact {
+                format!(
+                    "artifact = \"{}/replay-{{match_id}}.brp\"\nartifact_args = [\"--replay\", \"{{artifact}}\"]\n",
+                    dir.join("artifacts").display()
+                )
+            } else {
+                String::new()
+            },
+            cheats = if cheats {
+                "cheats_args = [\"--lobby-cheats\"]\n"
+            } else {
+                ""
+            },
+        )
+    };
+    let solo = launcher("\"--map\", \"2\", \"--heroes\", \"1\"", true, false);
+    let all_pick = launcher("\"--map\", \"0\"", true, true);
+    let demo = launcher("\"--map\", \"0\", \"--cheats\"", false, false);
+    format!(
+        r#"
+listen = "127.0.0.1:0"
+database = "{db}"
+tls_cert = "unused"
+tls_key = "unused"
+game_ports = "{port}-{port}"
+lobby_teams = [5, 5]
+lobby_ruleset = "full"
+[password]
+memory_kib = 1024
+iterations = 1
+[artifacts]
+save_replays = true
+[limits]
+games_per_source = 200
+game_capacity = 1
+lobby_games_max = 1
+
+[[ruleset]]
+id = "solo_mid"
+name = "1x1 Mid Only"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [1, 1]
+rated = true
+max_duration_secs = {PATIENCE}
+{solo}
+[[ruleset]]
+id = "full"
+name = "All Pick"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [5, 5]
+rated = true
+lobby_min_players = 1
+max_duration_secs = {PATIENCE}
+{all_pick}
+[[ruleset]]
+id = "full_unranked"
+name = "Unranked All Pick"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [5, 5]
+rated = false
+rating_ruleset = "full"
+max_duration_secs = {PATIENCE}
+{all_pick}
+[[ruleset]]
+id = "solo_mid_unranked"
+name = "Unranked 1x1 Mid Only"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [1, 1]
+rated = false
+rating_ruleset = "solo_mid"
+max_duration_secs = {PATIENCE}
+[ruleset.rating_window]
+initial = 600
+widen_per_minute = 300
+maximum = 3000
+{solo}
+[[ruleset]]
+id = "demo"
+name = "Demo Hero"
+audience = "humans_only"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [1, 1]
+rated = false
+instant_solo = true
+info = "01"
+max_duration_secs = {PATIENCE}
+{demo}"#,
+        db = dir.join("radovid.db").display(),
+    )
 }
 
 fn config(scratch: &Scratch, binary: &Path, save_replays: bool) -> String {
@@ -426,13 +551,31 @@ fn start_configured_service(
     change: impl FnOnce(String) -> String,
     configure: impl FnOnce(&mut radovid::config::Config),
 ) -> Service {
+    start_service_of(
+        |dir, binary| change(config(dir, binary, save_replays)),
+        configure,
+    )
+}
+
+/// The service a person runs on their own machine: the modes, ranked and unranked queues and
+/// lobby default of the local stand's configuration (see [`stand_config`]).
+pub(crate) fn service_of_the_stand() -> Service {
+    start_service_of(stand_config, |_| {})
+}
+
+fn start_service_of(
+    make_config: impl FnOnce(&Scratch, &Path) -> String,
+    configure: impl FnOnce(&mut radovid::config::Config),
+) -> Service {
     let binary = server_binary().to_owned();
     let dir = Scratch::new("service");
     let path = dir.0.join("radovid.toml");
-    std::fs::write(&path, change(config(&dir, &binary, save_replays))).expect("config");
+    std::fs::write(&path, make_config(&dir, &binary)).expect("config");
     let mut config = radovid::config::Config::load(&path).expect("a valid configuration");
     configure(&mut config);
     let public_identity = config.public_identity.clone();
+    let advertised = config.ruleset_infos(bota_radovid::proto::AccountKind::Human);
+    let lobby_teams = config.lobby_teams.clone();
     let names = vec!["127.0.0.1".to_owned(), "localhost".to_owned()];
     let identity = radovid::tls::self_signed(names).expect("certificate");
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -445,6 +588,8 @@ fn start_configured_service(
         .expect("the service starts");
     Service {
         public_identity,
+        advertised,
+        lobby_teams,
         url: format!("wss://127.0.0.1:{}", service.addr.port()),
         pem: identity.cert_pem.clone(),
         runtime,

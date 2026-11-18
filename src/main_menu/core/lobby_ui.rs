@@ -507,10 +507,7 @@ impl MenuCore {
     }
 
     pub(super) fn lobby_creator(&self) -> Option<String> {
-        self.client
-            .as_ref()
-            .and_then(|client| client.me())
-            .map(|me| me.nickname.clone())
+        self.me().map(|me| me.nickname.clone())
     }
 
     /// Makes the lobby at once, named after its host; its name stays, and the mode, password and

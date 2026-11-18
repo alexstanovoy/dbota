@@ -7,9 +7,9 @@ use std::collections::VecDeque;
 
 use bevy::platform::time::Instant;
 use bota_radovid::proto::{
-    AccountId, AccountKind, Audience, ClientMsg, Error, Event, Handoff, LobbyId, LobbyState,
-    LobbySummary, MatchId, MatchResult, ProposalId, PublicAccount, QueueEntryId, QueueLeftReason,
-    Reply, RulesetId, Secret, valid_login, valid_password,
+    AccountId, AccountInfo, AccountKind, Audience, ClientMsg, Error, Event, Handoff, LobbyId,
+    LobbyState, LobbySummary, MatchId, MatchResult, ProposalId, PublicAccount, QueueEntryId,
+    QueueLeftReason, Reply, RulesetId, Secret, valid_login, valid_password,
 };
 use bota_radovid::{Client, ClientError, Incoming, Tls};
 
@@ -597,6 +597,9 @@ pub struct MenuCore {
     credentials: Option<(ClientMsg, Asked)>,
     /// Requests that wait for the link to open and the session to resume.
     outbox: Vec<(ClientMsg, Asked)>,
+    /// The signed-in account as the last link told it. A reopened link knows nobody until its
+    /// session resumes, and a request made in that moment still needs the nickname.
+    known_me: Option<AccountInfo>,
     /// Since when nothing live has been on the link.
     idle_since: Option<Instant>,
     /// When to reconnect after a lost link that had something live on it.
@@ -834,6 +837,7 @@ impl MenuCore {
             account: false,
             credentials: None,
             outbox: Vec::new(),
+            known_me: None,
             idle_since: None,
             retry_at: None,
             retry: true,
@@ -963,8 +967,15 @@ impl MenuCore {
 
     /// Whether the control link to the service is open.
     #[cfg(test)]
-    pub(super) fn link_open(&self) -> bool {
+    pub(crate) fn link_open(&self) -> bool {
         self.client.as_ref().is_some_and(|c| !c.hung_up())
+    }
+
+    /// Lets the link stand idle as long as the menu keeps one open for, without waiting for it:
+    /// the next frame hangs it up, as a player's pause before the next click does.
+    #[cfg(test)]
+    pub(crate) fn test_let_link_idle(&mut self) {
+        self.idle_since = Instant::now().checked_sub(IDLE_HANG_UP);
     }
 
     /// The button of the page's form that has the keyboard, if one has.
@@ -1264,6 +1275,9 @@ impl MenuCore {
         self.tried_service = true;
         self.asked.clear();
         self.retry_at = None;
+        if let Some(me) = self.client.as_ref().and_then(|client| client.me()) {
+            self.known_me = Some(me.clone());
+        }
         match Client::open(&self.prefs.service, &self.tls) {
             Ok(mut client) => {
                 client.set_waker(crate::pacing::waker());
@@ -2014,11 +2028,17 @@ impl MenuCore {
         }
     }
 
-    pub(super) fn my_id(&self) -> Option<AccountId> {
+    /// The signed-in account, also while its link is being reopened.
+    pub(super) fn me(&self) -> Option<&AccountInfo> {
         self.client
             .as_ref()
+            .and_then(|client| client.me())
+            .or(self.known_me.as_ref())
+    }
+
+    pub(super) fn my_id(&self) -> Option<AccountId> {
+        self.me()
             .filter(|_| self.account)
-            .and_then(|c| c.me())
             .map(|me| me.id)
     }
 
@@ -2843,6 +2863,7 @@ impl MenuCore {
         self.account_profile = None;
         self.list_cache.clear();
         self.board = Default::default();
+        self.known_me = None;
         self.profiles.clear();
         self.avatars.clear();
         self.own_avatar_asked = None;
