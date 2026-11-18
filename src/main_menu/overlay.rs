@@ -331,7 +331,7 @@ pub fn my_games(
                 "Sign in to see the matches of an account."
             },
             16.0,
-            theme::INK_4,
+            theme::INK_2,
         );
     }
     for game in games {
@@ -469,7 +469,7 @@ fn kept_replays(kit: &mut Kit, column: Entity, kept: &[ReplayRow], shelf: &Repla
     } else if shelf.folder.is_empty() {
         (
             "The replays of your matches are kept in this browser, within the limits of SETTINGS, Options, REPLAYS.".to_owned(),
-            theme::INK_4,
+            theme::INK_2,
         )
     } else {
         (
@@ -477,7 +477,7 @@ fn kept_replays(kit: &mut Kit, column: Entity, kept: &[ReplayRow], shelf: &Repla
                 "The replays of your matches are kept in {}, within the limits of SETTINGS, Options, REPLAYS.",
                 shelf.folder
             ),
-            theme::INK_4,
+            theme::INK_2,
         )
     };
     kit.bold(column, "KEPT REPLAYS", 20.0, theme::INK_1);
@@ -491,7 +491,7 @@ fn kept_replays(kit: &mut Kit, column: Entity, kept: &[ReplayRow], shelf: &Repla
         );
     }
     if kept.is_empty() {
-        kit.text(column, "No other replays are kept.", 16.0, theme::INK_4);
+        kit.text(column, "No other replays are kept.", 16.0, theme::INK_2);
     }
     for replay in kept {
         replay_row(kit, column, replay);
