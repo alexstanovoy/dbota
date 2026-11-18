@@ -22,16 +22,16 @@ fn rune_wearer(view: &bota_proto::WorldView) -> &bota_proto::UnitView {
 }
 
 fn record_invisible_item_recipient() -> (ReplayFile, Spot) {
-    let mut game = Spectated::start("0");
     let at = bota_core::DOTA_RUNE_SPOTS[0].at;
+    let mut game = Spectated::with_rune_taker(
+        "0",
+        bota_proto::HeroId::PUDGE,
+        at,
+        bota_proto::RuneKind::Invisibility,
+    );
     game.cheat(Cheat::Invulnerable { on: true });
     game.cheat(Cheat::Teleport {
         at: at + Spot::from_ints(400, 0),
-    });
-    game.cheat(Cheat::CreateHero {
-        hero: bota_proto::HeroId::PUDGE,
-        enemy: false,
-        at,
     });
     game.cheat(Cheat::SpawnRune {
         kind: bota_proto::RuneKind::Invisibility,

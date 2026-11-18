@@ -7,12 +7,14 @@ use std::time::Duration;
 use bevy::prelude::*;
 use bota_client_core::{App as Core, Intent, Net, Source, Transport};
 use bota_proto::{
-    ClientMsg, HeroId, ReplayHeader, ReplayRecord, Role, ServerMsg, SlotId, Team, UnitKind,
+    ClientMsg, HeroId, ReplayHeader, ReplayRecord, Role, RuneKind, ServerMsg, SlotId, Team,
+    UnitKind, Vec2 as Spot,
 };
 use clap::Parser;
 
 use super::fog::veil_alpha;
 use super::harness::{Client, Server, quiet_seat};
+use super::runes::rune_taker_seat;
 use crate::fog::FogGrid;
 
 const SOON: Duration = Duration::from_secs(30);
@@ -164,6 +166,21 @@ impl Drop for ReplayFile {
     }
 }
 
+/// Who else sits in the match besides the driving seat.
+#[derive(Clone, Copy)]
+enum Company {
+    /// The opposing seat, which gives no orders.
+    Quiet,
+    /// The opposing seat, driven by the test through a second core.
+    Marker,
+    /// The opposing seat that gives no orders, and an ally that takes a rune.
+    RuneTaker {
+        hero: HeroId,
+        at: Spot,
+        kind: RuneKind,
+    },
+}
+
 pub(super) struct Spectated {
     _server: Server,
     pub(super) driver: Core,
@@ -175,33 +192,47 @@ pub(super) struct Spectated {
 
 impl Spectated {
     pub(super) fn start(map: &str) -> Self {
-        Self::start_with(map, HeroId::SHADOW_FIEND, false, false, &[])
+        Self::start_with(map, HeroId::SHADOW_FIEND, Company::Quiet, false, &[])
     }
 
     /// [`Spectated::start`] for a test that makes its own records ([`Spectated::save_after_falls`]):
     /// the match is not recorded.
     pub(super) fn start_unrecorded(map: &str) -> Self {
-        Self::start_with(map, HeroId::SHADOW_FIEND, false, true, &[])
+        Self::start_with(map, HeroId::SHADOW_FIEND, Company::Quiet, true, &[])
     }
 
     pub(super) fn pair(map: &str) -> Self {
-        Self::start_with(map, HeroId::SHADOW_FIEND, true, false, &[])
+        Self::start_with(map, HeroId::SHADOW_FIEND, Company::Marker, false, &[])
     }
 
     pub(super) fn pair_with_options(map: &str, extra: &[&str]) -> Self {
-        Self::start_with(map, HeroId::SHADOW_FIEND, true, false, extra)
+        Self::start_with(map, HeroId::SHADOW_FIEND, Company::Marker, false, extra)
     }
 
     pub(super) fn hero(map: &str, hero: HeroId) -> Self {
-        Self::start_with(map, hero, false, false, &[])
+        Self::start_with(map, hero, Company::Quiet, false, &[])
     }
 
     /// The match on `map` with the server's `extra` options besides these.
     pub(super) fn with_options(map: &str, extra: &[&str]) -> Self {
-        Self::start_with(map, HeroId::SHADOW_FIEND, false, false, extra)
+        Self::start_with(map, HeroId::SHADOW_FIEND, Company::Quiet, false, extra)
     }
 
-    fn start_with(map: &str, hero: HeroId, pair: bool, discard: bool, extra: &[&str]) -> Self {
+    /// The match on `map` with an ally of the driving hero, seat 2: it stands at `at` and takes
+    /// the first rune of `kind` that lies there, as a player's click orders. Nothing takes a rune
+    /// but an order, and only a seat's hero can be ordered.
+    pub(super) fn with_rune_taker(map: &str, hero: HeroId, at: Spot, kind: RuneKind) -> Self {
+        let taker = Company::RuneTaker { hero, at, kind };
+        Self::start_with(map, HeroId::SHADOW_FIEND, taker, false, &[])
+    }
+
+    fn start_with(
+        map: &str,
+        hero: HeroId,
+        company: Company,
+        discard: bool,
+        extra: &[&str],
+    ) -> Self {
         let mut options = vec![
             "--map",
             map,
@@ -213,7 +244,12 @@ impl Spectated {
             "1",
         ];
         options.extend_from_slice(extra);
-        let server = Server::start(2, &options);
+        let seats = if matches!(company, Company::RuneTaker { .. }) {
+            3
+        } else {
+            2
+        };
+        let server = Server::start(seats, &options);
         let args = crate::Args::parse_from(["dbota", "--addr", &server.address]);
         let driver = crate::session::open(&args)
             .expect("the driving player connects")
@@ -231,7 +267,7 @@ impl Spectated {
         game.wait("the driving seat assigned", |driver, _| {
             driver.my_slot.is_some()
         });
-        if pair {
+        if matches!(company, Company::Marker) {
             let mut net = Net::connect(&game._server.address).expect("the second player connects");
             net.send(&ClientMsg::hello(
                 Role::Player,
@@ -244,6 +280,9 @@ impl Spectated {
             game.other = Some(Core::new(Source::Live(Box::new(net))));
         } else {
             quiet_seat(&game._server, HeroId::SHADOW_FIEND);
+        }
+        if let Company::RuneTaker { hero, at, kind } = company {
+            rune_taker_seat(&game._server, hero, at, kind);
         }
         game.wait("the real match begins", |driver, client| {
             driver.view().is_some() && client.core().view().is_some()

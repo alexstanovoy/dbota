@@ -70,6 +70,43 @@ pub(super) fn take_rune(client: &mut Client, kind: RuneKind, at: (i32, i32)) {
     client.core_mut().send_order(Order::Take { target });
 }
 
+/// A seat held by a client with no front end that takes a rune: its hero goes to `at`, and orders
+/// itself to take the first rune of `kind` that lies within reach of it, as a click on the rune
+/// does. A test can order no hero but a seat's.
+pub(super) fn rune_taker_seat(server: &Server, hero: HeroId, at: Spot, kind: RuneKind) {
+    let (mut link, seated) =
+        bota_client_core::Link::join(&server.address, "taker", hero, None).expect("a seat");
+    let mut stage = 0;
+    std::thread::spawn(move || {
+        let _ = bota_client_core::play(&mut link, seated, &mut (), |session| {
+            let issue = bota_client_core::IssuedOrder::hero;
+            if session.own_hero().is_none() {
+                return Vec::new();
+            }
+            match stage {
+                0 => {
+                    stage = 1;
+                    vec![issue(Order::Cheat {
+                        cheat: Cheat::Teleport { at },
+                    })]
+                }
+                1 => {
+                    let rune = session.current().and_then(|view| rune_in(view, kind, at));
+                    rune.map(|rune| {
+                        stage = 2;
+                        issue(Order::Take {
+                            target: Target::Unit(rune),
+                        })
+                    })
+                    .into_iter()
+                    .collect()
+                }
+                _ => Vec::new(),
+            }
+        });
+    });
+}
+
 /// The rune of `kind` drawn on the map, if one is: where it stands, and the model it wears (a
 /// rune is known by its model).
 pub(super) fn drawn(client: &mut Client, kind: RuneKind) -> Option<(Vec3, String)> {
