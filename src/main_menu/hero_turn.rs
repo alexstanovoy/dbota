@@ -15,10 +15,11 @@ use bevy::{
         pointer::{PointerButton, PointerId},
     },
     prelude::*,
+    window::{CursorLeft, WindowFocused},
 };
 
 use super::hero_stage::HeroStage;
-use crate::cursor::Grip;
+use crate::cursor::{Grip, GripCursor};
 
 /// How far a pixel of the drag turns the hero: one full turn for a drag across this many
 /// interface pixels, about the height of the hero on the page, so that a point of the model
@@ -97,8 +98,6 @@ pub(crate) struct TurnInput {
     holder: Option<PointerId>,
     /// Held at some point of this frame.
     held: bool,
-    /// Let go in this frame.
-    released: bool,
     /// The turn the drag asked for in this frame, radians.
     dragged: f32,
 }
@@ -120,7 +119,6 @@ impl TurnInput {
     fn release(&mut self, pointer: PointerId) {
         if self.holder == Some(pointer) {
             self.holder = None;
-            self.released = true;
         }
     }
 }
@@ -184,6 +182,35 @@ fn cancelled(event: On<PointerCancel>, mut input: ResMut<TurnInput>) {
     input.release(event.pointer.id);
 }
 
+/// Whether the turntable has anything to do: the hero page is shown, or a hold or a hand cursor
+/// of a page that has just gone is still to be let go of.
+pub(crate) fn wanted(
+    zones: Query<(), With<TurnZone>>,
+    input: Res<TurnInput>,
+    grip: Res<GripCursor>,
+) -> bool {
+    !zones.is_empty() || input.holder.is_some() || grip.0.is_some()
+}
+
+/// Lets go of what the window has lost: a button let go outside the window or the page's canvas
+/// is never told to the client (a browser tells the canvas only what happens over it, and the
+/// system tells a window that lost focus nothing more), so a pointer that left the window, or a
+/// window that lost the pointer's focus, no longer holds the hero.
+fn let_go_of_the_lost(
+    mut input: ResMut<TurnInput>,
+    mut left: MessageReader<CursorLeft>,
+    mut focused: MessageReader<WindowFocused>,
+) {
+    if left.read().count() > 0 {
+        input.release(PointerId::Mouse);
+    }
+    if focused.read().any(|event| !event.focused)
+        && let Some(holder) = input.holder
+    {
+        input.release(holder);
+    }
+}
+
 /// Steps the hero's turntable by the frame's time and what the pointer did, and turns the model
 /// on the stage.
 fn turn(
@@ -197,10 +224,10 @@ fn turn(
     if zones.is_empty() {
         *input = TurnInput::default();
     }
+    // Gripped for the whole frame that held it at any point, a press that came after a release
+    // of the same frame included; the next frame is held only while a pointer still holds.
     let (dragged, gripped) = (std::mem::take(&mut input.dragged), input.held);
-    if std::mem::take(&mut input.released) {
-        input.held = false;
-    }
+    input.held = input.holder.is_some();
     let Some(pivot) = stage.actor.as_ref().map(|actor| actor.pivot) else {
         return;
     };
@@ -218,7 +245,7 @@ fn turn(
 fn show_grip(
     input: Res<TurnInput>,
     zones: Query<&Hovered, With<TurnZone>>,
-    mut grip: ResMut<crate::cursor::GripCursor>,
+    mut grip: ResMut<GripCursor>,
 ) {
     let wanted = if input.holder.is_some() {
         Some(Grip::Closed)
@@ -238,8 +265,9 @@ pub(super) fn plugin(app: &mut App) {
         .add_observer(cancelled)
         .add_systems(
             Update,
-            (turn, show_grip)
+            (let_go_of_the_lost, turn, show_grip)
                 .chain()
+                .run_if(wanted)
                 .after(super::screens::draw)
                 .in_set(TurnSet),
         );
@@ -253,5 +281,48 @@ pub(crate) struct TurnSet;
 fn let_go_anywhere(event: On<PointerRelease>, mut input: ResMut<TurnInput>) {
     if event.button == PointerButton::Primary {
         input.release(event.pointer.id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    fn world() -> World {
+        let mut world = World::new();
+        world.init_resource::<TurnInput>();
+        world.init_resource::<GripCursor>();
+        world
+    }
+
+    fn is_wanted(world: &mut World) -> bool {
+        world.run_system_once(wanted).expect("the condition runs")
+    }
+
+    #[test]
+    fn the_turntable_is_idle_while_the_hero_page_is_not_shown() {
+        assert!(!is_wanted(&mut world()));
+    }
+
+    #[test]
+    fn the_turntable_runs_while_the_hero_page_has_its_zone() {
+        let mut world = world();
+        world.spawn(TurnZone);
+        assert!(is_wanted(&mut world));
+    }
+
+    #[test]
+    fn the_turntable_runs_once_more_to_let_go_of_a_hold_the_page_left_behind() {
+        let mut world = world();
+        world.resource_mut::<TurnInput>().holder = Some(PointerId::Mouse);
+        assert!(is_wanted(&mut world));
+    }
+
+    #[test]
+    fn the_turntable_runs_once_more_to_take_off_a_hand_the_page_left_behind() {
+        let mut world = world();
+        world.resource_mut::<GripCursor>().0 = Some(Grip::Open);
+        assert!(is_wanted(&mut world));
     }
 }

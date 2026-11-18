@@ -10,14 +10,15 @@ use bevy::input::touch::{TouchInput, TouchPhase};
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use bevy::ui_widgets::Button;
-use bevy::window::{PrimaryWindow, WindowEvent};
+use bevy::window::{CursorLeft, PrimaryWindow, WindowEvent, WindowFocused};
 use bota_proto::HeroId;
 
 use super::harness::Client;
 use super::hero_page::{hero_page, named, rect, texts_under};
-use super::menu::resize_menu_window;
+use super::menu::{act, resize_menu_window};
 use crate::main_menu::hero_stage::{HeroImage, HeroStage};
 use crate::main_menu::hero_turn::COAST;
+use crate::main_menu::{Act, Page};
 
 const HERO: HeroId = HeroId::SHADOW_FIEND;
 
@@ -295,29 +296,31 @@ fn a_stalled_frame_does_not_fling_the_hero() {
     );
 }
 
+/// A touch of finger `id` in the next frame.
+fn touch(client: &mut Client, id: u64, phase: TouchPhase, at: Vec2) {
+    let window = window(client);
+    client
+        .world_mut()
+        .write_message(WindowEvent::TouchInput(TouchInput {
+            phase,
+            position: at,
+            window,
+            force: None,
+            id,
+        }));
+    client.step_frames(1);
+}
+
 /// A finger drags the hero as the mouse does.
 #[test]
 fn a_finger_dragging_across_the_hero_turns_it() {
     let mut client = standing(Duration::from_millis(16));
     let from = zone_centre(&mut client);
-    let window = window(&mut client);
-    let touch = |client: &mut Client, phase, at: Vec2| {
-        client
-            .world_mut()
-            .write_message(WindowEvent::TouchInput(TouchInput {
-                phase,
-                position: at,
-                window,
-                force: None,
-                id: 7,
-            }));
-        client.step_frames(1);
-    };
-    touch(&mut client, TouchPhase::Started, from);
-    touch(&mut client, TouchPhase::Started, from);
+    touch(&mut client, 7, TouchPhase::Started, from);
     for step in 1..=10 {
         touch(
             &mut client,
+            7,
             TouchPhase::Moved,
             from + Vec2::X * 10.0 * step as f32,
         );
@@ -328,9 +331,48 @@ fn a_finger_dragging_across_the_hero_turns_it() {
         "a drag of a finger across 100 pixels turns the hero by {expected}, not {}",
         yaw(&client)
     );
-    touch(&mut client, TouchPhase::Ended, from + Vec2::X * 100.0);
+    touch(&mut client, 7, TouchPhase::Ended, from + Vec2::X * 100.0);
     client.step_frames(300);
     assert!(yaw(&client) > expected, "the hero coasts after the finger");
+}
+
+/// A second finger on the hero pulls neither against the first nor takes it from it: while the
+/// first holds the hero the second's motion turns nothing, and its lifting lets nothing go.
+#[test]
+fn a_second_finger_on_the_hero_neither_turns_it_nor_takes_it_from_the_first() {
+    let mut client = standing(Duration::from_millis(16));
+    let from = zone_centre(&mut client);
+    let beside = from + Vec2::new(0.0, 60.0);
+    touch(&mut client, 7, TouchPhase::Started, from);
+    touch(&mut client, 8, TouchPhase::Started, beside);
+    for step in 1..=10 {
+        touch(
+            &mut client,
+            8,
+            TouchPhase::Moved,
+            beside + Vec2::X * 10.0 * step as f32,
+        );
+    }
+    assert_eq!(
+        yaw(&client),
+        0.0,
+        "the second finger's motion turns nothing"
+    );
+    touch(&mut client, 8, TouchPhase::Ended, beside + Vec2::X * 100.0);
+    for step in 1..=10 {
+        touch(
+            &mut client,
+            7,
+            TouchPhase::Moved,
+            from + Vec2::X * 10.0 * step as f32,
+        );
+    }
+    let expected = turn_of(&client, 100.0);
+    assert!(
+        (yaw(&client) - expected).abs() < 1e-3,
+        "the first finger still holds the hero after the second is lifted: {expected}, not {}",
+        yaw(&client)
+    );
 }
 
 /// The right button does not turn the hero, and a drag that starts on a control (any button of
@@ -360,10 +402,13 @@ fn only_the_left_button_on_the_hero_turns_it() {
 }
 
 /// Whatever a press lands on, if it is a control, the hero does not take the drag that follows.
+/// Every control of the page is tried, in the order of their names; the press of one that takes
+/// the player off the page is followed by the way back, and the one that starts a demo (and so
+/// leaves the menu for a match) is left out.
 #[test]
 fn a_drag_that_starts_on_a_control_does_not_turn_the_hero() {
     let mut client = standing(Duration::from_millis(16));
-    let controls: Vec<(String, Vec2)> = {
+    let mut controls: Vec<(String, Vec2)> = {
         let world = client.world_mut();
         world
             .query_filtered::<(Entity, &Name, &InheritedVisibility), With<Button>>()
@@ -375,6 +420,8 @@ fn a_drag_that_starts_on_a_control_does_not_turn_the_hero() {
             .map(|(entity, name)| (name, rect(&client, entity).center()))
             .collect()
     };
+    controls.retain(|(name, _)| !name.contains("demo"));
+    controls.sort_by(|a, b| a.0.cmp(&b.0));
     assert!(
         controls.len() >= 3,
         "the page has controls to try: {controls:?}"
@@ -392,8 +439,15 @@ fn a_drag_that_starts_on_a_control_does_not_turn_the_hero() {
             0.0,
             "a drag from the {name} control turned the hero"
         );
-        if !named(&mut client, "hero turn zone").is_some() {
-            return; // The press activated a control that left the page: the others are gone.
+        if named(&mut client, "hero turn zone").is_none() {
+            act(&mut client, Act::InspectHero(HERO));
+            client.until("the hero's page again", |c| {
+                named(c, "hero turn zone").is_some()
+            });
+            client.until("the hero standing on the stage again", |c| {
+                let stage = c.world().resource::<HeroStage>();
+                stage.hero == Some(HERO) && stage.ready()
+            });
         }
     }
 }
@@ -402,7 +456,6 @@ fn a_drag_that_starts_on_a_control_does_not_turn_the_hero() {
 #[test]
 fn the_cursor_is_an_open_hand_over_the_hero_and_a_closed_one_while_it_turns() {
     let mut client = standing(Duration::from_millis(16));
-    let worn = |client: &Client| client.world().resource::<crate::cursor::Cursors>().worn();
     client.point(Vec2::new(5.0, 500.0));
     client.step_frames(3);
     assert_eq!(worn(&client), Some("cursor.default"), "off the hero");
@@ -422,6 +475,125 @@ fn the_cursor_is_an_open_hand_over_the_hero_and_a_closed_one_while_it_turns() {
     left_button(&mut client, ButtonState::Released);
     client.step_frames(3);
     assert_eq!(worn(&client), Some("cursor.default"), "let go off the hero");
+}
+
+/// A hero held and let go of at once by the next press in the same frame stays held: the release
+/// and the press both count.
+#[test]
+fn a_release_and_a_press_in_one_frame_leave_the_hero_held_by_the_press() {
+    let mut client = standing(Duration::from_millis(16));
+    let from = zone_centre(&mut client);
+    take_hold(&mut client, from);
+    left_button(&mut client, ButtonState::Released);
+    left_button(&mut client, ButtonState::Pressed);
+    client.step_frames(1);
+    let before = yaw(&client);
+    for step in 1..=10 {
+        client.point(from + Vec2::X * 10.0 * step as f32);
+        client.step_frames(1);
+    }
+    let expected = turn_of(&client, 100.0);
+    assert!(
+        (yaw(&client) - before - expected).abs() < 1e-3,
+        "the new press holds the hero: it turns {expected} for 100 pixels, not {}",
+        yaw(&client) - before
+    );
+    left_button(&mut client, ButtonState::Released);
+    client.step_frames(2);
+    assert_eq!(
+        worn(&client),
+        Some("cursor.grab"),
+        "and its release lets go"
+    );
+}
+
+fn worn(client: &Client) -> Option<&'static str> {
+    client.world().resource::<crate::cursor::Cursors>().worn()
+}
+
+/// What happens to the window while a button is held on the hero and let go where the client is
+/// told nothing (outside the window or the page's canvas).
+enum Loss {
+    PointerLeftTheWindow,
+    WindowLostFocus,
+}
+
+fn lose(client: &mut Client, how: &Loss) {
+    let window = window(client);
+    match how {
+        Loss::PointerLeftTheWindow => {
+            client
+                .world_mut()
+                .write_message(WindowEvent::CursorLeft(CursorLeft { window }));
+            client.world_mut().write_message(CursorLeft { window });
+        }
+        Loss::WindowLostFocus => {
+            let event = WindowFocused {
+                window,
+                focused: false,
+            };
+            client
+                .world_mut()
+                .write_message(WindowEvent::WindowFocused(event.clone()));
+            client.world_mut().write_message(event);
+        }
+    }
+    client.step_frames(2);
+}
+
+/// Holds the hero still, loses the pointer as `how`, and moves the pointer over the zone again
+/// with the button up in the client's view: the hero must not follow, and no closed hand stays.
+fn the_hold_ends_when_the_pointer_is_lost(how: Loss) {
+    let mut client = standing(Duration::from_millis(16));
+    let from = zone_centre(&mut client);
+    take_hold(&mut client, from);
+    client.step_frames(30);
+    assert_eq!(worn(&client), Some("cursor.grabbing"), "held");
+    lose(&mut client, &how);
+    assert_ne!(
+        worn(&client),
+        Some("cursor.grabbing"),
+        "the closed hand stays on though the pointer is gone"
+    );
+    let at_rest = yaw(&client);
+    for step in 1..=10 {
+        client.point(from + Vec2::X * 20.0 * step as f32);
+        client.step_frames(1);
+    }
+    assert_eq!(
+        yaw(&client),
+        at_rest,
+        "the hero follows a pointer whose button was let go outside"
+    );
+}
+
+#[test]
+fn a_hero_held_by_a_pointer_that_leaves_the_window_is_let_go() {
+    the_hold_ends_when_the_pointer_is_lost(Loss::PointerLeftTheWindow);
+}
+
+#[test]
+fn a_hero_held_in_a_window_that_loses_focus_is_let_go() {
+    the_hold_ends_when_the_pointer_is_lost(Loss::WindowLostFocus);
+}
+
+/// A page left under a drag takes the hold and the closed hand with it, though nothing of the
+/// turntable runs once the hero page is gone.
+#[test]
+fn leaving_the_hero_page_under_a_drag_lets_go_of_the_hold_and_the_hand() {
+    let mut client = standing(Duration::from_millis(16));
+    let from = zone_centre(&mut client);
+    take_hold(&mut client, from);
+    assert_eq!(worn(&client), Some("cursor.grabbing"), "held");
+    act(&mut client, Act::Go(Page::Heroes));
+    client.step_frames(3);
+    client.point(Vec2::new(5.0, 500.0));
+    client.step_frames(3);
+    assert_eq!(
+        worn(&client),
+        Some("cursor.default"),
+        "no hand off the hero page"
+    );
 }
 
 /// At any window the hero stands in the right half of the page, clear of the words at its left
