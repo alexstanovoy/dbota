@@ -75,6 +75,7 @@ mod menu_effects;
 mod minimap;
 mod outposts;
 mod play;
+mod popover_frames;
 mod popup_fit;
 mod portraits;
 mod pregame;

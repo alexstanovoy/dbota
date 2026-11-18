@@ -143,9 +143,15 @@ pub fn plugin(app: &mut App) {
                 pick.run_if(crate::select::match_or_tactical),
                 pick_pregame.run_if(not(crate::select::match_or_tactical)),
                 rebuild,
-                place,
             )
                 .chain(),
+        )
+        // After layout, so that the box it sees is the one drawn this frame.
+        .add_systems(
+            PostUpdate,
+            place
+                .after(bevy::ui::UiSystems::Layout)
+                .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
         );
 }
 
@@ -563,12 +569,20 @@ fn rebuild(
     draw.content(content);
 }
 
-/// Puts a popup that is about something beside it, clear of it, and hides the frame in which a new
-/// size has not been laid out yet.
+/// How far (physical pixels) the drawn box may be from its wanted corner and still count as there:
+/// the layout rounds the edges of a box to whole pixels.
+const PLACED_WITHIN: f32 = 1.0;
+
+/// Puts a popup that is about something beside it, clear of it, and shows it only on a frame in
+/// which the box that layout drew is already at the wanted corner.
+///
+/// It runs after layout, so the size and the place it reads are the ones drawn this frame, never
+/// the last frame's: new content has a size nobody measured yet, a moved anchor or a resized window
+/// wants another corner, and in each case the corner is written for the next layout while the popup
+/// stays hidden for this frame, rather than drawn for a frame at a provisional place or size.
 ///
 /// The corner is a whole number of pixels, so that the popup's measured size, which rounds one pixel
-/// up or down with a fractional corner and is read back to place the corner, cannot make it jump
-/// between two places on every frame.
+/// up or down with a fractional corner, cannot make it jump between two places on every frame.
 fn place_beside(
     anchor: Rect,
     side: Side,
@@ -598,6 +612,12 @@ fn place_beside(
         visibility.set_if_neq(Visibility::Hidden);
         return;
     };
+    let drawn = Rect::from_center_size(at.translation, size);
+    if (drawn.min - corner).abs().max_element() <= PLACED_WITHIN {
+        visibility.set_if_neq(Visibility::Inherited);
+        return;
+    }
+    visibility.set_if_neq(Visibility::Hidden);
     let (left, top) = (px(corner.x * unit), px(corner.y * unit));
     if node.left != left {
         node.left = left;
@@ -605,16 +625,6 @@ fn place_beside(
     if node.top != top {
         node.top = top;
     }
-    // Layout applies the new corner next frame: the box that is drawn now may still cover the anchor.
-    let drawn = Rect::from_center_size(at.translation, size);
-    let apart = (anchor.min - drawn.max)
-        .max(drawn.min - anchor.max)
-        .max_element();
-    visibility.set_if_neq(if apart >= 0.0 {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    });
 }
 
 /// Puts the popup beside the box it is about, else by the cursor.
