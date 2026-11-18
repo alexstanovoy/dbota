@@ -57,6 +57,10 @@ mod rank_confidence;
 mod replay_info;
 pub(crate) mod results;
 mod screens;
+mod service_page;
+mod service_previews;
+mod service_words;
+mod services;
 pub(crate) mod shell;
 mod store;
 pub(crate) mod text;
@@ -86,9 +90,12 @@ pub use lobby_controls::Action as LobbyAction;
 pub use play::PlayAction;
 #[cfg(test)]
 pub use play::Section as PlaySection;
-pub use prefs::page_service;
 pub(crate) use preview::loading_chat;
 pub use preview::{NAMES as PREVIEWS, view as preview};
+pub use service_previews::NAMES as SERVICE_PREVIEWS;
+pub use service_words::service_argument;
+#[cfg(test)]
+pub(crate) use services::{BuiltInGuard, ServiceAct, Verdict, built_in_for_test};
 #[cfg(test)]
 pub(crate) use shell::handle_test_disconnect;
 pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};

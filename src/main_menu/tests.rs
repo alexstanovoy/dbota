@@ -35,7 +35,7 @@ const PATIENCE: u64 = 300;
 // Shared by path with the integration tests, which cannot see this crate's modules.
 #[allow(dead_code, reason = "this crate uses a part of the shared helper")]
 #[path = "../../tests/common/port_lease.rs"]
-mod port_lease;
+pub(crate) mod port_lease;
 
 /// A scratch folder under the target folder, emptied when dropped, and the loopback ports leased
 /// for the test that owns it.
@@ -477,12 +477,18 @@ impl Player {
             service.map(|s| s.url.clone()),
             kept_in(&dir),
         );
-        Player {
+        let mut player = Player {
             menu,
             trust,
             store,
             _dir: dir,
+        };
+        // Signing in is for a service that passed its check: the player waits for it, as a
+        // person does before the form shows.
+        if service.is_some() {
+            settle(&mut [&mut player], |p| p.menu.service_ready());
         }
+        player
     }
 
     /// Types into the page's fields, one after another.
@@ -1736,7 +1742,7 @@ fn my_games_and_archive_follow_the_account_through_bob_sign_out_and_alice_return
         kept_in(&player._dir),
     );
     settle(&mut [&mut player], |p| {
-        p.menu.library.visible(&guest.name).is_some()
+        p.menu.library.visible(&guest.name).is_some() && p.menu.service_ready()
     });
     player.menu.act(Act::Go(Page::Login));
     player.fill(&["alice", PASSWORD]);
@@ -2380,40 +2386,28 @@ fn a_wrong_password_leaves_the_form_as_typed_and_the_link_closed() {
     settle(&mut [&mut alice], |p| p.menu.page() == Page::Home);
 }
 
-/// A service that is not there is said on the form, the typed values kept, and a later try
-/// works as soon as it is.
+/// A service that went down after it passed its check is said on the form when sign-in is sent
+/// (in plain words: no error text of the system), the typed values kept.
 #[test]
-fn a_service_that_is_down_at_submit_is_said_on_the_form() {
-    let dir = Scratch::new("down");
-    let (mut alice, _trust) = offline("alice", &dir);
-    let mut player = Player {
-        store: alice_store(&alice),
-        trust: Trust::new(None).expect("trust"),
-        menu: {
-            alice.act(Act::Go(Page::Register));
-            alice
-        },
-        _dir: dir,
-    };
+fn a_service_that_goes_down_after_its_check_is_said_on_the_form() {
+    let service = service();
+    let mut player = Player::new(Some(&service));
+    player.menu.act(Act::Go(Page::Register));
+    drop(service);
     player.fill(&["alice", PASSWORD, PASSWORD]);
     player.menu.act(Act::Submit);
     settle(&mut [&mut player], |p| {
         p.menu.view().status.is_some_and(|s| s.error) && !p.menu.connecting()
     });
     let status = player.menu.view().status.expect("a message");
-    assert!(
-        status.text.starts_with("Cannot reach the service"),
-        "{}",
-        status.text
+    assert_eq!(
+        status.text,
+        "Cannot reach the service: check your internet connection, or try again in a minute"
     );
     assert_eq!(player.menu.page(), Page::Register);
     assert_eq!(player.menu.form.value(0), "alice");
     assert_eq!(player.menu.form.value(1), PASSWORD);
     assert!(!player.menu.link_open());
-}
-
-fn alice_store(menu: &MenuCore) -> SettingsStore {
-    menu.store.clone()
 }
 
 /// Sign in, search, cancel, sit idle until the link is let go, search again: the account stays
@@ -4113,7 +4107,7 @@ fn changing_matchmaker_clears_the_old_login_before_a_public_profile_can_be_queri
     assert!(player.menu.logged_in());
     let trap = std::net::TcpListener::bind("127.0.0.1:0").expect("new service trap");
     trap.set_nonblocking(true).expect("nonblocking");
-    let next = format!("ws://{}/control", trap.local_addr().expect("address"));
+    let next = format!("wss://{}", trap.local_addr().expect("address"));
     player.menu.act(Act::Go(Page::Service));
     player.fill(&[&next]);
     player.menu.act(Act::Submit);
@@ -4136,7 +4130,23 @@ fn changing_matchmaker_clears_the_old_login_before_a_public_profile_can_be_queri
             .is_err()
     );
     assert_eq!(player.menu.profiles.requests, 0);
-    assert!(matches!(trap.accept(), Err(error) if error.kind()==std::io::ErrorKind::WouldBlock));
+    // The new service is only checked: what it is sent is a TLS greeting, no login and no token.
+    let greeted = std::cell::RefCell::new(None);
+    settle(&mut [&mut player], |_| {
+        let mut held = greeted.borrow_mut();
+        if held.is_none() {
+            *held = trap.accept().ok();
+        }
+        held.is_some()
+    });
+    let (mut connection, _) = greeted.into_inner().expect("the check's connection");
+    connection.set_nonblocking(false).expect("blocking");
+    connection
+        .set_read_timeout(Some(Duration::from_secs(PATIENCE)))
+        .expect("a hang guard");
+    let mut greeting = [0u8; 5];
+    std::io::Read::read_exact(&mut connection, &mut greeting).expect("a TLS record header");
+    assert_eq!(greeting[0], 0x16, "the first record is a TLS handshake");
 }
 
 #[test]

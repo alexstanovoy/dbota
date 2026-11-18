@@ -105,6 +105,7 @@ mod scan;
 mod scoreboard;
 mod secret_shop;
 mod sentry_ward;
+mod services;
 mod settings;
 mod sf_orbits;
 mod sf_threads;

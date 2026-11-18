@@ -452,7 +452,9 @@ pub(super) fn signed_up_with(
     let page = |c: &Client| c.world().non_send::<MenuCore>().page();
     // A hang guard: the machine may run many other jobs.
     let patience = Duration::from_secs(240);
-    client.within(patience, "the sign-in page", |c| page(c) == Page::Login);
+    client.within(patience, "the sign-in page, its service checked", |c| {
+        page(c) == Page::Login && c.world().non_send::<MenuCore>().service_ready()
+    });
     act(&mut client, Act::Go(Page::Register));
     let password = crate::main_menu::tests::PASSWORD;
     for (at, value) in [login, password, password].into_iter().enumerate() {

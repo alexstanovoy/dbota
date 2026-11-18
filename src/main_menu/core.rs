@@ -137,6 +137,8 @@ pub enum Act {
     HistoryPage(i8),
     LeaderboardMode(String),
     LeaderboardPlayers(super::leaderboard::Players),
+    /// Uses, checks again or removes a service of the Service page's list.
+    Service(super::services::ServiceAct),
     /// Puts the keyboard in a field of the page's form.
     Focus(usize),
     Type(String),
@@ -573,7 +575,7 @@ pub(super) enum OnScreen {
 pub struct MenuCore {
     pub(super) store: SettingsStore,
     pub(super) prefs: Prefs,
-    tls: Tls,
+    pub(super) tls: Tls,
     pub(super) client: Option<Client>,
     #[cfg(test)]
     pause_service_events: bool,
@@ -717,6 +719,13 @@ pub struct MenuCore {
     /// Whether the service has been tried: a menu under a game named on the
     /// command line tries it once that game is left.
     tried_service: bool,
+    /// What the check of each service found, before anyone signs in to it.
+    pub(super) checks: super::services::Checks,
+    /// The service of the page a browser client runs in, in the canonical form: offered, and
+    /// chosen at first.
+    pub(super) page_service: Option<String>,
+    /// How long a check waits for its service.
+    pub(super) check_patience: std::time::Duration,
 }
 
 impl MenuCore {
@@ -760,11 +769,17 @@ impl MenuCore {
         let mut prefs = store
             .read(Entry::Menu)
             .map_or_else(Prefs::default, |t| Prefs::parse(&t));
+        let page_service = super::prefs::page_service()
+            .and_then(|address| bota_radovid::service_address(&address).ok());
+        Self::adopt_remembered_service(&mut prefs, page_service.as_deref());
         if let Some(service) = service {
             prefs.service = service;
         }
+        // A new player lands on the sign-in of a service, not on an offline lobby.
+        Self::choose_first_service(&mut prefs, page_service.as_deref());
         let local_first = !cfg!(target_arch = "wasm32") && prefs.service.is_empty();
         let mut core = Self::initial(store, tls, prefs, library);
+        core.page_service = page_service;
         // No service to reach: the menu opens on what needs none, and the sign-in shows when
         // the player goes to the online pages.
         if local_first {
@@ -813,6 +828,9 @@ impl MenuCore {
             retry_at: None,
             retry: true,
             link_lost: false,
+            checks: Default::default(),
+            page_service: None,
+            check_patience: super::services::CHECK_PATIENCE,
             page: Page::Service,
             play,
             accepted: Default::default(),
@@ -1163,6 +1181,7 @@ impl MenuCore {
             self.page = page;
         }
         self.form = Form::new(self.form_kind(), &self.prefs);
+        self.sync_service_controls();
         self.lobby_browser_controls();
     }
 
@@ -1221,7 +1240,7 @@ impl MenuCore {
         self.status = Some(Status { text, error });
     }
 
-    fn save_prefs(&self) {
+    pub(super) fn save_prefs(&self) {
         if let Err(err) = self.store.write(Entry::Menu, &self.prefs.render()) {
             bevy::log::warn!("menu choices not saved: {err}");
         }
@@ -1244,7 +1263,13 @@ impl MenuCore {
                 self.conn = Conn::Offline;
                 self.credentials = None;
                 self.outbox.clear();
-                self.tell(format!("Cannot reach the service: {err}"), true);
+                self.tell(
+                    format!(
+                        "Cannot reach the service: {}",
+                        super::service_words::connection_words(&err)
+                    ),
+                    true,
+                );
             }
         }
     }
@@ -1359,7 +1384,7 @@ impl MenuCore {
     }
 
     /// Closes the link, keeping what the view shows of a signed-in account.
-    fn drop_link(&mut self) {
+    pub(super) fn drop_link(&mut self) {
         self.connection_generation = self.connection_generation.wrapping_add(1);
         self.list_cache.disconnected();
         match (&mut self.client, self.account) {
@@ -1425,6 +1450,7 @@ impl MenuCore {
 
     /// Takes in what the service said since the last frame.
     pub fn update(&mut self) {
+        self.drive_service_checks();
         if self.link_ready()
             && let Some(client) = &self.client
         {
@@ -1526,9 +1552,12 @@ impl MenuCore {
             self.retry_at = Some(Instant::now() + RECONNECT_AFTER);
             return;
         }
-        let why = match err {
-            ClientError::Refused(error) => error_text(&error),
-            other => text::line(&other.to_string(), text::MESSAGE),
+        let why = match &err {
+            ClientError::Refused(error) => error_text(error),
+            other => text::line(
+                &super::service_words::connection_words(other),
+                text::MESSAGE,
+            ),
         };
         let what = if was_signed_in {
             "Disconnected from the service"
@@ -2186,6 +2215,8 @@ impl MenuCore {
         // Signing in starts with the service's address, until there is one.
         let page = match page {
             Page::Login | Page::Register if self.prefs.service.is_empty() => Page::Service,
+            // A player who is signed in has no sign-in to go back to.
+            Page::Login if self.logged_in() => Page::Home,
             page => page,
         };
         if page.needs_account() && !self.logged_in() {
@@ -2340,6 +2371,10 @@ impl MenuCore {
             | Act::Quit
             | Act::Answer(_)
             | Act::Back => self.act_library(act),
+            Act::Service(act) => {
+                self.service_act(act);
+                None
+            }
             Act::Dashboard
             | Act::ReturnToGame
             | Act::Disconnect
@@ -2684,21 +2719,7 @@ impl MenuCore {
             return;
         }
         match self.page {
-            Page::Service => {
-                let service = self.form.value(0).trim().to_owned();
-                if let Err(why) = service_address(&service) {
-                    self.tell(why, true);
-                    return;
-                }
-                if !bota_radovid::same_matchmaker(&self.prefs.service, &service) {
-                    self.logout();
-                    self.drop_link();
-                }
-                self.prefs.service = service;
-                self.save_prefs();
-                self.status = None;
-                self.go_form(Page::Login);
-            }
+            Page::Service => self.add_service(),
             Page::Login => self.login(),
             Page::Register => self.register(),
             Page::LocalLobby if self.form.focused_field() == Some(2) => self.direct(false, false),
@@ -2712,6 +2733,10 @@ impl MenuCore {
     }
 
     fn login(&mut self) {
+        if !self.service_ready() {
+            self.tell(super::service_words::NOT_CHECKED.to_owned(), true);
+            return;
+        }
         let login = self.form.value(0).trim().to_owned();
         let password = Secret(self.form.value(1).to_owned());
         if login.is_empty() || password.0.is_empty() {
@@ -2732,6 +2757,10 @@ impl MenuCore {
     }
 
     fn register(&mut self) {
+        if !self.service_ready() {
+            self.tell(super::service_words::NOT_CHECKED.to_owned(), true);
+            return;
+        }
         let login = self.form.value(0).trim().to_owned();
         let (password, again) = (self.form.value(1).to_owned(), self.form.value(2).to_owned());
         let complaint = if !valid_login(&login) {
@@ -2758,7 +2787,7 @@ impl MenuCore {
         self.sign_in(msg, Asked::Register);
     }
 
-    fn logout(&mut self) {
+    pub(super) fn logout(&mut self) {
         // Forget the local session at once. Keep an open link only long enough to tell the
         // service, so replies and events from the previous account cannot refill the menu.
         let live = self.link_ready();
@@ -3173,25 +3202,6 @@ pub fn clock(secs: u32) -> String {
 
 /// The seats of a local lobby, whatever its rules: five a side, as the map's.
 pub const LOCAL_SEATS: u8 = 10;
-
-/// Whether a typed service address can be tried at all, or what to type
-/// instead: an empty line or a game server's `host:port` would only fail
-/// later with the connection's own words.
-fn service_address(service: &str) -> Result<(), String> {
-    let host = service
-        .strip_prefix("wss://")
-        .or_else(|| service.strip_prefix("ws://"));
-    match host {
-        _ if service.is_empty() => {
-            Err("Type the service's address first: wss://host:port".to_owned())
-        }
-        Some(host) if !host.trim_end_matches('/').is_empty() => Ok(()),
-        Some(_) => Err(format!("'{service}' names no host: wss://host:port")),
-        None => Err(format!(
-            "'{service}' is not a service address: it starts with wss:// (ws:// on your own network). A game server's address goes under LOCAL LOBBY"
-        )),
-    }
-}
 
 impl MenuCore {
     fn queue(&mut self, ruleset: RulesetId) {

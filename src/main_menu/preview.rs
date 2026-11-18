@@ -103,8 +103,7 @@ fn hover_preview(
 }
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 62] = [
-    "service",
+pub const NAMES: [&str; 61] = [
     "login",
     "register",
     "home",
@@ -168,7 +167,7 @@ pub const NAMES: [&str; 62] = [
     "home-offline",
 ];
 
-fn field(label: &'static str, shown: &str, focused: bool) -> FieldView {
+pub(super) fn field(label: &'static str, shown: &str, focused: bool) -> FieldView {
     FieldView {
         label,
         shown: shown.to_owned(),
@@ -176,7 +175,7 @@ fn field(label: &'static str, shown: &str, focused: bool) -> FieldView {
     }
 }
 
-fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
+pub(super) fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
     MenuView {
         lobby_ui: Default::default(),
         page,
@@ -188,6 +187,7 @@ fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
             plain_host: None,
             rules: (page == Page::LocalLobby).then_some(LocalRules::Full),
             hosted_at: None,
+            service: None,
         },
         play: Default::default(),
         queue_full: false,
@@ -303,9 +303,11 @@ pub fn view(name: &str) -> Option<MenuView> {
     if let Some(view) = super::page_previews::view(name) {
         return Some(view);
     }
+    if let Some(view) = super::service_previews::view(name) {
+        return Some(view);
+    }
     Some(match name {
-        "service" => preview_service(),
-        "login" => preview_login(),
+        "login" => super::service_previews::view("login-works").expect("the service fixtures"),
         "register" => preview_register(),
         "home" => preview_home(),
         "searching" | "main-searching" | "overloaded" => preview_searching(name),
@@ -381,35 +383,8 @@ pub(crate) fn loading_chat() -> [(&'static str, bevy::prelude::Color, &'static s
     ]
 }
 
-fn preview_service() -> MenuView {
-    form(
-        Page::Service,
-        FormKind::Service,
-        vec![field("Service", "wss://play.example.org:4460", true)],
-    )
-}
-
-fn preview_login() -> MenuView {
-    form(
-        Page::Login,
-        FormKind::Login,
-        vec![
-            field("Login", "alice", false),
-            field("Password", "••••••••••", true),
-        ],
-    )
-}
-
 fn preview_register() -> MenuView {
-    let mut view = form(
-        Page::Register,
-        FormKind::Register,
-        vec![
-            field("Login", "alice", false),
-            field("Password", "•••••••••", false),
-            field("Password again", "••••", true),
-        ],
-    );
+    let mut view = super::service_previews::view("register-works").expect("the service fixtures");
     view.status = Some(Status {
         text: "The two passwords differ".to_owned(),
         error: true,

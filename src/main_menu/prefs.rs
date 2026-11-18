@@ -7,12 +7,17 @@ use bota_radovid::SessionToken;
 const MAX_VALUE: usize = 256;
 /// Hosts remembered as told about plain TCP, at most.
 pub const MAX_PLAIN_HOSTS: usize = 32;
+/// Services a player may add, at most.
+pub const MAX_ADDED_SERVICES: usize = 16;
 
 /// What the menu remembers between runs.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Prefs {
-    /// The matchmaking service, `wss://host:port`.
+    /// The matchmaking service signed in to, in the canonical form of
+    /// [`bota_radovid::service_address`]; empty until one is chosen.
     pub service: String,
+    /// The services the player added, canonical, beside the ones built in.
+    pub added_services: Vec<String>,
     /// The last login typed (never the password).
     /// The last login typed on this device, used as the sign-in form’s default.
     pub login: String,
@@ -44,7 +49,20 @@ impl Prefs {
             }
             let value = value.to_owned();
             match name.trim() {
-                "service" => prefs.service = value,
+                // A service of an older file, typed in any form, is kept in the canonical one;
+                // one that cannot be an address is no choice at all.
+                "service" => {
+                    if let Ok(address) = bota_radovid::service_address(&value) {
+                        prefs.service = address;
+                    }
+                }
+                "service_added" if prefs.added_services.len() < MAX_ADDED_SERVICES => {
+                    if let Ok(address) = bota_radovid::service_address(&value)
+                        && !prefs.added_services.contains(&address)
+                    {
+                        prefs.added_services.push(address);
+                    }
+                }
                 "login" => prefs.login = value,
                 "direct" => prefs.direct = value,
                 "host_port" => prefs.host_port = value,
@@ -71,6 +89,9 @@ impl Prefs {
             if !value.is_empty() {
                 out.push_str(&format!("{name} = {value}\n"));
             }
+        }
+        for address in &self.added_services {
+            out.push_str(&format!("service_added = {address}\n"));
         }
         if self.host_rules != super::core::LocalRules::default() {
             out.push_str(&format!("host_rules = {}\n", self.host_rules.name()));

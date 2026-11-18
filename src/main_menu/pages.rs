@@ -78,22 +78,33 @@ fn loading_or_login(kit: &mut Kit, root: Entity, view: &MenuView) -> bool {
     }
     let way_in = matches!(
         &view.body,
-        PageView::Form {
-            kind: FormKind::Service | FormKind::Login | FormKind::Register,
-            ..
-        }
+        PageView::Services(_)
+            | PageView::Form {
+                kind: FormKind::Login | FormKind::Register,
+                ..
+            }
     );
     if way_in {
         backdrop::draw(kit, root, Backdrop::of(view.side), 0.0);
-        if let PageView::Form {
-            kind,
-            fields,
-            busy,
-            plain_host,
-            ..
-        } = &view.body
-        {
-            way_in_page(kit, root, *kind, fields, *busy, plain_host.as_deref());
+        match &view.body {
+            PageView::Form {
+                kind,
+                fields,
+                busy,
+                plain_host,
+                service,
+                ..
+            } => way_in_page(
+                kit,
+                root,
+                *kind,
+                fields,
+                *busy,
+                plain_host.as_deref(),
+                service.as_ref(),
+            ),
+            PageView::Services(services) => super::service_page::draw(kit, root, services),
+            _ => {}
         }
         super::top_bar::quit(kit, root, view);
         return true;
@@ -253,6 +264,7 @@ fn draw_body(kit: &mut Kit, body: Entity, view: &MenuView) {
             plain_host,
             rules,
             hosted_at,
+            service,
         } => {
             form_page(
                 kit,
@@ -264,6 +276,7 @@ fn draw_body(kit: &mut Kit, body: Entity, view: &MenuView) {
                 *rules,
                 hosted_at.as_deref(),
                 (*kind == FormKind::Host).then_some(view.host_cheats),
+                service.as_ref(),
             );
         }
         PageView::Home { .. } => {}
@@ -472,8 +485,8 @@ fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
     }
 }
 
-/// The way in (the service's address, signing in, registering): Dota's logo and DBOTA over a
-/// card of the form's fields and buttons, in the middle of the background.
+/// The way in (the services, signing in, registering): Dota's logo and DBOTA over a card of the
+/// page's fields and buttons, in the middle of the background.
 fn way_in_page(
     kit: &mut Kit,
     root: Entity,
@@ -481,20 +494,51 @@ fn way_in_page(
     fields: &[FieldView],
     busy: bool,
     plain: Option<&str>,
+    service: Option<&super::view::ServiceBanner>,
 ) {
+    let column = way_in_column(kit, root, false);
+    let card = form_page(
+        kit, column, kind, fields, busy, plain, None, None, None, service,
+    );
+    kit.commands
+        .entity(card)
+        .entry::<Node>()
+        .and_modify(|mut node| node.width = px(WAY_IN_WIDTH));
+    without_account(kit, column);
+}
+
+/// The way in's column: Dota's logo and DBOTA, where the card goes under them. A page that is
+/// longer than the screen asks for `scrolling`: the wheel moves it.
+pub(super) fn way_in_column(kit: &mut Kit, root: Entity, scrolling: bool) -> Entity {
     let column = kit.node(
         root,
         Node {
             position_type: PositionType::Absolute,
             left: px(0),
             right: px(0),
-            top: px(WAY_IN_TOP),
+            top: px(if scrolling { 0.0 } else { WAY_IN_TOP }),
+            bottom: if scrolling { px(0) } else { Val::Auto },
+            padding: if scrolling {
+                UiRect::new(px(0), px(0), px(WAY_IN_TOP), px(40))
+            } else {
+                UiRect::ZERO
+            },
+            overflow: if scrolling {
+                Overflow::scroll_y()
+            } else {
+                Overflow::DEFAULT
+            },
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             row_gap: px(28),
             ..default()
         },
     );
+    if scrolling {
+        kit.commands
+            .entity(column)
+            .insert((MenuBody, ScrollPosition::default()));
+    }
     let mark = kit.node(
         column,
         Node {
@@ -513,11 +557,11 @@ fn way_in_page(
         },
     );
     kit.typed(mark, "DBOTA", theme::WAY_IN_WORDMARK, theme::INK_1);
-    let card = form_page(kit, column, kind, fields, busy, plain, None, None, None);
-    kit.commands
-        .entity(card)
-        .entry::<Node>()
-        .and_modify(|mut node| node.width = px(WAY_IN_WIDTH));
+    column
+}
+
+/// The link under the way in's card to where a player plays without an account.
+pub(super) fn without_account(kit: &mut Kit, column: Entity) {
     kit.quiet(
         column,
         "Play without an account",
@@ -546,6 +590,7 @@ fn form_page(
     rules: Option<LocalRules>,
     hosted_at: Option<&str>,
     cheats: Option<bool>,
+    service: Option<&super::view::ServiceBanner>,
 ) -> Entity {
     let card = kit.panel(
         body,
@@ -558,13 +603,18 @@ fn form_page(
         },
     );
     form_heading(kit, card, kind);
+    if let Some(banner) = service {
+        super::service_page::banner(kit, card, banner);
+    }
+    // Signing in is for a service that passed its check; otherwise the card has none of it.
+    let open = service.is_none_or(|banner| banner.open);
     let hosting = kind == FormKind::Host;
     // The local lobby's address is below the lobby it hosts.
     let shown = if hosting { 1 } else { fields.len() };
-    for (at, field) in fields.iter().enumerate().take(shown) {
+    for (at, field) in fields.iter().enumerate().take(shown).filter(|_| open) {
         field_box(kit, card, at, field);
     }
-    if busy {
+    if busy && open {
         kit.text(card, "Connecting to the service…", 15.0, theme::GOLD);
     }
     if let Some(chosen) = rules.filter(|_| hosting) {
@@ -581,7 +631,9 @@ fn form_page(
     if let Some(on) = cheats.filter(|_| hosting) {
         checkbox(kit, card, "Enable cheats", Act::ToggleCheats, on);
     }
-    form_actions(kit, card, kind, hosted_at);
+    if open {
+        form_actions(kit, card, kind, hosted_at);
+    }
     if kind == FormKind::Host
         && let Some(address) = fields.get(1)
     {
@@ -606,10 +658,6 @@ fn form_page(
 
 fn form_heading(kit: &mut Kit, card: Entity, kind: FormKind) {
     let (title, hint) = match kind {
-        FormKind::Service => (
-            "MATCHMAKING SERVICE",
-            "The address of the service to play on: wss://host:port",
-        ),
         FormKind::Login => ("SIGN IN", ""),
         FormKind::Register => (
             "CREATE ACCOUNT",
@@ -620,7 +668,8 @@ fn form_heading(kit: &mut Kit, card: Entity, kind: FormKind) {
             "A game hosted on this machine, no account needed, or a game server joined by its \
              address. You play under your profile name (SETTINGS, Options).",
         ),
-        FormKind::Lobby
+        FormKind::Service
+        | FormKind::Lobby
         | FormKind::LobbyPassword
         | FormKind::LobbySettings
         | FormKind::LobbyChat
@@ -635,10 +684,7 @@ fn form_heading(kit: &mut Kit, card: Entity, kind: FormKind) {
 
 fn form_actions(kit: &mut Kit, card: Entity, kind: FormKind, hosted_at: Option<&str>) {
     // The way in's card is narrow: its buttons stand one under the other, as wide as the card.
-    let way_in = matches!(
-        kind,
-        FormKind::Service | FormKind::Login | FormKind::Register
-    );
+    let way_in = matches!(kind, FormKind::Login | FormKind::Register);
     let row = kit.node(
         card,
         Node {
@@ -669,7 +715,6 @@ fn form_actions(kit: &mut Kit, card: Entity, kind: FormKind, hosted_at: Option<&
 
 fn form_answers(kind: FormKind, hosted: bool) -> Vec<(&'static str, Act, Tone)> {
     match kind {
-        FormKind::Service => vec![("CONTINUE", Act::Submit, Tone::Primary)],
         FormKind::Login => vec![
             ("SIGN IN", Act::Submit, Tone::Primary),
             ("CREATE ACCOUNT", Act::Go(Page::Register), Tone::Secondary),

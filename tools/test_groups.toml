@@ -124,6 +124,7 @@ paths = [
     "src/main.rs",
     "src/e2e/regame.rs",
     "src/e2e/shell.rs",
+    "src/e2e/services.rs",
     "src/theme.rs",
     "src/session.rs",
     "src/steering.rs",
@@ -200,6 +201,7 @@ tests = [
     { package = "dbota", target = "bin:dbota", filters = [
         "e2e::regame::",
         "e2e::shell::",
+        "e2e::services::",
         "quality::tests::",
         "session::environment_tests::",
         "e2e::harness::",

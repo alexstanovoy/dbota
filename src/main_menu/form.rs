@@ -69,6 +69,8 @@ fn items_of(kind: FormKind, fields: usize) -> Vec<Item> {
     let links = [Act::Go(Page::Service)];
     #[cfg(not(target_arch = "wasm32"))]
     let links = links.into_iter().chain([Act::Go(Page::LocalLobby)]);
+    #[cfg(target_arch = "wasm32")]
+    let links = links.into_iter();
     let buttons = |acts: Vec<Act>| {
         (0..fields)
             .map(Item::Field)
@@ -78,8 +80,12 @@ fn items_of(kind: FormKind, fields: usize) -> Vec<Item> {
     match kind {
         FormKind::None => Vec::new(),
         FormKind::Leaderboard => buttons(vec![Act::Submit]),
-        FormKind::Service if cfg!(target_arch = "wasm32") => buttons(vec![Act::Submit]),
-        FormKind::Service => buttons(vec![Act::Submit, Act::Go(Page::LocalLobby)]),
+        FormKind::Service => buttons(
+            [Act::Submit, Act::Go(Page::Login)]
+                .into_iter()
+                .chain(links.skip(1))
+                .collect(),
+        ),
         FormKind::Login => buttons(
             [Act::Submit, Act::Go(Page::Register)]
                 .into_iter()
@@ -125,6 +131,12 @@ pub struct Form {
     items: Vec<Item>,
     /// An index into the items.
     focus: usize,
+    /// Whether the way in's sign-in is open: its service passed the check. While it is not,
+    /// there are no fields to type in and Tab visits only what is shown.
+    open: bool,
+    /// The buttons of the services (the Service page's rows, or the sign-in's check again) that
+    /// Tab visits before the rest.
+    service_controls: Vec<Act>,
 }
 
 impl Form {
@@ -134,7 +146,7 @@ impl Form {
         let fields = match kind {
             FormKind::None => Vec::new(),
             FormKind::Leaderboard => vec![Field::new("Find a nickname", "", false, 20)],
-            FormKind::Service => vec![Field::new("Service", &prefs.service, false, 200)],
+            FormKind::Service => vec![Field::new("Address", "", false, 200)],
             FormKind::Login => vec![
                 Field::new("Login", &prefs.login, false, MAX_LOGIN_LEN),
                 Field::new("Password", "", true, PASSWORD),
@@ -191,6 +203,63 @@ impl Form {
             fields,
             items,
             focus,
+            open: true,
+            service_controls: Vec::new(),
+        }
+    }
+
+    /// The way in follows what the checks found: `open` says whether the chosen service passed,
+    /// and `controls` are the buttons of the services shown (the Service page's rows, or the
+    /// sign-in's check again); the keyboard stays where it was when what it had is still there.
+    pub(super) fn set_service_controls(&mut self, open: bool, controls: Vec<Act>) {
+        if !matches!(
+            self.kind,
+            FormKind::Service | FormKind::Login | FormKind::Register
+        ) || (self.open == open && self.service_controls == controls)
+        {
+            return;
+        }
+        let was = self.items.get(self.focus).cloned();
+        self.open = open;
+        self.service_controls = controls;
+        self.items = self.way_in_items();
+        self.focus = was
+            .and_then(|was| self.items.iter().position(|item| *item == was))
+            .or_else(|| {
+                self.items
+                    .iter()
+                    .position(|item| matches!(item, Item::Field(_)))
+            })
+            .unwrap_or(0);
+    }
+
+    /// The items of the way in's pages as the services have them now.
+    fn way_in_items(&self) -> Vec<Item> {
+        let own = items_of(self.kind, self.fields.len());
+        match self.kind {
+            // The rows' buttons come first, in the order they are drawn.
+            FormKind::Service => self
+                .service_controls
+                .iter()
+                .cloned()
+                .map(Item::Button)
+                .chain(own)
+                .collect(),
+            // No service that works: no fields and no way to send them, only the check again
+            // and the ways out.
+            FormKind::Login | FormKind::Register if !self.open => self
+                .service_controls
+                .iter()
+                .cloned()
+                .map(Item::Button)
+                .chain(own.into_iter().filter(|item| {
+                    matches!(
+                        item,
+                        Item::Button(Act::Go(Page::Service | Page::LocalLobby))
+                    )
+                }))
+                .collect(),
+            _ => own,
         }
     }
 

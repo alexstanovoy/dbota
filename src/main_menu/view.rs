@@ -293,9 +293,53 @@ pub struct ReplayShelf {
     pub service_keeps_none: bool,
 }
 
+/// One service in the Service page's list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceRow {
+    pub name: String,
+    pub address: String,
+    /// The one signed in to.
+    pub selected: bool,
+    pub removable: bool,
+    /// Its check runs: nothing to check again.
+    pub checking: bool,
+    pub words: super::service_words::Words,
+}
+
+/// What the way in's card says of the service signed in to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceBanner {
+    pub name: String,
+    pub address: String,
+    pub checking: bool,
+    pub words: super::service_words::Words,
+    /// Whether the service passed: only then are the sign-in's fields and buttons shown.
+    pub open: bool,
+}
+
+/// What the Service page says of the address being typed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TypedService {
+    Nothing,
+    /// Where it would be added, in the canonical form.
+    Address(String),
+    /// Why it is no address.
+    Refused(String),
+}
+
+/// The Service page: the list of services, and the field to add one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServicesView {
+    pub rows: Vec<ServiceRow>,
+    pub field: FieldView,
+    pub typed: TypedService,
+}
+
 /// The page under the top bar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageView {
+    /// The services to sign in to.
+    Services(Box<ServicesView>),
     Heroes,
     MatchHistory(super::history_page::View),
     Hero {
@@ -319,6 +363,8 @@ pub enum PageView {
         rules: Option<LocalRules>,
         /// The address of the local lobby this client hosts now.
         hosted_at: Option<String>,
+        /// The service the sign-in and registration are for, and what its check found.
+        service: Option<ServiceBanner>,
     },
     Home {
         matches: std::sync::Arc<Vec<super::history::Match>>,
@@ -638,13 +684,25 @@ impl MenuCore {
     pub(super) fn body_at(&self, now: Instant) -> PageView {
         let page = self.page_beneath();
         match page {
-            Page::Service | Page::Login | Page::Register | Page::LocalLobby => PageView::Form {
+            Page::Service => PageView::Services(Box::new(ServicesView {
+                rows: self.service_rows(),
+                field: self
+                    .fields()
+                    .into_iter()
+                    .next()
+                    .expect("the Service page has its address field"),
+                typed: self.typed_service(),
+            })),
+            Page::Login | Page::Register | Page::LocalLobby => PageView::Form {
                 kind: self.form.kind,
                 fields: self.fields(),
                 busy: self.connecting() && page != Page::LocalLobby,
                 plain_host: self.plain_host.as_ref().map(|h| text::line(h, text::NAME)),
                 rules: (page == Page::LocalLobby).then(|| self.rules_choice()),
                 hosted_at: self.hosted_at().map(str::to_owned),
+                service: (page != Page::LocalLobby)
+                    .then(|| self.service_banner())
+                    .flatten(),
             },
             Page::Home => self.home(),
             Page::MyGames => PageView::MyGames {

@@ -324,6 +324,10 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
 
 def start_demo(page, console, silent, shot, evidence):
     """Create the account, enter a Demo Hero match from the hero catalogue and cut the client's replies."""
+    # The page's own service is the one chosen, and it is checked (through the browser's
+    # WebSocket) before the sign-in form opens: the form below is typed into only then.
+    wait_console(page, console, r"service wss://127\.0\.0\.1:\d+ passed its check", 600,
+                 "the page's own service checked")
     click_drawn(page, CLICK_CREATE_ACCOUNT)
     for text in ("smoker", "correct horse battery", "correct horse battery"):
         page.keyboard.type(text)

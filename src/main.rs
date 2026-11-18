@@ -200,9 +200,9 @@ pub struct Args {
     /// menu opens.
     #[arg(long, value_name = "ADDRESS")]
     pub addr: Option<String>,
-    /// The matchmaking service the menu signs in to, `wss://host:port`;
+    /// The matchmaking service the menu signs in to, `wss://host:port` or just `host`;
     /// remembered for the next run.
-    #[arg(long, env = "DBOTA_SERVICE", value_name = "URL")]
+    #[arg(long, env = "DBOTA_SERVICE", value_name = "URL", value_parser = main_menu::service_argument)]
     pub service: Option<String>,
     /// Trust exactly the certificates in this PEM file for the service and
     /// `wss://` games, instead of the public web's (a service of one's own).
@@ -299,7 +299,7 @@ pub struct Args {
     pub trace_feel: bool,
     /// Debug: draw a screen of the main menu with made-up contents, no
     /// service needed (for screenshots: `--frames N --screenshot FILE`).
-    #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS.iter().copied().chain(postgame::preview::NAMES.iter().copied())))]
+    #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS.iter().copied().chain(main_menu::SERVICE_PREVIEWS.iter().copied()).chain(postgame::preview::NAMES.iter().copied())))]
     pub menu_preview: Option<String>,
     /// Debug: keep a tooltip open: `item:KEY` or `shop:KEY` (item key or id), `buff:ID` (an effect with ten seconds left),
     /// `ability:ID:LEVEL`, `stats` (the stats tooltip) or `talents` (the
@@ -928,7 +928,7 @@ fn menu(
     #[cfg(target_arch = "wasm32")]
     let pem: Option<String> = None;
     let trust = main_menu::Trust::new(pem.as_deref())?;
-    let service = args.service.clone().or_else(main_menu::page_service);
+    let service = args.service.clone();
     let library = replays::Library::open_default();
     // A game named on the command line is on screen first, the menu under it.
     let core = if menu_first {
