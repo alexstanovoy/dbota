@@ -10,21 +10,17 @@
 <p id="starting" role="status" hidden>Starting the game...</p>
 <main id="gate" hidden>
   <h1>dbota</h1>
-  <p id="lead">Dota 2's look for bota matches: the map, heroes, buildings, trees, icons and sounds from your own Dota 2 install.</p>
+  <p id="lead">dbota is the client of bota, an open-source simulator of Dota 2 matches: play against bots and people
+  with Dota 2's look, the map, heroes, buildings, trees, icons and sounds taken from your own Dota 2 install.</p>
   <section id="grant" hidden>
+    <p class="hint"><strong>dbota needs your own Dota 2 install</strong> (free on Steam). Its folder: in Steam, right-click
+    Dota 2 → Manage → Browse local files (the "dota 2 beta" folder).</p>
     <p class="hint"><strong>Your Dota 2 files never leave your computer.</strong> The page reads them inside this tab
     and keeps a converted private copy in this browser's own storage.</p>
     <div class="row">
       <button id="pick" type="button">Use Dota 2 folder</button>
-      <button id="useCache" type="button" class="quiet" aria-haspopup="true" aria-expanded="false" aria-controls="cacheKinds">Use cache (.zip / folder)</button>
-    </div>
-    <div id="cacheKinds" class="row" hidden>
-      <button id="loadZip" type="button" class="quiet">.zip file</button>
-      <button id="loadFolder" type="button" class="quiet">Folder</button>
     </div>
     <input id="folder" type="file" webkitdirectory multiple hidden>
-    <input id="packZip" type="file" accept=".zip,application/zip" hidden>
-    <input id="packFolder" type="file" webkitdirectory multiple hidden>
   </section>
   <section id="ready" hidden>
     <p id="readyText"></p>
@@ -38,8 +34,6 @@
     <p id="staleWhy"></p>
     <div class="row">
       <button id="reimport" type="button">Re-import from the Dota 2 folder</button>
-      <button id="loadZipStale" type="button">Use a prepared cache (.zip)</button>
-      <button id="loadFolderStale" type="button">Use a prepared cache (folder)</button>
     </div>
   </section>
   <section id="progress" hidden>

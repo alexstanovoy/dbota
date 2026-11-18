@@ -4,20 +4,20 @@ The page asks for the player's own Dota 2 folder, builds a private copy of the a
 the client (compiled to wasm, drawn through WebGPU or WebGL2). **Valve's files never leave the player's machine**: the
 folder is read inside the tab with ranged reads, the copy lives in the browser's Origin Private File System, the page
 has no code that sends it anywhere, and its Content-Security-Policy allows connections only to its own origin and the
-game servers. Without a copy the page offers two buttons, "Use Dota 2 folder" and "Use cache (.zip / folder)", and the client doesn't start; with one, "Play" and "Delete and import again". Below both, the native client's download links.
+game servers. Without a copy the page says that dbota needs the player's own Dota 2 (free on Steam) and where its folder is, and offers "Use Dota 2 folder"; the client doesn't start; with one, "Play" and "Delete and import again". Below both, the native client's download links once a release names them (`DBOTA_NATIVE_DOWNLOADS` when `web/build.sh` runs; none without it).
 
 ## Parts
 
 | File | What it does |
 | --- | --- |
 | `index.html`, `page.css` | the gate (folder question, progress, ready) over the client's canvas; the CSP |
-| `native.js` | where the native client's download links point (one constant per system, placeholders for now) |
+| `native.js` | where the native client's download links point: none (no links shown) unless `web/build.sh` is given `DBOTA_NATIVE_DOWNLOADS` |
 | `boot.js` | a classic script: "Loading" at once, and the one failure screen for a browser too old, a part that won't load or a start that stalls; every later wait has a limit in `main.js` and ends on a screen naming the stage |
 | `audio.js` | keeps the page's AudioContexts, resumes a suspended one on the first click or key; `dbota_audio_state()` in the console tells their states |
 | `busy.js` | a server busy sending pages answers 503 with Retry-After: every fetch, module and worker of the page's own origin goes through here, says so on the page, waits as asked (1 to 60 s) and tries once more |
 | `main.js` | the flow: stored copy, folder grant, import progress, update check, delete, start the client that suits the browser |
-| `grant.js` | the prepared-cache picker and the folder grant (`showDirectoryPicker`, remembered in IndexedDB; else `<input webkitdirectory>`); keeps only the `*.vpk` files and the interface's typefaces (`panorama/fonts/*.otf`) it needs, whatever folder level was picked |
-| `import_worker.js` | a Web Worker running `dbota_import` (wasm), writing with synchronous OPFS handles; also checks and copies a prepared cache |
+| `grant.js` | the folder grant (`showDirectoryPicker`, remembered in IndexedDB; else `<input webkitdirectory>`); keeps only the `*.vpk` files and the interface's typefaces (`panorama/fonts/*.otf`) it needs, whatever folder level was picked |
+| `import_worker.js` | a Web Worker running `dbota_import` (wasm), writing with synchronous OPFS handles |
 | `cache.js` | the OPFS cache: layout, reads, index and stamp, published to the client as `globalThis.dbota_cache` |
 | `replays.js` | the player's replays in OPFS (else IndexedDB), published as `globalThis.dbota_replays` |
 | `report.js` | `?report`: console lines to the page's server, for local debugging |
@@ -25,7 +25,7 @@ game servers. Without a copy the page offers two buttons, "Use Dota 2 folder" an
 | `test/smoke.py` | the Playwright smoke tests (below) |
 | `build.sh` | builds `web/out`: both clients, the importer, the page |
 
-The Rust side: `crates/dbota_import` (`import.rs` the importer, `pack.rs` the prepared-cache checks),
+The Rust side: `crates/dbota_import` (`import.rs` the importer, `index.rs` the cache index checks),
 `crates/dbota_import_web` (the wasm module over picked `File`s) and in the client `src/webcache.rs`, `src/cachefs.rs` and `src/manifest.rs`.
 
 ## Graphics
@@ -45,18 +45,8 @@ allocations reach the page, which says what happened and what to do.
 
 The copy lives in `dbota/` in OPFS with `index.txt` (written last: without it the copy is unfinished) and `stamp.txt`:
 the asset fingerprint of the build that made it, then the size and modification time of `pak01_dir.vpk`, which Dota's
-updater rewrites with every content change. A copy another build made is never played: the page offers a re-import
-or a prepared cache of this version. When the remembered folder is readable without a prompt, it is compared in the
+updater rewrites with every content change. A copy another build made is never played: the page offers a re-import. When the remembered folder is readable without a prompt, it is compared in the
 background and "Update from the Dota 2 folder" appears if the install changed.
-
-## Prepared caches
-
-A friend without Dota 2 plays from a cache someone with the game made (`dbota export-cache cache.zip`, ~400 MB; hand
-it only to people you may). The page takes it as a `.zip` or a folder. Everything in it is untrusted and checked in the
-worker with the same code as `dbota import-cache` before private storage is touched: the stamp must match this build,
-`index.txt` must list exactly the files present with their sizes, every path must be plain and within the cache's
-folders, extensions and size limits, and a zip may have no encryption, links, zip64 or overlapping members, each
-inflated to no more than its stated size and matching its CRC-32. A damaged file ends the copy and removes it.
 
 ## Build and run
 
@@ -85,10 +75,9 @@ PYTHONPATH=temp/pwlib python3 -m playwright install chromium`); its docstring ha
   picks at every level, the worker's import, the copy kept over a reload, the client reading it, no request beyond the
   page's origin, and deletion.
 - `--launch-page`: the WebGL2 client starts and draws its first frames with no panic (fails at once with the message).
-- `--start-page`: the start window in both states (two buttons without a copy; "Play" and "Delete and import again" with
-  one), the delete returning to the first without touching the player's replays, and the native client's links.
-- `--prepared-page`: bad zips (another build, a path that climbs out, a wrong index) are refused with their reasons;
-  the real zip and cache folder are copied, kept over a reload and played.
+- `--start-page`: the start window in both states (one button and what is needed without a copy; "Play" and "Delete and
+  import again" with one), the delete returning to the first without touching the player's replays, a picked folder
+  without Dota refused, and no download links while no release names them.
 - `--replays-page`: a match through a real radovid that serves the page and keeps replays; the next visit fetches the
   replay, lists it, plays it with Watch and deletes it. File import and download controls are absent.
 - `--busy-page`: a server that answers 503 with Retry-After once gets the page's own script, the served cache's index and
@@ -102,8 +91,8 @@ The merge gate runs them all in its `browser` step (`tools/browser_check.sh`).
 
 ## Manual checks (the native folder dialog is out of automation's reach)
 
-1. Serve `web/out` and open it in Chrome: the privacy text, "Use Dota 2 folder" and "Use cache (.zip / folder)" (the latter offers a
-   .zip or a folder), and no way to play without assets.
+1. Serve `web/out` and open it in Chrome: what dbota needs, the privacy text, "Use Dota 2 folder", and no way to play
+   without assets.
 2. Pick `dota 2 beta`, then `game` and `dota` (all accepted), then a wrong folder (a message, no import). "Cancel"
    returns to the question and leaves no copy.
 3. Reload: "Play" at once; devtools shows the copy in OPFS and no request beyond the page's own files.
@@ -149,4 +138,4 @@ Only that executable is supported; other platforms can select `WASM_OPT=0`.
 
 A cache served with `?cache=http` must include `index.txt` from the same build. Missing,
 malformed, or oversized indexes end startup with an error. The browser uses the same bounded
-index parser as native cache discovery and prepared-cache installation.
+index parser as native cache discovery.

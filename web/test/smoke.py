@@ -12,20 +12,6 @@ shows the "pick a folder, read only what is needed" path without copying anythin
 Dota 2 install (DBOTA_DOTA_PATH or the usual Steam places); the game run needs WebGL2/WebGPU
 (SwiftShader does). Without an install the test fails (`--only-wire` leaves that part out).
 
-One more check needs a prepared asset cache, not an install:
-
-    dbota import          # a native cache of this build (DBOTA_ASSETS=... to keep it private)
-    dbota export-cache temp/cache.zip
-    DBOTA_WEB_REPLAY=$PWD/match.brp PROFILE=release OUT=temp/page web/build.sh   # a page that plays a replay: the map is drawn
-    PYTHONPATH=temp/pwlib python3 web/test/smoke.py --prepared-page temp/page \\
-        --cache-zip temp/cache.zip --cache-folder "$DBOTA_ASSETS"
-
-* `--prepared-page` (a build with a replay built in, so the client draws the map): zips the page must refuse (another build's stamp, a path that climbs out, an
-  index that does not match) are refused with their reasons and copy nothing; the real zip is
-  copied into private storage (files, stamp and bytes as the zip has them), kept over a reload and
-  played until the map is read and drawn; the cache folder is then loaded the same way. The page
-  requests nothing outside its own origin.
-
 Five more checks need no install, only a native import of this build (`dbota import`, DBOTA_ASSETS
 names it) that the pages play on through `?cache=http`, served under /cache beside the page:
 
@@ -39,9 +25,9 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
         --startup-page temp/web-live
 
 * `--start-page` (any build): the start window in both states: without a copy exactly "Use Dota 2 folder" (red) and
-  "Use cache (.zip / folder)" (grey, offering a .zip or a folder); with one "Play" (red) and "Delete and import again"
-  (grey), whose delete empties only the page's own cache and returns to the first state; in both, the native client's
-  caption and its three links (Windows, Linux, macOS) pointing where `native.js` says.
+  the words that Dota 2 is needed and where its folder is; with one "Play" (red) and "Delete and import again" (grey),
+  whose delete empties only the page's own cache and returns to the first state; in both, no native client links
+  while `native.js` names no release.
 * `--served-page` (any build): with `?cache=http` the page fetches the served cache's index.txt and
   publishes it to the client; a missing or invalid index ends startup with an error.
 * `--launch-page` (any build): the WebGL2 client starts and draws its first frames with no panic; a panic fails
@@ -1745,49 +1731,6 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
         service.terminate()
         service.wait(timeout=20)
     print("replays: kept in OPFS from a match through radovid, listed and played")
-def refusing_zips(good_zip, scratch):
-    """Zips the page must refuse: (name, path, the words of the reason). Their stamp, index and
-    files are those of the real prepared cache but for the one thing wrong."""
-    import zipfile
-
-    scratch.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(good_zip) as good:
-        stamp = good.read("stamp.txt")
-        header = good.read("index.txt").decode().split("\n", 1)[0] + "\n"
-        some = next(n for n in good.namelist() if n.startswith("hud/"))
-        data = good.read(some)
-    # A small cache of one file: valid but for the one thing wrong in each.
-    index = header + f"file {len(data)} {some}\n"
-
-    def make(name, members):
-        path = scratch / name
-        with zipfile.ZipFile(path, "w") as z:
-            for member, body in members:
-                z.writestr(member, body)
-        return path
-
-    # The paths of an archive are written as they are, including ones no tool would make.
-    climbing = index + "file 16 ../escape.png\n"
-    size = len(data)
-    return [
-        ("another build", make("stale.zip", [("stamp.txt", "v1/rev1/0000000000000000/1/2"), ("index.txt", index), (some, data)]),
-         "is for assets v1/rev1, but this dbota needs assets"),
-        ("a path that climbs out", make("climb.zip", [("stamp.txt", stamp), ("index.txt", climbing), (some, data), ("../escape.png", b"x" * 16)]),
-         "holds a file it must not: ../escape.png"),
-        ("a file the index does not list", make("unlisted.zip", [("stamp.txt", stamp), ("index.txt", index), (some, data), ("hud/unlisted.png", b"x")]),
-         "hud/unlisted.png is in it, but index.txt does not list it"),
-        ("a size the index does not say", make("size.zip", [("stamp.txt", stamp), ("index.txt", index), (some, data + b"x")]),
-         f"{some} is {size + 1} bytes, but index.txt says {size}"),
-    ]
-
-
-def open_cache_kinds(page):
-    """The start window's "Use cache" button offers its two kinds (.zip, folder) once pressed."""
-    if page.is_hidden("#cacheKinds"):
-        page.click("#useCache")
-    page.wait_for_selector("#cacheKinds:not([hidden])", timeout=5000)
-
-
 START_PRIMARY = "rgb(170, 34, 34)"
 START_SECONDARY = "rgba(0, 0, 0, 0)"
 
@@ -1829,29 +1772,17 @@ def start_buttons(page):
 
 
 def check_native_links(page):
+    """No download links while web/native.js names no release (web/build.sh writes them from
+    DBOTA_NATIVE_DOWNLOADS): a page never points a player at an address that is not one."""
     got = page.evaluate(
         """async () => {
           const { NATIVE_CLIENT } = await import('./native.js');
           const footer = document.getElementById('native');
-          return { visible: footer.offsetParent !== null, caption: footer.querySelector('span').textContent.trim(),
-                   constants: NATIVE_CLIENT,
-                   links: [...footer.querySelectorAll('a[data-os]')].map((a) => ({
-                     text: a.textContent.trim(), href: a.getAttribute('href'), rel: a.rel, os: a.dataset.os,
-                     drawn: a.querySelector('svg path')?.getAttribute('d')?.length > 100 })),
-                   credit: (({ href, textContent }) => ({ href: new URL(href).pathname, text: textContent }))(footer.querySelector('#credit a')) };
+          return { visible: footer.offsetParent !== null, constants: NATIVE_CLIENT };
         }"""
     )
-    assert got["visible"], "the native client links are shown"
-    assert got["caption"] == "Native client", got["caption"]
-    assert got["credit"] == {"href": "/THIRD-PARTY-NOTICES.md", "text": "Icons: Font Awesome, CC BY 4.0"}, got["credit"]
-    shipped = page.evaluate("async (href) => { const r = await fetch(href); return r.ok && (await r.text()); }", got["credit"]["href"])
-    assert shipped and "Font Awesome Free" in shipped and "CC BY 4.0" in shipped, "the credit link serves the notice"
-    assert [l["text"] for l in got["links"]] == ["Windows", "Linux", "macOS"], got["links"]
-    for link in got["links"]:
-        assert link["href"] == got["constants"][link["os"]], f"{link['text']} points where native.js says: {link}"
-        assert link["href"].startswith("https://"), link
-        assert "noopener" in link["rel"], f"{link['text']} opens without noopener"
-        assert link["drawn"], f"{link['text']} has its icon"
+    assert got["constants"] is None, got
+    assert not got["visible"], "download links are shown though no release names them"
 
 
 def check_start_page(directory):
@@ -1861,13 +1792,12 @@ def check_start_page(directory):
         server, base, browser, page, console, problems = opened(p, directory)
         page.goto(base)
         page.wait_for_selector("#grant:not([hidden])", timeout=60000)
-        assert start_buttons(page) == [("Use Dota 2 folder", START_PRIMARY), ("Use cache (.zip / folder)", START_SECONDARY)], start_buttons(page)
-        open_cache_kinds(page)
-        assert [t for t, _ in start_buttons(page)][2:] == [".zip file", "Folder"], "the cache button offers a .zip or a folder"
-        page.click("#useCache")
-        assert len(start_buttons(page)) == 2, "pressing it again closes the choice"
+        assert start_buttons(page) == [("Use Dota 2 folder", START_PRIMARY)], start_buttons(page)
+        grant = page.inner_text("#grant")
+        assert "needs your own Dota 2 install" in grant and "Browse local files" in grant, grant
         check_native_links(page)
-        print("no copy: two buttons, the cache kinds, the native client links")
+        print("no copy: one button, what is needed and where its folder is, no download links")
+        check_directory_picker(page)
 
         source = (HERE.parent.parent / "crates/dbota_import/src/import.rs").read_text()
         revision = re.search(r"pub const IMPORT_REV: u32 = (\d+)", source).group(1)
@@ -1877,11 +1807,11 @@ def check_start_page(directory):
         assert page.is_hidden("#grant")
         assert start_buttons(page) == [("Play", START_PRIMARY), ("Delete and import again", START_SECONDARY)], start_buttons(page)
         check_native_links(page)
-        print("a copy: Play and Delete and import again, the native client links")
+        print("a copy: Play and Delete and import again, no download links")
 
         page.click("#remove")
         page.wait_for_selector("#grant:not([hidden])", timeout=20000)
-        assert start_buttons(page) == [("Use Dota 2 folder", START_PRIMARY), ("Use cache (.zip / folder)", START_SECONDARY)], start_buttons(page)
+        assert start_buttons(page) == [("Use Dota 2 folder", START_PRIMARY)], start_buttons(page)
         check_native_links(page)
         after = page.evaluate(START_STORAGE)
         assert after["state"] is None, "the copy is deleted"
@@ -1889,7 +1819,7 @@ def check_start_page(directory):
         assert (after["replay"], after["foreign"]) == ("replay", "foreign")
         page.reload()
         page.wait_for_selector("#grant:not([hidden])", timeout=60000)
-        assert [t for t, _ in start_buttons(page)] == ["Use Dota 2 folder", "Use cache (.zip / folder)"], "still no copy after a reload"
+        assert [t for t, _ in start_buttons(page)] == ["Use Dota 2 folder"], "still no copy after a reload"
         assert not problems, problems
         print("delete: back to no copy, replays and others' storage untouched")
         browser.close()
@@ -1899,125 +1829,27 @@ def check_start_page(directory):
 
 def check_directory_picker(page):
     """Where the browser has `showDirectoryPicker` (Chromium) the folder button uses it: a stub
-    hands the page a folder in private storage (a cache of another build), which is walked and
-    taken to the worker, and refused there with its reason."""
+    hands the page a folder in private storage without Dota's packages, which is walked and
+    refused with what to pick instead."""
     page.evaluate(
         """async () => {
           const root = await navigator.storage.getDirectory();
-          const top = await root.getDirectoryHandle('picked-cache', { create: true });
-          const put = async (dir, name, text) => {
-            const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
-            await w.write(text); await w.close();
-          };
-          await put(top, 'stamp.txt', 'v1/rev1/0000000000000000/1/2');
-          await put(top, 'index.txt', 'dbota-cache 1 rev 1\\n');
-          await put(await top.getDirectoryHandle('hud', { create: true }), 'a.png', 'x');
+          const top = await root.getDirectoryHandle('picked-folder', { create: true });
+          const w = await (await (await top.getDirectoryHandle('hud', { create: true }))
+            .getFileHandle('a.png', { create: true })).createWritable();
+          await w.write('x'); await w.close();
           window.showDirectoryPicker = async () => top;
         }"""
     )
-    open_cache_kinds(page)
-    page.click("#loadFolder")
+    page.click("#pick")
     page.wait_for_function(
-        "() => document.getElementById('status').textContent.includes('is for assets v1/rev1')",
+        "() => document.getElementById('status').textContent.includes('No Dota 2 packages found there')",
         timeout=60000,
     )
-    walked = page.evaluate(
-        """async () => { const g = await import('./grant.js');
-          const root = await navigator.storage.getDirectory();
-          const files = await g.filesOfPrepared(await root.getDirectoryHandle('picked-cache'));
-          await root.removeEntry('picked-cache', { recursive: true });
-          return files.map(([p]) => p).sort().join(','); }"""
+    page.evaluate(
+        "async () => (await navigator.storage.getDirectory()).removeEntry('picked-folder', { recursive: true })"
     )
-    assert walked == "picked-cache/hud/a.png,picked-cache/index.txt,picked-cache/stamp.txt", walked
-    print("the directory picker's folder is walked and refused with its reason:", page.inner_text("#status"))
-
-
-def check_prepared_page(directory, cache_zip, cache_folder):
-    """A prepared asset cache (`dbota export-cache`'s zip, or the cache folder itself) is taken
-    by the page with no Dota install: a cache that is not usable is refused with its reason
-    before anything is copied; a good one is copied into private storage with progress, kept
-    over a reload, and played (the client reads it and the scene is drawn)."""
-    import zipfile
-
-    with zipfile.ZipFile(cache_zip) as good:
-        names = {n for n in good.namelist() if n not in ("stamp.txt", "index.txt")}
-        stamp = good.read("stamp.txt").decode()
-    refusing = refusing_zips(cache_zip, HERE.parent.parent / "temp/prepared-smoke")
-    with sync_playwright() as p:
-        server, base, browser, page, console, problems = opened(p, directory)
-        requests = []
-        page.on("request", lambda r: requests.append((r.method, r.url, r.post_data)))
-
-        def report():
-            print("console:", *[c[:300] for c in console[-25:]], sep="\n  ", file=sys.stderr)
-
-        def state():
-            return page.evaluate(
-                """async () => { const c = await import('./cache.js'); const s = await c.readState();
-                   return s && {stamp: s.stamp, files: [...s.files.keys()].sort()}; }"""
-            )
-
-        def load(button, path):
-            open_cache_kinds(page)
-            with page.expect_file_chooser() as chooser:
-                page.click(button)
-            chooser.value.set_files(str(path))
-
-        page.goto(base)
-        page.wait_for_selector("#grant:not([hidden])", timeout=20000)
-        open_cache_kinds(page)
-        assert page.is_visible("#loadZip") and page.is_visible("#loadFolder"), "loading a prepared cache is offered"
-        for what, path, words in refusing:
-            load("#loadZip", path)
-            try:
-                page.wait_for_function(f"() => document.getElementById('status').textContent.includes({json.dumps(words)})", timeout=60000)
-            except Exception:
-                raise AssertionError(f"{what}: wanted {words!r}, the page said {page.inner_text('#status')!r}")
-            page.wait_for_selector("#grant:not([hidden])", timeout=20000)
-            assert state() is None, f"{what}: nothing was copied"
-            print(f"refused ({what}):", page.inner_text("#status"))
-        check_directory_picker(page)
-        started = time.time()
-        load("#loadZip", cache_zip)
-        page.wait_for_selector("#progress:not([hidden]), #ready:not([hidden])", timeout=120000)
-        page.wait_for_selector("#ready:not([hidden])", timeout=600000)
-        print(f"zip loaded after {time.time() - started:.0f} s:", page.inner_text("#readyText"))
-        got = state()
-        assert got and got["stamp"] == stamp and set(got["files"]) == names, "the copy is the zip's files and stamp"
-        with zipfile.ZipFile(cache_zip) as good:
-            for path in ["text/tooltips.json", "map/mid/trees.txt"]:
-                same = page.evaluate(
-                    f"async () => {{ const b = await (await import('./cache.js')).readCache({json.dumps(path)});"
-                    " return Array.from(b.slice(0, 64)); }"
-                )
-                assert bytes(same) == good.read(path)[:64], f"{path} is as the zip has it"
-        page.reload()
-        page.wait_for_selector("#ready:not([hidden])", timeout=20000)
-        print("after reload: ready without loading again")
-        play_scene(page, report, 5)
-        # The same cache as a folder: the copy deleted, then taken from the folder.
-        page.goto(base)
-        page.wait_for_selector("#ready:not([hidden])", timeout=20000)
-        page.click("#remove")
-        page.wait_for_selector("#grant:not([hidden])", timeout=20000)
-        # Without the directory picker (Firefox, Safari) the same button uses `<input webkitdirectory>`.
-        page.evaluate("() => { delete window.showDirectoryPicker; }")
-        load("#loadFolder", cache_folder)
-        page.wait_for_selector("#ready:not([hidden])", timeout=600000)
-        again = state()
-        assert again == got, "the folder gives the same copy as the zip"
-        print("folder loaded:", page.inner_text("#readyText"))
-        bad = [(m, u) for m, u, d in requests if not u.startswith(base) and not u.startswith("blob:") and not u.startswith("data:")]
-        assert not bad, f"requests outside the page's own origin: {bad}"
-        assert not [(m, u) for m, u, d in requests if m != "GET" or d], "the page sent data"
-        errs = [c for c in console if "panicked" in c or "RuntimeError" in c]
-        assert not errs and not problems, (errs, problems)
-        page.click("#remove")
-        page.wait_for_selector("#grant:not([hidden])", timeout=20000)
-        assert state() is None, "the copy is deleted"
-        browser.close()
-        server.shutdown()
-    print("prepared cache test passed")
+    print("the directory picker's folder is walked and refused with what to pick:", page.inner_text("#status"))
 
 
 def main():
@@ -2047,9 +1879,6 @@ def main():
     ap.add_argument("--replays-page", type=pathlib.Path, help="a build without a replay: a match through radovid is kept in OPFS")
     ap.add_argument("--radovid", help="the radovid binary, for --replays-page (with --server)")
     ap.add_argument("--shots", action="store_true", help="--replays-page saves a screenshot of every step to temp/smoke-replays")
-    ap.add_argument("--prepared-page", type=pathlib.Path, help="a build (web/out) that takes a prepared asset cache, with --cache-zip and --cache-folder")
-    ap.add_argument("--cache-zip", type=pathlib.Path, help="a zip `dbota export-cache` made with this build's assets, for --prepared-page")
-    ap.add_argument("--cache-folder", type=pathlib.Path, help="the cache folder that zip was made from, for --prepared-page")
     ap.add_argument("--only-wire", action="store_true", help="skip the import test even where an install is found")
     args = ap.parse_args()
     install = None if args.only_wire else find_install(args.install)
@@ -2057,10 +1886,6 @@ def main():
         import_smoke(args, install)
     elif not args.only_wire:
         sys.exit("the import test needs a Dota 2 install (DBOTA_DOTA_PATH or --install); --only-wire leaves it out")
-    if args.prepared_page:
-        if not (args.cache_zip and args.cache_folder):
-            sys.exit("--prepared-page needs --cache-zip and --cache-folder")
-        check_prepared_page(args.prepared_page, args.cache_zip, args.cache_folder)
     if args.start_page:
         check_start_page(args.start_page)
     if args.served_page:

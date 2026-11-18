@@ -1,5 +1,5 @@
-// The page: asks for the player's Dota 2 folder (or a prepared asset cache), has the worker
-// build the private asset cache from it (or check and copy the prepared one), then starts the
+// The page: asks for the player's Dota 2 folder, has the worker build the private asset cache
+// from it, then starts the
 // client (dbota.js, the game compiled to wasm).
 import "./busy.js";
 import * as cache from "./cache.js";
@@ -14,15 +14,10 @@ const $ = (id) => document.getElementById(id);
 const show = (...ids) => {
   $("booting").hidden = true;
   for (const id of ["grant", "ready", "progress", "failed", "stale"]) $(id).hidden = !ids.includes(id);
-  closeCacheKinds();
-  $("native").hidden = !ids.some((id) => ["grant", "ready", "stale"].includes(id));
+  // The native client's downloads, once a release names where they are (web/native.js).
+  $("native").hidden = !NATIVE_CLIENT || !ids.some((id) => ["grant", "ready", "stale"].includes(id));
   $("gate").hidden = false;
 };
-// "Use cache" opens a choice of what the cache is: a .zip file or a folder.
-function closeCacheKinds() {
-  $("cacheKinds").hidden = true;
-  $("useCache").setAttribute("aria-expanded", "false");
-}
 const say = (text) => ($("status").textContent = text);
 // A busy server (busy.js): said where the page shows what it is doing now.
 const busy = globalThis.dbota_busy;
@@ -323,16 +318,6 @@ async function importFrom(files) {
   );
 }
 
-// A prepared asset cache (`{zip}` or `{files}`, see grant.pickPrepared): the worker checks it
-// whole (this build's stamp, the index, the paths and sizes) before it copies anything, and
-// refuses with the reason (which build the cache is for) when it is not usable.
-async function loadPrepared(prepared) {
-  if (!prepared) return;
-  const result = await copyWith({ op: "load", ...prepared }, "Copying the prepared cache", "");
-  if (!result) return;
-  await offerReady(`Loaded ${result.files} files of the prepared asset cache.`);
-}
-
 // The cache is there: publish it to the client, then ask or start.
 async function offerReady(text) {
   const state = await cache.readState();
@@ -396,23 +381,8 @@ async function main() {
     location.assign(url);
   };
   $("pick").onclick = pick;
-  for (const link of $("native").querySelectorAll("a[data-os]")) link.href = NATIVE_CLIENT[link.dataset.os];
-  $("useCache").onclick = () => {
-    const open = $("cacheKinds").hidden;
-    $("cacheKinds").hidden = !open;
-    $("useCache").setAttribute("aria-expanded", String(open));
-  };
-  for (const [kind, ids] of [["zip", ["loadZip", "loadZipStale"]], ["folder", ["loadFolder", "loadFolderStale"]]]) {
-    for (const id of ids) {
-      $(id).onclick = async () => {
-        closeCacheKinds();
-        try {
-          loadPrepared(await grant.pickPrepared(kind, $("packZip"), $("packFolder")));
-        } catch (e) {
-          say("Could not read it: " + (e && e.message ? e.message : e));
-        }
-      };
-    }
+  if (NATIVE_CLIENT) {
+    for (const link of $("native").querySelectorAll("a[data-os]")) link.href = NATIVE_CLIENT[link.dataset.os];
   }
   $("remove").onclick = async () => {
     await cache.remove();

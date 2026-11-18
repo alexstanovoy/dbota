@@ -16,7 +16,6 @@ code { color: #bbb; }
 #booting, #starting { position: fixed; left: 0; right: 0; bottom: 12vh; margin: 0; text-align: center; color: #bbb; }
 #failTitle { color: #f9a; font-weight: 600; }
 #failDetail { white-space: pre-wrap; word-break: break-word; font-size: 13px; color: #aaa; max-height: 40vh; overflow: auto; }
-#cacheKinds { margin-top: -4px; }
 #native { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 32px; color: #999; font-size: 14px; }
 #native a { display: inline-flex; align-items: center; gap: 6px; color: #ccc; text-decoration: none; }
 #native a:hover { color: #fff; }
