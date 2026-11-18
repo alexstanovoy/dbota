@@ -124,6 +124,11 @@ fn consecutive_matches_draw_their_own_forest_photo_and_veil() {
 
 /// Valid replay descriptions can choose any terrain axis, unlike the built-in servers.
 fn replay(axis: u32, trees: Vec<bota_proto::Vec2>) -> Vec<u8> {
+    replay_channelling(axis, trees, 0)
+}
+
+/// [`replay`] whose hero has channelled a capture for `elapsed` ticks.
+fn replay_channelling(axis: u32, trees: Vec<bota_proto::Vec2>, elapsed: u32) -> Vec<u8> {
     use bota_proto::{FrameReader, ReplayRecord, ServerMsg};
     let mut reader = FrameReader::new();
     reader.push(&crate::units::tests::replay_of_heroes_on_grid(1, 1));
@@ -146,6 +151,11 @@ fn replay(axis: u32, trees: Vec<bota_proto::Vec2>) -> Vec<u8> {
         if let ReplayRecord::Msg(ServerMsg::Snapshot { view }) = &mut record {
             view.units[0].owner = Some(bota_proto::SlotId(0));
             view.units[0].statuses.bits |= bota_proto::StatusFlags::CHANNELLING;
+            // The channel bar counts the channel's own ticks run, which the simulation tells.
+            view.units[0].channel = Some(bota_proto::ChannelView {
+                ability: bota_proto::AbilityId::CAPTURE,
+                elapsed,
+            });
             view.players[0].unit = Some(view.units[0].id);
             view.tick = if axis == 512 { 1800 } else { 900 };
             view.runes = vec![bota_proto::RuneView {
@@ -196,8 +206,15 @@ fn consecutive_replays_resize_the_veil_through_the_maximum_terrain_axis() {
     let mut client = Client::run(&[]);
     let mut old_bodies = Vec::new();
     let mut previous_tree = None;
-    for axis in [288, bota_client_core::MAX_TERRAIN_AXIS, 64] {
+    let capture_ticks = bota_core::ability_def(bota_proto::AbilityId::CAPTURE)
+        .expect("the capture ability")
+        .duration;
+    let axes = [288, bota_client_core::MAX_TERRAIN_AXIS, 64];
+    for (game, axis) in axes.into_iter().enumerate() {
         eprintln!("checking replay axis {axis}");
+        // Each game's hero is a different way into its channel, so that a bar that kept the
+        // previous game's fill shows the wrong share.
+        let elapsed = capture_ticks * (game as u32 + 1) / (axes.len() as u32 + 1);
         let path = client.replay_dir().join(format!("axis-{axis}.brp"));
         let trees = if axis == 64 {
             Vec::new()
@@ -208,7 +225,8 @@ fn consecutive_replays_resize_the_veil_through_the_maximum_terrain_axis() {
             )]
         };
         std::fs::create_dir_all(client.replay_dir()).expect("the replay folder");
-        std::fs::write(&path, replay(axis, trees.clone())).expect("the replay");
+        std::fs::write(&path, replay_channelling(axis, trees.clone(), elapsed))
+            .expect("the replay");
         open_replay_file(&mut client, &path);
         client.until("the replay opened", |c| {
             c.core().terrain_cells() == axis as usize
@@ -270,9 +288,13 @@ fn consecutive_replays_resize_the_veil_through_the_maximum_terrain_axis() {
                 && world.query::<&crate::loot::Loot>().iter(world).count() == 1
         });
         client.until("the channel bar showing", |c| channel_fill(c).is_some());
+        // The interpolated clock may add up to a tick to the ticks run.
+        let share = |ticks: u32| ticks as f32 / capture_ticks as f32 * 100.0;
+        let fill = channel_fill(&mut client).expect("channel bar");
         assert!(
-            channel_fill(&mut client).expect("channel bar") < 5.0,
-            "the channel bar inherited the previous start tick"
+            (share(elapsed)..=share(elapsed + 1)).contains(&fill),
+            "the channel bar shows {fill}% of the capture, not this game's own {}%",
+            share(elapsed)
         );
         let world = client.world_mut();
         old_bodies = world
