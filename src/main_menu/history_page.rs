@@ -30,10 +30,7 @@ pub struct View {
 impl MenuCore {
     pub(super) fn history_view(&self) -> View {
         let player = self
-            .client
-            .as_ref()
-            .filter(|_| self.logged_in())
-            .and_then(|client| client.me())
+            .me()
             .map(|account| account.nickname.clone())
             .unwrap_or_else(|| self.name());
         View {
@@ -976,13 +973,7 @@ mod tests {
         let service = super::super::tests::service();
         let mut player = super::super::tests::Player::new(Some(&service));
         player.register("mira");
-        let account = player
-            .menu
-            .client
-            .as_ref()
-            .and_then(|client| client.me())
-            .expect("signed in")
-            .id;
+        let account = player.menu.me().expect("signed in").id;
         let mut client = Client::run(&[]);
         client.world_mut().insert_non_send(player.menu);
         let metadata = crate::postgame::preview::metadata("match_details");

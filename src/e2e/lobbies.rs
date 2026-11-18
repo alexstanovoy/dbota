@@ -2987,7 +2987,10 @@ fn a_standard_5v5_lobby_made_from_play_starts_its_match_with_the_host_alone() {
     alice.within(
         std::time::Duration::from_secs(240),
         "the match under way",
-        |client| client.world().non_send::<MenuCore>().page() == Page::Game,
+        |client| {
+            client.world().non_send::<MenuCore>().page() == Page::Game
+                && client.core().view().is_some()
+        },
     );
 }
 
@@ -3019,4 +3022,212 @@ fn a_lobby_made_from_play_after_the_link_went_idle_is_made_at_once_named_after_i
         matches!(view.body, PageView::Lobby(_))
     });
     assert_eq!(room(&alice).name, ALICES_LOBBY, "named after its host");
+}
+
+/// Lets the link stand idle as long as the menu keeps one open for, and waits for the hang-up.
+fn let_link_idle(client: &mut Client) {
+    client.until("the idle link hung up", |client| {
+        let mut menu = client.world_mut().non_send_mut::<MenuCore>();
+        menu.test_let_link_idle();
+        !menu.link_open()
+    });
+}
+
+/// What the top bar and the account card say now.
+fn signed_in_chrome(client: &mut Client, login: &str) {
+    let texts = client.shown_texts();
+    for wanted in ["PLAY", "MY GAMES", "LEADERBOARD", "LOG OUT", login] {
+        assert!(
+            texts.iter().any(|shown| shown == wanted),
+            "{wanted} stays on screen for the signed-in {login}: {texts:?}"
+        );
+    }
+    for unwanted in ["SIGN IN", "OFFLINE"] {
+        assert!(
+            !texts.iter().any(|shown| shown == unwanted),
+            "{unwanted} is shown to the signed-in {login}: {texts:?}"
+        );
+    }
+}
+
+/// What an open Play drawer offers the signed-in player: the service's queues and lobbies.
+fn online_play_drawer(client: &mut Client) {
+    let texts = client.shown_texts();
+    for wanted in ["CUSTOM LOBBIES", "RANKED", "UNRANKED"] {
+        assert!(
+            texts.iter().any(|shown| shown == wanted),
+            "the Play drawer offers {wanted}: {texts:?}"
+        );
+    }
+    assert!(
+        !texts.iter().any(|shown| shown == "LOCAL LOBBIES"),
+        "the Play drawer of a signed-in player is not the local one: {texts:?}"
+    );
+}
+
+#[test]
+fn the_menu_stays_signed_in_while_the_idle_link_reopens_and_the_lobby_is_made_when_it_has() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    let mut alice = signed_up(&service, "alice");
+    let_link_idle(&mut alice);
+    // The reopening link is held unanswered: it knows nobody, as it does before its session resumes.
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_service(true);
+    click(&mut alice, "my games");
+    alice.frames(5);
+    signed_in_chrome(&mut alice, "alice");
+    click(&mut alice, "play tab");
+    online_play_drawer(&mut alice);
+    assert!(
+        alice.shown_texts().iter().any(|shown| shown == "ALL PICK"),
+        "the standard 5v5 queue stays offered"
+    );
+    click(&mut alice, "custom lobbies");
+    click(&mut alice, "create lobby");
+    alice.frames(5);
+    signed_in_chrome(&mut alice, "alice");
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_service(false);
+    alice.until("the lobby room", |client| {
+        matches!(
+            client.world().non_send::<MenuCore>().view().body,
+            PageView::Lobby(_)
+        )
+    });
+    assert_eq!(room(&alice).name, ALICES_LOBBY, "named after its host");
+    assert_eq!(room(&alice).settings.mode, "All Pick", "the standard rules");
+    signed_in_chrome(&mut alice, "alice");
+}
+
+#[test]
+fn a_reopen_that_fails_keeps_the_signed_in_menu_and_the_next_try_makes_the_lobby() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    let mut alice = signed_up(&service, "alice");
+    let_link_idle(&mut alice);
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_service(true);
+    click(&mut alice, "my games");
+    alice.frames(3);
+    {
+        let mut menu = alice.world_mut().non_send_mut::<MenuCore>();
+        menu.test_lose_link();
+        menu.test_hold_service(false);
+    }
+    alice.frames(5);
+    let texts = alice.shown_texts();
+    assert!(
+        texts.iter().any(|shown| shown == "RECONNECTING"),
+        "the pill says the link is being reopened: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|shown| shown == "SIGN IN"),
+        "a lost link is not a signed-out player: {texts:?}"
+    );
+    click(&mut alice, "play tab");
+    online_play_drawer(&mut alice);
+    click(&mut alice, "custom lobbies");
+    click(&mut alice, "create lobby");
+    alice.until("the lobby room", |client| {
+        matches!(
+            client.world().non_send::<MenuCore>().view().body,
+            PageView::Lobby(_)
+        )
+    });
+    assert_eq!(room(&alice).settings.mode, "All Pick");
+    signed_in_chrome(&mut alice, "alice");
+}
+
+/// A second account signs in over the first, from the sign-in page the first reached while its
+/// link was down: everything shows the second.
+#[test]
+fn signing_in_as_a_second_account_without_logging_out_shows_the_second_everywhere() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    drop(signed_up(&service, "bob"));
+    let mut alice = signed_up(&service, "alice");
+    let_link_idle(&mut alice);
+    act(&mut alice, Act::Go(Page::Login));
+    let password = crate::main_menu::tests::PASSWORD;
+    for (at, value) in ["bob", password].into_iter().enumerate() {
+        act(&mut alice, Act::Focus(at));
+        // The form remembers the last login: a person erases it before typing another.
+        for _ in 0..20 {
+            act(&mut alice, Act::Erase);
+        }
+        act(&mut alice, Act::Type(value.to_owned()));
+    }
+    act(&mut alice, Act::Submit);
+    alice.until("bob on Play", |client| {
+        let menu = client.world().non_send::<MenuCore>();
+        let view = menu.view();
+        assert!(
+            view.status.is_none() || menu.page() == Page::Home,
+            "the sign-in said {:?}",
+            view.status
+        );
+        menu.page() == Page::Home && menu.view().account.as_deref() == Some("bob")
+    });
+    signed_in_chrome(&mut alice, "bob");
+    assert!(
+        !alice.shown_texts().iter().any(|shown| shown == "alice"),
+        "nothing of the first account stays"
+    );
+    click(&mut alice, "play tab");
+    click(&mut alice, "custom lobbies");
+    click(&mut alice, "create lobby");
+    alice.until("bob's lobby room", |client| {
+        matches!(
+            client.world().non_send::<MenuCore>().view().body,
+            PageView::Lobby(_)
+        )
+    });
+    assert_eq!(
+        room(&alice).name,
+        "bob's lobby",
+        "named after the second account"
+    );
+}
+
+/// "Play without an account" on the sign-in page of a signed-in player signs the account out.
+#[test]
+fn playing_without_an_account_from_the_sign_in_page_signs_the_account_out() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    let mut alice = signed_up(&service, "alice");
+    let_link_idle(&mut alice);
+    act(&mut alice, Act::Go(Page::Login));
+    click(&mut alice, "play without an account");
+    alice.frames(3);
+    let menu = alice.world().non_send::<MenuCore>();
+    assert!(!menu.logged_in(), "the account is signed out");
+    assert!(menu.view().account.is_none(), "and nobody is remembered");
+}
+
+/// A session the service refuses to resume says so on the sign-in page it drops the player on.
+#[test]
+fn a_refused_resume_tells_the_player_why_they_are_on_the_sign_in_page() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    let mut alice = signed_up(&service, "alice");
+    let_link_idle(&mut alice);
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_spoil_session();
+    click(&mut alice, "my games");
+    alice.until("the sign-in page", |client| {
+        client.world().non_send::<MenuCore>().page() == Page::Login
+    });
+    alice.frames(3);
+    let texts = alice.shown_texts();
+    assert!(
+        texts
+            .iter()
+            .any(|shown| shown == "Your login has expired: log in again"),
+        "the refusal's reason is shown: {texts:?}"
+    );
+    assert!(!alice.world().non_send::<MenuCore>().logged_in());
 }

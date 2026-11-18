@@ -68,7 +68,7 @@ pub(super) enum Item {
 fn items_of(kind: FormKind, fields: usize) -> Vec<Item> {
     let links = [Act::Go(Page::Service)];
     #[cfg(not(target_arch = "wasm32"))]
-    let links = links.into_iter().chain([Act::Go(Page::LocalLobby)]);
+    let links = links.into_iter().chain([Act::PlayWithoutAccount]);
     #[cfg(target_arch = "wasm32")]
     let links = links.into_iter();
     let buttons = |acts: Vec<Act>| {
@@ -255,7 +255,7 @@ impl Form {
                 .chain(own.into_iter().filter(|item| {
                     matches!(
                         item,
-                        Item::Button(Act::Go(Page::Service | Page::LocalLobby))
+                        Item::Button(Act::Go(Page::Service) | Act::PlayWithoutAccount)
                     )
                 }))
                 .collect(),

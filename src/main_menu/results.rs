@@ -138,11 +138,7 @@ impl MenuCore {
     }
 
     fn event_context(&self, result: &MatchResult, owner: Option<SlotId>) -> Context {
-        let account = self
-            .client
-            .as_ref()
-            .and_then(|client| client.me())
-            .map(|account| account.id);
+        let account = self.my_id();
         let seat = owner
             .and_then(|slot| result.seats.iter().find(|seat| seat.slot == slot.0))
             .or_else(|| {

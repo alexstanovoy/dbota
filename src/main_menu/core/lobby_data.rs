@@ -67,11 +67,7 @@ impl MenuCore {
     }
 
     pub(super) fn receive_lobby_catalogue(&mut self, list: &[RulesetInfo]) {
-        let kind = self
-            .client
-            .as_ref()
-            .and_then(|client| client.me())
-            .map(|me| me.kind);
+        let kind = self.me().map(|me| me.kind);
         let mut catalogue: Vec<_> = list
             .iter()
             .filter(|rule| {
@@ -109,11 +105,7 @@ impl MenuCore {
 
     pub(in crate::main_menu) fn menu_rulesets(&self) -> impl Iterator<Item = &RulesetInfo> {
         let connected = self.client.is_some();
-        let kind = self
-            .client
-            .as_ref()
-            .and_then(|c| c.me())
-            .map_or(AccountKind::Human, |me| me.kind);
+        let kind = self.me().map_or(AccountKind::Human, |me| me.kind);
         self.catalogue
             .iter()
             .filter(move |r| connected && r.audience.admits(kind))

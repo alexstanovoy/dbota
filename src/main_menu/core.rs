@@ -124,6 +124,8 @@ impl DemoOffer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Act {
     Go(Page),
+    /// The way-in page's own link: sign out of any account and play where no account is needed.
+    PlayWithoutAccount,
     Play(super::PlayAction),
     Avatar(super::avatar::Action),
     InspectHero(bota_proto::HeroId),
@@ -590,16 +592,15 @@ pub struct MenuCore {
     history_scope_generation: u64,
     pub(super) replay_scope: Option<crate::replays::Scope>,
     delete_form: Option<Form>,
-    /// Whether an account is signed in: its session is kept, the link to the service is not
-    /// (it is open only while something live is on it, and a request opens it again).
-    pub(super) account: bool,
+    /// The signed-in account, as the service last confirmed it: its session is kept, the link to
+    /// the service is not (it is open only while something live is on it, and a request opens
+    /// it again). The only record of who is signed in: no page asks the link, which knows
+    /// nobody while it reopens.
+    signed_in: Option<AccountInfo>,
     /// The login or registration to send as soon as the link is open. Held only until then.
     credentials: Option<(ClientMsg, Asked)>,
     /// Requests that wait for the link to open and the session to resume.
     outbox: Vec<(ClientMsg, Asked)>,
-    /// The signed-in account as the last link told it. A reopened link knows nobody until its
-    /// session resumes, and a request made in that moment still needs the nickname.
-    known_me: Option<AccountInfo>,
     /// Since when nothing live has been on the link.
     idle_since: Option<Instant>,
     /// When to reconnect after a lost link that had something live on it.
@@ -834,10 +835,9 @@ impl MenuCore {
             history_scope_generation: 0,
             replay_scope: None,
             delete_form: None,
-            account: false,
+            signed_in: None,
             credentials: None,
             outbox: Vec::new(),
-            known_me: None,
             idle_since: None,
             retry_at: None,
             retry: true,
@@ -971,6 +971,31 @@ impl MenuCore {
         self.client.as_ref().is_some_and(|c| !c.hung_up())
     }
 
+    /// Holds back what the service says (a link being reopened stays unanswered), or lets it in.
+    #[cfg(test)]
+    pub(crate) fn test_hold_service(&mut self, held: bool) {
+        self.pause_service_events = held;
+    }
+
+    /// The link being reopened ends before its session resumed, as a service that cannot be
+    /// reached ends it.
+    #[cfg(test)]
+    pub(crate) fn test_lose_link(&mut self) {
+        self.lost(ClientError::Closed);
+    }
+
+    /// The session kept for the next link is one the service never gave: a log-out elsewhere.
+    #[cfg(test)]
+    pub(crate) fn test_spoil_session(&mut self) {
+        let saved = Saved {
+            service: self.prefs.service.clone(),
+            token: bota_radovid::proto::SessionToken([7; 32]),
+        };
+        self.store
+            .write(Entry::Session, &saved.render())
+            .expect("the session file");
+    }
+
     /// Lets the link stand idle as long as the menu keeps one open for, without waiting for it:
     /// the next frame hangs it up, as a player's pause before the next click does.
     #[cfg(test)]
@@ -1093,7 +1118,7 @@ impl MenuCore {
     }
 
     pub fn logged_in(&self) -> bool {
-        self.account
+        self.signed_in.is_some()
     }
 
     /// The page drawn under the settings while they are open, else the page itself.
@@ -1108,7 +1133,7 @@ impl MenuCore {
     /// Whether the signed-in account's link to the service was lost and is not open again yet,
     /// whether or not a reconnection is due.
     pub(super) fn reconnecting(&self) -> bool {
-        self.account && (self.link_lost || self.retry_at.is_some())
+        self.logged_in() && (self.link_lost || self.retry_at.is_some())
     }
 
     /// The account's matches not yet over, as far as the menu knows.
@@ -1234,7 +1259,7 @@ impl MenuCore {
             #[cfg(not(target_arch = "wasm32"))]
             Some(OnScreen::Direct | OnScreen::Local) => Page::LocalLobby,
             Some(OnScreen::Replay) => self.replay_from.unwrap_or(Page::MatchHistory),
-            _ if self.account => Page::Home,
+            _ if self.logged_in() => Page::Home,
             #[cfg(not(target_arch = "wasm32"))]
             _ if self.prefs.service.is_empty() => Page::LocalLobby,
             _ => Page::Login,
@@ -1275,9 +1300,6 @@ impl MenuCore {
         self.tried_service = true;
         self.asked.clear();
         self.retry_at = None;
-        if let Some(me) = self.client.as_ref().and_then(|client| client.me()) {
-            self.known_me = Some(me.clone());
-        }
         match Client::open(&self.prefs.service, &self.tls) {
             Ok(mut client) => {
                 client.set_waker(crate::pacing::waker());
@@ -1316,7 +1338,7 @@ impl MenuCore {
         }
         if self.link_ready() {
             self.send(msg, asked);
-        } else if !self.account {
+        } else if !self.logged_in() {
             self.tell("Sign in first".to_owned(), true);
         } else {
             if self.outbox.len() < MAX_OUTBOX {
@@ -1379,15 +1401,16 @@ impl MenuCore {
                 msg,
                 ClientMsg::Rulesets | ClientMsg::LobbyList | ClientMsg::LobbySearch { .. }
             );
+        let is_bot = self
+            .me()
+            .is_some_and(|account| account.kind == AccountKind::Bot);
         let Some(client) = &mut self.client else {
             self.tell("Not connected to the service".to_owned(), true);
             return;
         };
         // Resolve this after login/resume too: queued requests may outlive a connection.
         if let ClientMsg::QueueJoinAudiences { audiences, .. } = &mut msg
-            && client
-                .me()
-                .is_some_and(|account| account.kind == AccountKind::Bot)
+            && is_bot
         {
             audiences.clear();
             audiences.push(Audience::Everyone);
@@ -1413,7 +1436,8 @@ impl MenuCore {
     pub(super) fn drop_link(&mut self) {
         self.connection_generation = self.connection_generation.wrapping_add(1);
         self.list_cache.disconnected();
-        match (&mut self.client, self.account) {
+        let signed_in = self.logged_in();
+        match (&mut self.client, signed_in) {
             (Some(client), true) => client.hang_up(),
             _ => self.client = None,
         }
@@ -1447,7 +1471,7 @@ impl MenuCore {
     /// Closes a link that has had nothing live on it for a while, and reopens one that was lost
     /// with something live on it.
     fn keep_link(&mut self) {
-        if self.retry_at.is_some_and(|at| Instant::now() >= at) && self.account {
+        if self.retry_at.is_some_and(|at| Instant::now() >= at) && self.logged_in() {
             self.connect();
         }
         if !self.link_ready() || !self.idle() {
@@ -1464,7 +1488,7 @@ impl MenuCore {
         if self.link_ready() {
             return true;
         }
-        if self.account && !self.connecting() {
+        if self.logged_in() && !self.connecting() {
             self.connect();
         }
         false
@@ -1546,7 +1570,7 @@ impl MenuCore {
         self.profiles.disconnected();
         self.meta_link_lost();
         let live = was_signed_in && !self.idle();
-        self.link_lost = self.account;
+        self.link_lost = self.logged_in();
         self.credentials = None;
         self.outbox.clear();
         self.lobby = None;
@@ -1560,7 +1584,7 @@ impl MenuCore {
         self.lobby_secret = None;
         self.demo_asked = None;
         self.drop_link();
-        if !self.account && !matches!(self.page, Page::Game | Page::LocalLobby) {
+        if !self.logged_in() && !matches!(self.page, Page::Game | Page::LocalLobby) {
             // Not signed in: the pages of the account have nothing to show.
             if self.page.needs_account() {
                 let rest = self.rest_page(None);
@@ -1604,7 +1628,7 @@ impl MenuCore {
         }
         match incoming {
             Incoming::Reply { seq, result } => self.take_reply(seq, result),
-            Incoming::Event(event) if self.account => self.event(event),
+            Incoming::Event(event) if self.logged_in() => self.event(event),
             Incoming::Event(_) => {}
         }
     }
@@ -1720,7 +1744,7 @@ impl MenuCore {
                 session,
                 activities,
             } if matches!(asked, Asked::Login | Asked::Register | Asked::Resume) => {
-                self.received_login(me.id, session, activities);
+                self.received_login(session, activities, me);
             }
             Reply::Handoffs { list } => {
                 for handoff in list.into_iter().take(MAX_GAMES) {
@@ -1812,18 +1836,22 @@ impl MenuCore {
 
     fn received_login(
         &mut self,
-        account: AccountId,
         session: bota_radovid::proto::SessionToken,
         activities: bota_radovid::proto::Activities,
+        me: AccountInfo,
     ) {
         self.accepted.resumed(&activities);
         self.conn = Conn::LoggedIn;
-        let first = !self.account;
-        self.account = true;
+        let first = !self.logged_in();
+        // Another account signed in over this one: nothing of the first stays on screen.
+        if self.signed_in.as_ref().is_some_and(|old| old.id != me.id) {
+            self.forget_account_pages();
+        }
         self.set_history_scope(crate::replays::Scope::account(
             &self.prefs.service,
-            account.0,
+            me.id.0,
         ));
+        self.signed_in = Some(me);
         if self.page == Page::Leaderboard {
             self.board.refresh();
         }
@@ -1855,7 +1883,8 @@ impl MenuCore {
             self.send(msg, asked);
         }
         self.lobby_ui.queued_until = None;
-        if first {
+        // The sign-in of an account over another is as much the way in as the first.
+        if first || matches!(self.page, Page::Login | Page::Register | Page::Service) {
             self.status = None;
             if !matches!(self.page, Page::Game) {
                 self.go(Page::Home);
@@ -1879,10 +1908,13 @@ impl MenuCore {
             (Asked::AvatarSaved(token), error) => self.avatar_saved_refused(token, error),
             (Asked::OwnAvatar(version), _) => self.own_avatar_refused(version),
             (Asked::Resume, _) => {
+                // A session lost while signed in says so; a stale one found at the start is no
+                // news to a player who never signed in this time.
+                let was_signed_in = self.logged_in();
                 self.clear_account();
                 self.drop_link();
                 self.go_form(Page::Login);
-                if *error != Error::BadSession {
+                if was_signed_in || *error != Error::BadSession {
                     self.tell(error_text(error), true);
                 }
             }
@@ -2030,16 +2062,11 @@ impl MenuCore {
 
     /// The signed-in account, also while its link is being reopened.
     pub(super) fn me(&self) -> Option<&AccountInfo> {
-        self.client
-            .as_ref()
-            .and_then(|client| client.me())
-            .or(self.known_me.as_ref())
+        self.signed_in.as_ref()
     }
 
     pub(super) fn my_id(&self) -> Option<AccountId> {
-        self.me()
-            .filter(|_| self.account)
-            .map(|me| me.id)
+        self.me().map(|me| me.id)
     }
 
     fn ask_history(&mut self) {
@@ -2375,6 +2402,7 @@ impl MenuCore {
     fn dispatch(&mut self, act: Act) -> Option<Act> {
         match act {
             Act::Go(_)
+            | Act::PlayWithoutAccount
             | Act::Play(_)
             | Act::Avatar(_)
             | Act::InspectHero(_)
@@ -2445,6 +2473,12 @@ impl MenuCore {
                 self.go(Page::Home);
             }
             Act::Go(page) => self.go(page),
+            Act::PlayWithoutAccount => {
+                if self.logged_in() {
+                    self.logout();
+                }
+                self.go(super::pages::WITHOUT_ACCOUNT);
+            }
             Act::Play(action) => self.play_action(action),
             Act::MatchDetails(key) => self.open_result(&key),
             Act::WatchHistory(key) => {
@@ -2852,18 +2886,11 @@ impl MenuCore {
         self.go_form(Page::Login);
     }
 
-    fn clear_account(&mut self) {
-        self.store.remove(Entry::Session);
-        self.account = false;
-        self.set_history_scope(crate::replays::Scope::Guest);
-        if matches!(self.on_screen, Some(OnScreen::Match(_) | OnScreen::Demo(_))) {
-            self.close_private_game();
-        }
-        self.join_prompt = None;
+    /// Forgets what the pages show of the account that was signed in.
+    fn forget_account_pages(&mut self) {
         self.account_profile = None;
         self.list_cache.clear();
         self.board = Default::default();
-        self.known_me = None;
         self.profiles.clear();
         self.avatars.clear();
         self.own_avatar_asked = None;
@@ -2880,6 +2907,17 @@ impl MenuCore {
         self.results.clear();
         self.shown = None;
         self.result_request = None;
+    }
+
+    fn clear_account(&mut self) {
+        self.store.remove(Entry::Session);
+        self.signed_in = None;
+        self.set_history_scope(crate::replays::Scope::Guest);
+        if matches!(self.on_screen, Some(OnScreen::Match(_) | OnScreen::Demo(_))) {
+            self.close_private_game();
+        }
+        self.join_prompt = None;
+        self.forget_account_pages();
         self.meta = Default::default();
         self.pending_result_replay = None;
         self.pending_result_replay_since = None;
@@ -3439,7 +3477,7 @@ mod account_scope_tests {
         let mut player = super::super::tests::Player::new(Some(&service));
         player.register("alice");
         let menu = &mut player.menu;
-        let account = menu.my_id().expect("signed in");
+        let me = menu.me().expect("signed in").clone();
         let scope = menu.library.scope();
         let generation = menu.history_scope_generation();
         let old_token = menu.saved_session().expect("saved token").token;
@@ -3447,7 +3485,7 @@ mod account_scope_tests {
         next[0] ^= 1;
         let next = bota_radovid::proto::SessionToken(next);
 
-        menu.received_login(account, next, Default::default());
+        menu.received_login(next, Default::default(), me);
 
         assert!(menu.saved_session().expect("refreshed token").token == next);
         assert_eq!(menu.library.scope(), scope);

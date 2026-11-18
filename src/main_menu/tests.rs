@@ -2608,14 +2608,14 @@ fn tab_walks_the_form_and_enter_presses_the_focused_button() {
         (None, Some(Act::Submit)),
         (None, Some(Act::Go(Page::Register))),
         (None, Some(Act::Go(Page::Service))),
-        (None, Some(Act::Go(Page::LocalLobby))),
+        (None, Some(Act::PlayWithoutAccount)),
         (Some(0), None),
     ] {
         alice.menu.act(Act::NextField);
         assert_eq!(at(&alice), expected);
     }
     alice.menu.act(Act::PreviousField);
-    assert_eq!(at(&alice), (None, Some(Act::Go(Page::LocalLobby))));
+    assert_eq!(at(&alice), (None, Some(Act::PlayWithoutAccount)));
     alice.menu.act(Act::PreviousField);
     alice.menu.act(Act::PreviousField);
     alice.menu.act(Act::PreviousField);
@@ -4887,4 +4887,48 @@ impl Service {
             }
         });
     }
+}
+
+/// The menu knows who is signed in from what the service confirmed, never from the link, which
+/// knows nobody while it reopens: no menu code asks the link for its account.
+#[test]
+fn no_menu_code_reads_the_account_from_the_link() {
+    fn sources(dir: &Path, found: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("the menu's sources") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                sources(&path, found);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                found.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main_menu"),
+        &mut files,
+    );
+    assert!(files.len() > 20, "the menu's sources were found");
+    let mut readers = Vec::new();
+    for file in files.iter().filter(|file| !file.ends_with("tests.rs")) {
+        let text = std::fs::read_to_string(file).expect("a source");
+        let code = text.split("\n#[cfg(test)]").next().expect("the code");
+        // A call chain broken over lines is one line again.
+        let mut joined: Vec<String> = Vec::new();
+        for line in code.lines() {
+            match joined.last_mut() {
+                Some(last) if line.trim_start().starts_with('.') => last.push_str(line.trim()),
+                _ => joined.push(line.trim().to_owned()),
+            }
+        }
+        for line in joined {
+            if line.contains(".me()") && !line.contains("self.me()") {
+                readers.push(format!("{}: {line}", file.display()));
+            }
+        }
+    }
+    assert!(
+        readers.is_empty(),
+        "ask MenuCore::me(), not the link: {readers:#?}"
+    );
 }

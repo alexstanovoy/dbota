@@ -88,7 +88,7 @@ impl Keeper {
 
 impl MenuCore {
     pub(super) fn next_replay_fetch(&self) -> Option<Instant> {
-        if !self.account || self.keeper.current.is_some() {
+        if !self.logged_in() || self.keeper.current.is_some() {
             return None;
         }
         self.keeper
@@ -328,7 +328,7 @@ impl MenuCore {
         }
         self.keep_sweep();
         // Signed out, nothing is fetched; the matches stay wanted for the next sign-in.
-        if self.account
+        if self.logged_in()
             && self.keeper.current.is_none()
             && let Some(at) = self.keeper.queue.iter().position(|w| {
                 w.due <= Instant::now()

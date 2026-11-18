@@ -86,11 +86,7 @@ impl MenuCore {
     }
 
     pub(super) fn owner_in_result(&self, result: &MatchResult) -> Option<bota_proto::SlotId> {
-        let account = self
-            .client
-            .as_ref()
-            .and_then(|client| client.me())
-            .map(|me| me.id);
+        let account = self.my_id();
         result
             .seats
             .iter()

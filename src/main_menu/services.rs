@@ -281,7 +281,7 @@ impl MenuCore {
     /// Whether sign-in and account creation are open: the service passed its check (an account
     /// already signed in has been past it).
     pub fn service_ready(&self) -> bool {
-        self.account || matches!(self.chosen_verdict(), Some(Verdict::Works(_)))
+        self.logged_in() || matches!(self.chosen_verdict(), Some(Verdict::Works(_)))
     }
 
     /// A service an older settings file remembered, unlisted, is one the player added.

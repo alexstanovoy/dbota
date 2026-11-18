@@ -571,7 +571,7 @@ pub(super) fn without_account(kit: &mut Kit, column: Entity) {
     kit.quiet(
         column,
         "Play without an account",
-        Act::Go(WITHOUT_ACCOUNT),
+        Act::PlayWithoutAccount,
         theme::LINK_TEXT,
         theme::LINK,
     );
@@ -580,9 +580,9 @@ pub(super) fn without_account(kit: &mut Kit, column: Entity) {
 /// Where a player without an account plays: the local lobby; in a browser, which hosts no game,
 /// Play, whose cards show the matches kept in the browser.
 #[cfg(not(target_arch = "wasm32"))]
-const WITHOUT_ACCOUNT: Page = Page::LocalLobby;
+pub(super) const WITHOUT_ACCOUNT: Page = Page::LocalLobby;
 #[cfg(target_arch = "wasm32")]
-const WITHOUT_ACCOUNT: Page = Page::Home;
+pub(super) const WITHOUT_ACCOUNT: Page = Page::Home;
 
 /// A form: a card of fields in the middle of the page.
 #[allow(clippy::too_many_arguments)]

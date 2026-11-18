@@ -440,11 +440,7 @@ impl super::core::MenuCore {
         }
     }
     pub(super) fn leaderboard_page(&mut self, generation: u64, page: LeaderboardPage) {
-        let account = self
-            .client
-            .as_ref()
-            .and_then(|client| client.me())
-            .map(|me| me.id.0);
+        let account = self.me().map(|me| me.id.0);
         let current = self.board.current_flight(generation);
         self.board.page(generation, page, account);
         if current && self.board.status == Status::Ready {

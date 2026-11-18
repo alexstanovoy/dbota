@@ -41,7 +41,7 @@ impl MenuCore {
         });
 
         [
-            self.retry_at.filter(|_| self.account),
+            self.retry_at.filter(|_| self.logged_in()),
             self.leave_at,
             self.leaving.as_ref().map(|leaving| leaving.until),
             self.idle_since.map(|since| since + IDLE_HANG_UP),

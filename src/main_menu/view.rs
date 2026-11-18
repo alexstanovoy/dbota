@@ -554,9 +554,7 @@ impl MenuCore {
             .view_builds
             .set(self.lobby_ui.view_builds.get() + 1);
         let client = self.client.as_ref().filter(|_| self.logged_in());
-        let account = client
-            .and_then(|c| c.me())
-            .map(|me| text::line(&me.nickname, text::NAME));
+        let account = self.me().map(|me| text::line(&me.nickname, text::NAME));
         let (searches, waits, offer) = client.map_or_else(Default::default, |c| {
             let names = |id: &RulesetId| ruleset_name(&self.catalogue, id);
             (
@@ -790,15 +788,9 @@ impl MenuCore {
     }
 
     pub(super) fn lobby_projection(&self) -> Option<LobbyView> {
-        self.lobby.as_ref().map(|(state, at)| {
-            lobby_view(
-                state,
-                *at,
-                self.client.as_ref(),
-                self.moving,
-                &self.catalogue,
-            )
-        })
+        self.lobby
+            .as_ref()
+            .map(|(state, at)| lobby_view(state, *at, self.my_id(), self.moving, &self.catalogue))
     }
 
     fn home(&self) -> PageView {
@@ -991,7 +983,7 @@ impl MenuCore {
     }
 
     fn result_view(&self, result: &MatchResult) -> ResultView {
-        let me = self.client.as_ref().and_then(|c| c.me()).map(|me| me.id);
+        let me = self.my_id();
         let mine = result.seats.iter().find(|s| Some(s.account) == me);
         let won = match result.outcome {
             Outcome::Winner { team } => mine.map(|s| s.team == team),
@@ -1231,11 +1223,10 @@ fn lobby_row(
 fn lobby_view(
     state: &bota_radovid::proto::LobbyState,
     at: Instant,
-    client: Option<&bota_radovid::Client>,
+    me: Option<AccountId>,
     moving: Option<AccountId>,
     catalogue: &[bota_radovid::proto::RulesetInfo],
 ) -> LobbyView {
-    let me = client.and_then(|c| c.me()).map(|me| me.id);
     let elapsed = u32::try_from(at.elapsed().as_millis()).unwrap_or(u32::MAX);
     let owner = Some(state.owner) == me;
     let teams = lobby_teams(state, me);
