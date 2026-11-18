@@ -395,7 +395,7 @@ fn assert_shop_marks(client: &mut Client) {
     }
     for (pos, left, top, path) in marks {
         assert!(expected.contains(&pos), "shopkeeper {pos:?}");
-        let inner = crate::minimap::SIDE - 6.0;
+        let inner = crate::minimap::INNER;
         let size = bota_core::rules::MAP_SIZE as f32;
         assert!((left - (pos.x.to_f32() / size * inner - 7.0)).abs() < 0.01);
         assert!((top - ((1.0 - pos.y.to_f32() / size) * inner - 7.0)).abs() < 0.01);

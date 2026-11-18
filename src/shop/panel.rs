@@ -143,6 +143,8 @@ fn spawn(
     let panel = commands
         .spawn((
             ShopPanel,
+            ui::HudPanel,
+            Name::new("shop panel"),
             Blocker,
             Hovered::default(),
             Node {

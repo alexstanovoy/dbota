@@ -29,6 +29,9 @@ pub(crate) const MAP_SIZE: f32 = bota_core::rules::MAP_SIZE as f32;
 /// Interface pixels of the minimap's side, its frame included: the reference game's minimap stands at the
 /// screen's corner, a square of a quarter of the window's height.
 pub const SIDE: f32 = 308.0;
+/// What the minimap's border leaves inside it (the border is 3 interface pixels wide each side):
+/// the square the map's photograph, the marks and the camera's frame are laid in.
+pub(crate) const INNER: f32 = SIDE - 6.0;
 /// Pixels of the photograph's side.
 const PHOTO: u32 = 512;
 /// Unit marks kept initially; retained nodes grow only to the admitted snapshot size.
@@ -474,13 +477,12 @@ fn photograph(
 /// Where a bota world point falls on the minimap, in interface pixels from
 /// its inner top-left corner.
 pub(crate) fn on_map(x: f32, y: f32) -> Vec2 {
-    let inner = SIDE - 6.0;
-    Vec2::new(x / MAP_SIZE * inner, (1.0 - y / MAP_SIZE) * inner)
+    Vec2::new(x / MAP_SIZE * INNER, (1.0 - y / MAP_SIZE) * INNER)
 }
 
 /// How many interface pixels a stretch of the map takes on the minimap.
 pub(crate) fn map_to_pixels(units: f32) -> f32 {
-    units / MAP_SIZE * (SIDE - 6.0)
+    units / MAP_SIZE * INNER
 }
 
 fn shop_marks(
@@ -674,7 +676,7 @@ fn camera_frame(corners: [Vec2; 4]) -> Rect {
         (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
         |(lo, hi), c| (lo.min(*c), hi.max(*c)),
     );
-    let rim = Vec2::splat(SIDE - 6.0);
+    let rim = Vec2::splat(INNER);
     let (min, max) = (min.clamp(Vec2::ZERO, rim), max.clamp(Vec2::ZERO, rim));
     let size = (max - min).max(Vec2::splat(LEAST_FRAME));
     let min = min.min(rim - size);

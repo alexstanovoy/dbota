@@ -720,6 +720,10 @@ fn place(
     if node.top != top {
         node.top = top;
     }
+    // While its owner moves (the camera scrolls an item, the window is resized) the popup is hidden for
+    // the frame the layout needs to catch up rather than drawn at a place it no longer has; Dota's
+    // popup follows its owner with no gap because its layout runs after the owner moves, which
+    // ours cannot do within a frame: the gap is the price of never showing the popup misplaced.
     let drawn = Rect::from_center_size(at.translation, computed.size());
     if !is_placed(drawn, corner) {
         visibility.set_if_neq(Visibility::Hidden);

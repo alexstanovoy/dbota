@@ -297,7 +297,7 @@ fn lotus_pools_and_wisdom_shrines_draw_their_ground_effects() {
         client.hover_ui(frame, SOON);
         let centre = client.centre_of(frame).expect("minimap laid out");
         let on_map = crate::minimap::on_map(unit.pos.x.to_f32(), unit.pos.y.to_f32());
-        client.mouse(centre - Vec2::splat((crate::minimap::SIDE - 6.0) / 2.0) + on_map);
+        client.mouse(centre - Vec2::splat(crate::minimap::INNER / 2.0) + on_map);
         client.click(MouseButton::Left);
         client.until(
             "the objective's ambient effect contributes a rendered frame",

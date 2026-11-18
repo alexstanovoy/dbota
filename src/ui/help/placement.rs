@@ -53,7 +53,10 @@ pub(super) fn place(
         }
         let row = Rect::from_center_size(row_at.translation, row.size());
         let actual = Rect::from_center_size(transform.translation, tip.size());
-        let Some(position) = position(
+        // Dota's tooltips are always shown while their owner is hovered, on the side with the most
+        // room and pushed inside the screen, however little room there is: so is the help, and it
+        // hides only while it has no size to place yet.
+        let Some(position) = position_within(
             row,
             tip.size(),
             owner_at.translation,
@@ -77,6 +80,10 @@ pub(super) fn place(
         // Layout applies the new offsets next frame: it is shown on the first frame it is drawn at
         // its place (the slide of its opening included), never before, at a place it had for the
         // anchor's old position or the window's old size.
+        // So while its owner moves (the page scrolls, the window is resized) the help is hidden for the
+        // frame the layout needs to catch up, not drawn behind its owner: Dota's popups follow their
+        // owner with no lag only because its layout runs after the owner moves; here a one-frame
+        // gap is the price of never showing a popup where it no longer belongs.
         let sliding = Vec2::new(px_of(motion.translation.x), px_of(motion.translation.y)) / unit;
         if tip.size().min_element() <= 0.0
             || !is_placed(actual, position + sliding)

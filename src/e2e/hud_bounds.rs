@@ -91,8 +91,8 @@ fn label_of(world: &World, entity: Entity, path: &str) -> String {
     }
 }
 
-/// Every node under the HUD's root, and under the shop's panel when it is open (it stands on its own
-/// in the interface), that is shown, with its holder. A shown node that has no size (a wrapper that
+/// Every node under the HUD's root, and under every panel registered as a [`HudPanel`](crate::ui::HudPanel)
+/// (the shop's when it is open: it stands on its own in the interface), that is shown, with its holder. A shown node that has no size (a wrapper that
 /// is only a name for its children) passes its children on to its own holder.
 fn drawn_parts(client: &Client) -> Vec<Drawn> {
     let world = client.world();
@@ -105,10 +105,13 @@ fn drawn_parts(client: &Client) -> Vec<Drawn> {
     let mut pending = vec![(root, None::<usize>, String::from("hud"))];
     pending.extend(
         world
-            .try_query_filtered::<Entity, With<crate::shop::ShopPanel>>()
-            .expect("the shop's panel is queried")
+            .try_query_filtered::<(Entity, Option<&Name>), With<crate::ui::HudPanel>>()
+            .expect("the registered panels are queried")
             .iter(world)
-            .map(|panel| (panel, None, String::from("shop"))),
+            .map(|(panel, name)| {
+                let name = name.map_or("panel", Name::as_str);
+                (panel, None, name.to_owned())
+            }),
     );
     let mut visited = 0;
     while let Some((entity, parent, path)) = pending.pop() {
@@ -365,7 +368,7 @@ fn hud_holds_together_in(width: u32, height: u32) {
 fn hud_holds_together_with(width: u32, height: u32, extra: &[&str]) {
     // The shop's panel is a part of the walk when it is open: an empty walk of it would pass.
     let essential: &[&str] = if extra.contains(&"--shop") {
-        &["shop"]
+        &["shop panel"]
     } else {
         &[]
     };

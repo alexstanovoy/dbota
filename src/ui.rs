@@ -421,6 +421,13 @@ pub enum Extent {
 #[derive(Component, Clone, Copy)]
 pub struct Overhangs;
 
+/// A panel of the in-match interface that stands on its own, not under the HUD's root (the shop's,
+/// the talents' window): the layout tests (`e2e::hud_bounds`) walk it as they walk the HUD, so a
+/// panel that registers itself here is held inside the window, inside its holders and apart from the
+/// other panels without a line in the tests. Name it: the tests tell their complaints by names.
+#[derive(Component, Clone, Copy)]
+pub struct HudPanel;
+
 /// Interface pixels to one of Dota's: Dota lays its HUD out for a 1080-line
 /// screen, dbota for a [`HUD_DESIGN_HEIGHT`] one.
 pub const DOTA: f32 = HUD_DESIGN_HEIGHT / 1080.0;

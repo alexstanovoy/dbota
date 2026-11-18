@@ -1096,7 +1096,7 @@ fn camera_at(settings: &[&str], at: Vec3) -> (Server, Client) {
 }
 
 /// The minimap's inside, which the camera's frame stays within.
-const INSIDE: f32 = crate::minimap::SIDE - 6.0;
+const INSIDE: f32 = crate::minimap::INNER;
 
 /// A camera beyond the map's far corner has the frame on the corner, inside the minimap and not
 /// over its border.
