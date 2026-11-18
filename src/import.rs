@@ -9,8 +9,7 @@ use dbota_import::cache_dir::{
     lock_managed_root, prune, read_stamp, record_managed, stamp, touch_last_use,
 };
 use dbota_import::import::{Flow, IDS, MANIFEST, plan, plan_id, stamped_here};
-use dbota_import::pack_dir;
-use heatel::find_game_dir;
+use heatel::locate::Install;
 
 /// What the cache at a path lacks for this build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +20,9 @@ pub enum Need {
     /// one of this build's stamp whose files are of a layout older than this build reads
     /// ([`layouts_current`](dbota_import::import::layouts_current)).
     Reimport,
+    /// The cache is this build's, and the player asked to make it again (the settings' RE-IMPORT
+    /// GAME FILES): until a new one is whole, the one in place stays.
+    Requested,
 }
 
 /// Whether the cache at `cache` needs an import before dbota draws Dota's art and sound: it
@@ -38,14 +40,14 @@ pub fn need(cache: &Path) -> Option<Need> {
 /// lacks and what to do.
 pub fn refusal(need: Need, cache: &Path) -> String {
     match need {
-        Need::Import => format!(
-            "no asset cache at {}: dbota draws Dota's art and sound from the cache and nothing else; \
-             run `dbota import`, or `dbota import-cache` for a cache someone prepared",
+        Need::Import | Need::Requested => format!(
+            "no asset cache at {}: dbota draws Dota's art and sound from the cache it makes of \
+             your own Dota 2 install and from nothing else; start dbota, or run `dbota import`",
             cache.display()
         ),
         Need::Reimport => format!(
             "the asset cache {} is out of date for this version (it needs assets {}): \
-             run `dbota import`, or `dbota import-cache` for a cache prepared by this version",
+             start dbota, or run `dbota import`",
             cache.display(),
             dbota_import::import::fingerprint()
         ),
@@ -77,106 +79,124 @@ pub fn verify(cache: &Path) -> Result<bool, String> {
     Ok(verified.failures.is_empty())
 }
 
-/// How far an import is: the share done (0 to 1) and the asset at hand.
-pub type Progress<'a> = &'a mut dyn FnMut(f32, &str);
-
-/// Imports into `cache` from the install at `dota` (a `dota 2 beta` folder, else the usual
-/// Steam places); does nothing when the cache was made from the same install already, unless
-/// `force`. Returns whether every asset converted.
-pub fn run(dota: Option<&Path>, cache: &Path, force: bool) -> Result<bool, String> {
-    run_with(dota, cache, force, &mut tenths())
-}
-
-/// A progress that prints a line per tenth of the way: a terminal, not a progress bar.
-pub fn tenths() -> impl FnMut(f32, &str) {
-    let mut shown = 0;
-    move |done, item| {
-        let tenth = (done * 10.0) as u32;
-        if tenth > shown {
-            shown = tenth;
-            println!("  {tenth}0% ({item})");
-        }
+/// The Dota 2 install to import from: the one in `dota` (any usual level of it: the `dota 2
+/// beta` folder, its `game/dota`, the Steam library), else the first in this machine's Steam
+/// libraries.
+pub fn locate(dota: Option<&Path>) -> Result<Install, String> {
+    match dota {
+        Some(folder) => heatel::locate::install_in(folder).ok_or_else(|| not_dota(folder)),
+        None => crate::desktop::installs()
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                "Dota 2 was not found in this computer's Steam libraries; pass --dota-path \
+             \"<...>/steamapps/common/dota 2 beta\""
+                    .to_owned()
+            }),
     }
 }
 
-/// Puts the prepared cache at `from` (a folder, or a zip of one, as `dbota export-cache` makes it) in
-/// place of the cache at `cache`, once it has been checked whole: a cache of another build, or
-/// with a file it must not hold, is refused and the old one stays.
-pub fn load_cache(from: &Path, cache: &Path, progress: Progress) -> Result<(), String> {
-    println!(
-        "dbota import-cache: {} -> {}",
-        from.display(),
-        cache.display()
-    );
-    let root = managed_cache_root();
-    let _lease = managed_import(root.as_deref(), cache)?;
-    let started = std::time::Instant::now();
-    let summary = pack_dir::install(from, cache, &mut |done, total, item| {
-        progress(done as f32 / total.max(1) as f32, item);
-    })
-    .map_err(|e| e.to_string())?;
-    println!(
-        "dbota import-cache: {} files, {} MB, assets {} in {:.0} s",
-        summary.files,
-        summary.bytes >> 20,
-        summary.stamp,
-        started.elapsed().as_secs_f32()
-    );
-    report_maintenance(root.as_deref(), cache);
-    Ok(())
+/// Why a folder the player named is not a Dota 2 install.
+pub fn not_dota(folder: &Path) -> String {
+    format!(
+        "{} holds no Dota 2: no game/dota/{} in it. Pick the \"dota 2 beta\" folder (in a Steam \
+         library, under steamapps/common).",
+        folder.display(),
+        heatel::locate::PACKAGE
+    )
 }
 
-/// Writes the cache at `cache` as the zip `to`, for someone without Dota 2 to load.
-pub fn export_cache(cache: &Path, to: &Path) -> Result<(), String> {
-    let started = std::time::Instant::now();
-    let summary = pack_dir::export(cache, to).map_err(|e| e.to_string())?;
-    println!(
-        "dbota export-cache: {} files, {} MB of assets {} -> {} in {:.0} s",
-        summary.files,
-        summary.bytes >> 20,
-        summary.stamp,
-        to.display(),
-        started.elapsed().as_secs_f32()
-    );
-    Ok(())
+/// The most an import writes; [`room`] asks for this much free space.
+pub const IMPORT_ROOM: u64 = dbota_import::cache_dir::MAX_WRITTEN;
+
+/// Whether the drive of `cache` has room for an import; why not, when it has not.
+pub fn room(cache: &Path, needed: u64) -> Result<(), String> {
+    match crate::desktop::free_space(cache) {
+        Some(free) if free < needed => Err(no_room(cache, needed, free)),
+        _ => Ok(()),
+    }
 }
 
-/// [`run`], telling `progress` how far it is.
-pub fn run_with(
-    dota: Option<&Path>,
+/// What a player is told when the drive is too full.
+fn no_room(cache: &Path, needed: u64, free: u64) -> String {
+    let gb = |bytes: u64| bytes as f64 / 1e9;
+    format!(
+        "Not enough disk space: the copy needs up to {:.1} GB on the drive of {}, and {:.1} GB \
+         is free. Free some space and try again.",
+        gb(needed),
+        cache.display(),
+        gb(free)
+    )
+}
+
+/// How an import ended.
+#[derive(Debug, Default)]
+pub struct Imported {
+    /// Files written.
+    pub files: usize,
+    /// Assets that did not convert, with why: what they draw is missing.
+    pub failed: Vec<(String, String)>,
+    /// The player stopped it: the cache in place stays.
+    pub stopped: bool,
+}
+
+/// How far an import is, told before each step; the answer stops it or lets it go on.
+pub type Progress<'a> = &'a mut dyn FnMut(&dbota_import::import::Progress<'_>) -> Flow;
+
+/// Imports into `cache` from `install`; does nothing when the cache was made from the same
+/// install already, unless `force`. A stopped or failed import leaves the cache that was there.
+pub fn import_from(
+    install: &Install,
     cache: &Path,
     force: bool,
     progress: Progress,
-) -> Result<bool, String> {
+) -> Result<Imported, String> {
     let root = managed_cache_root();
-    run_with_in(dota, cache, force, progress, root.as_deref())
+    import_in(install, cache, force, progress, root.as_deref())
 }
 
-fn run_with_in(
-    dota: Option<&Path>,
+fn import_in(
+    install: &Install,
     cache: &Path,
     force: bool,
     progress: Progress,
     root: Option<&Path>,
-) -> Result<bool, String> {
-    let game: PathBuf = find_game_dir(dota).ok_or_else(|| {
-        "Dota 2 not found; pass --dota-path \"<...>/steamapps/common/dota 2 beta\"".to_string()
-    })?;
+) -> Result<Imported, String> {
     let plan = plan()?;
-    let stamp = stamp(&game, &plan_id(plan)).map_err(|e| e.to_string())?;
+    let stamp = stamp(&install.game, &plan_id(plan)).map_err(|e| e.to_string())?;
     let _lease = managed_import(root, cache)?;
     if !force && is_current(cache, &stamp) && dbota_import::import::layouts_current(cache) {
         println!("dbota import: {} is up to date", cache.display());
         report_maintenance(root, cache);
-        return Ok(true);
+        return Ok(Imported::default());
     }
-    println!("dbota import: {} -> {}", game.display(), cache.display());
+    room(cache, IMPORT_ROOM)?;
+    println!(
+        "dbota import: {} -> {}",
+        install.game.display(),
+        cache.display()
+    );
     let started = std::time::Instant::now();
-    let report = import_into(&game, cache, plan, &stamp, &mut |p| {
-        progress(p.done as f32 / p.total.max(1) as f32, p.item);
-        Flow::Continue
-    })
-    .map_err(|e| e.to_string())?;
+    let report =
+        import_into(&install.game, cache, plan, &stamp, progress).map_err(|e| match &e {
+            heatel::Error::Io { source, .. }
+                if source.kind() == std::io::ErrorKind::StorageFull =>
+            {
+                no_room(
+                    cache,
+                    IMPORT_ROOM,
+                    crate::desktop::free_space(cache).unwrap_or(0),
+                )
+            }
+            _ => e.to_string(),
+        })?;
+    if report.stopped {
+        println!("dbota import: stopped; {} stays as it was", cache.display());
+        return Ok(Imported {
+            stopped: true,
+            ..Imported::default()
+        });
+    }
     let bytes: u64 = report.files.values().sum();
     println!(
         "dbota import: {} files, {} MB written ({} MB read) in {:.0} s",
@@ -186,8 +206,13 @@ fn run_with_in(
         started.elapsed().as_secs_f32()
     );
     report_maintenance(root, cache);
-    for note in &report.notes {
-        println!("dbota import: {note}");
+    if !report.notes.is_empty() {
+        // What a converter left out on purpose (a voice pack's lines no game event plays): the
+        // count only, the lines are for a developer reading the converter.
+        println!(
+            "dbota import: {} assets left parts out on purpose",
+            report.notes.len()
+        );
     }
     for (asset, why) in &report.warnings {
         eprintln!("dbota import: warning: {asset}: {why}");
@@ -195,12 +220,35 @@ fn run_with_in(
     for (asset, why) in &report.failed {
         eprintln!("dbota import: {asset} did not convert: {why}");
     }
-    Ok(report.failed.is_empty())
+    Ok(Imported {
+        files: report.files.len(),
+        failed: report.failed,
+        stopped: false,
+    })
+}
+
+/// `dbota import`: imports from `dota` (else the install the Steam libraries hold), printing a
+/// line per tenth of the way. Returns whether every asset converted.
+pub fn run(dota: Option<&Path>, cache: &Path, force: bool) -> Result<bool, String> {
+    let install = locate(dota)?;
+    let mut shown = 0;
+    let imported = import_from(&install, cache, force, &mut |p| {
+        let tenth = (p.done * 10 / p.total.max(1)) as u32;
+        if tenth > shown {
+            shown = tenth;
+            println!("  {tenth}0% ({})", p.item);
+        }
+        Flow::Continue
+    })?;
+    Ok(imported.failed.is_empty())
 }
 
 /// The only root whose caches this client manages. Custom locations carry no deletion authority.
 pub fn managed_cache_root() -> Option<PathBuf> {
-    managed_cache_root_in(std::env::var_os("HOME").as_deref())
+    match crate::desktop::windows_data() {
+        Some(data) => Some(data.join("cache")),
+        None => managed_cache_root_in(std::env::var_os("HOME").as_deref()),
+    }
 }
 
 pub fn managed_cache_root_in(home: Option<&OsStr>) -> Option<PathBuf> {
@@ -209,13 +257,14 @@ pub fn managed_cache_root_in(home: Option<&OsStr>) -> Option<PathBuf> {
         .map(|home| home.join(".cache/dbota"))
 }
 
-pub fn cache_dir_in(home: Option<&OsStr>, assets: Option<&OsStr>) -> PathBuf {
+/// The cache of this build: `$DBOTA_ASSETS`, else its folder in the managed root (`root`), else,
+/// on a machine that names no home, beside the working folder.
+pub fn cache_dir_in(root: Option<PathBuf>, assets: Option<&OsStr>) -> PathBuf {
     assets
         .filter(|assets| !assets.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            managed_cache_root_in(home)
-                .unwrap_or_else(|| PathBuf::from(".cache/dbota"))
+            root.unwrap_or_else(|| PathBuf::from(".cache/dbota"))
                 .join(dbota_import::import::folder_name())
         })
 }
@@ -374,7 +423,10 @@ mod tests {
         let custom = caches.scratch.join("custom").join(folder_name());
         fs::create_dir_all(&custom).unwrap();
         fs::write(custom.join("keep"), b"custom data").unwrap();
-        let selected = cache_dir_in(Some(caches.home.as_os_str()), Some(custom.as_os_str()));
+        let selected = cache_dir_in(
+            managed_cache_root_in(Some(caches.home.as_os_str())),
+            Some(custom.as_os_str()),
+        );
         maintain_managed_cache(Some(&caches.root), &selected).unwrap();
         assert_eq!(caches.count(), MAX_CACHES + 1);
         assert_eq!(fs::read(custom.join("keep")).unwrap(), b"custom data");
@@ -406,16 +458,19 @@ mod tests {
         let expected = stamp(&game, &plan_id(plan().unwrap())).unwrap();
         fs::write(caches.current.join(STAMP), expected).unwrap();
         fs::remove_file(caches.current.join(OWNER_MARKER)).unwrap();
-        assert!(
-            run_with_in(
-                Some(&install),
-                &caches.current,
-                false,
-                &mut |_, _| panic!("an up-to-date cache is not converted"),
-                Some(&caches.root)
-            )
-            .unwrap()
-        );
+        let install = Install {
+            folder: install,
+            game,
+        };
+        let imported = import_in(
+            &install,
+            &caches.current,
+            false,
+            &mut |_| panic!("an up-to-date cache is not converted"),
+            Some(&caches.root),
+        )
+        .unwrap();
+        assert!(imported.failed.is_empty());
         assert!(
             caches
                 .current
@@ -429,7 +484,7 @@ mod tests {
     fn the_real_default_folder_records_use_and_prunes_expired_caches() {
         let caches = Caches::new();
         fs::remove_file(caches.current.join(OWNER_MARKER)).unwrap();
-        let selected = cache_dir_in(Some(caches.home.as_os_str()), None);
+        let selected = cache_dir_in(managed_cache_root_in(Some(caches.home.as_os_str())), None);
         assert_eq!(selected, caches.current);
         maintain_managed_cache(Some(&caches.root), &selected).unwrap();
         assert_eq!(caches.count(), MAX_CACHES);

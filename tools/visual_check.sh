@@ -214,8 +214,8 @@ fi
 # The way out: Escape on the menu asks to quit and OK ends the client with exit code 0; Escape in
 # a live game opens the dashboard, DISCONNECT leaves for the menu and RECONNECT takes the seat
 # again; a seat that LEAVES GAME ends the match as its loss and the other seat wins; a replay is left for the
-# menu; Demo Hero plays a hero with every cheat; a prepared asset cache (a folder, a zip) is taken by
-# `dbota import-cache` and by a path typed into the menu, and a cache of another build is refused. One test at a time: each opens a window of its own
+# menu; Demo Hero plays a hero with every cheat; without a cache of this build the client is held at the import
+# screen. One test at a time: each opens a window of its own
 # (in this check's compositor).
 if VISUAL_REPLAY="$(realpath "$replay")" DBOTA_QUIT_SHOTS="$out/quit" in_private_environment cargo test --profile test-release --quiet \
     --manifest-path "$here/Cargo.toml" --test menu_quit -- --ignored --test-threads 1 \
@@ -223,6 +223,19 @@ if VISUAL_REPLAY="$(realpath "$replay")" DBOTA_QUIT_SHOTS="$out/quit" in_private
     echo "visual check: PASS the menu, a game and a replay are quit and left as Dota's are; Demo Hero cheats"
 else
     echo "visual check: FAIL the way out (see $out/quit.log)"
+    exit 1
+fi
+
+# The first run: a client without an asset cache finds Dota 2 in the Steam libraries of its home,
+# imports it while its screen keeps drawing and starts again at the sign-in screen; CANCEL leaves no
+# copy; a cache of another build is imported again; without Dota in Steam the player picks the
+# folder; the settings' RE-IMPORT GAME FILES brings the screen back. One test at a time.
+if DBOTA_FIRST_RUN_SHOTS="$out/first_run" in_private_environment cargo test --profile test-release --quiet \
+    --manifest-path "$here/Cargo.toml" --test first_run -- --ignored --test-threads 1 \
+    > "$out/first_run.log" 2>&1 && ran "$out/first_run.log"; then
+    echo "visual check: PASS the first run imports Dota 2 before the sign-in screen"
+else
+    echo "visual check: FAIL the first run (see $out/first_run.log)"
     exit 1
 fi
 

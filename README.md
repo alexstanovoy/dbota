@@ -46,14 +46,13 @@ You need Rust, Steam with Dota 2 installed, and the bota repository checked out 
 
    A client plays only with a server and replays from the same bota version, so keep the two files together.
 
-2. Make the asset cache from your Dota 2 install (found automatically in the usual Steam places; about a minute):
+2. Start `target/release/dbota`. Its first run finds Dota 2 in your Steam libraries (or asks for the folder) and makes
+   the asset cache from it, on this machine, in about a minute; then it goes on to the sign-in screen. The same from a
+   terminal, for scripts:
 
    ```sh
    target/release/dbota import   # or: dbota import --dota-path "<...>/dota 2 beta"
    ```
-
-   A friend without Dota 2 can use a cache you prepared with `dbota export-cache cache.zip` (it holds Valve's
-   converted assets, so share it only where you may).
 
 3. Play:
 

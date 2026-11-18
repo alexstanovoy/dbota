@@ -166,9 +166,31 @@ pub fn plugin(app: &mut App) {
         );
 }
 
-fn load_fonts(mut commands: Commands, server: Res<AssetServer>, manifest: Res<Manifest>) {
-    let bold: Handle<Font> = server.load("fonts/bota-sans-bold.ttf");
-    let regular: Handle<Font> = server.load("fonts/bota-sans-regular.ttf");
+/// The shipped faces, in the binary: a native client needs no file beside it (a browser's
+/// fetches them beside the page).
+#[cfg(not(target_arch = "wasm32"))]
+fn shipped(fonts: &mut Assets<Font>, _: &AssetServer, name: &str) -> Handle<Font> {
+    let bytes: &[u8] = match name {
+        "fonts/bota-sans-bold.ttf" => include_bytes!("../assets/fonts/bota-sans-bold.ttf"),
+        "fonts/bota-sans-regular.ttf" => include_bytes!("../assets/fonts/bota-sans-regular.ttf"),
+        _ => include_bytes!("../assets/fonts/bota-sans-cjk.otf"),
+    };
+    fonts.add(Font::from_bytes(bytes.to_vec()))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn shipped(_: &mut Assets<Font>, server: &AssetServer, name: &str) -> Handle<Font> {
+    server.load(name.to_owned())
+}
+
+fn load_fonts(
+    mut commands: Commands,
+    server: Res<AssetServer>,
+    manifest: Res<Manifest>,
+    mut fonts: ResMut<Assets<Font>>,
+) {
+    let bold = shipped(&mut fonts, &server, "fonts/bota-sans-bold.ttf");
+    let regular = shipped(&mut fonts, &server, "fonts/bota-sans-regular.ttf");
     // Without the install's, the titles and labels are the shipped bold, running text regular.
     let face = |logical: &str, shipped: &Handle<Font>| match manifest.file(logical) {
         Some(path) => server.load(path),
@@ -185,7 +207,8 @@ fn load_fonts(mut commands: Commands, server: Res<AssetServer>, manifest: Res<Ma
         regular,
         faces,
     });
-    commands.insert_resource(FallbackFont(server.load("fonts/bota-sans-cjk.otf")));
+    let fallback = shipped(&mut fonts, &server, "fonts/bota-sans-cjk.otf");
+    commands.insert_resource(FallbackFont(fallback));
 }
 
 /// The font collection, with the system's fonts where it has them. Fontique

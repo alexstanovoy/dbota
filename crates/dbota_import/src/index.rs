@@ -1,8 +1,8 @@
 //! The validated, bounded asset-cache index used by every cache reader.
 
 use crate::import::{
-    IDS, INDEX, Item, LAST_USE_MARKER, LAST_USE_TEXT, MANIFEST, OWNER_MARKER, PATH_LIMIT, Plan,
-    READ_ONE_LIMIT, STAMP, WRITE_LIMIT, is_small, safe_path,
+    IDS, INDEX, Item, LAST_USE_MARKER, MANIFEST, OWNER_MARKER, PATH_LIMIT, Plan, READ_ONE_LIMIT,
+    STAMP, WRITE_LIMIT, is_small, safe_path,
 };
 use crate::pack::{PackError, shown};
 use std::collections::HashSet;
@@ -251,8 +251,12 @@ pub(crate) fn is_metadata(path: &str) -> bool {
     matches!(path, STAMP | INDEX | OWNER_MARKER | LAST_USE_MARKER)
 }
 
+/// The seconds a cache's last-use stamp holds (the native client's maintenance reads it).
+#[cfg(any(unix, windows))]
 pub(crate) fn last_use_seconds(text: &str) -> Option<u64> {
-    let seconds = text.strip_prefix(LAST_USE_TEXT)?.strip_suffix('\n')?;
+    let seconds = text
+        .strip_prefix(crate::import::LAST_USE_TEXT)?
+        .strip_suffix('\n')?;
     if seconds.is_empty() || seconds.len() > 20 || !seconds.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }

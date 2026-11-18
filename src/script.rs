@@ -45,6 +45,8 @@
 //! - `light`: prints `light: sun=R,G,B,LUX ambient=R,G,B,BRIGHTNESS`, the
 //!   scene's sun and ambient light in linear colour, for the tests to compare;
 //! - `wait:SECONDS`;
+//! - `frames:N`: until N frames have been made since the step began (a screen that keeps
+//!   presenting while work runs behind it);
 //! - `exit`: the client ends, with exit code 0;
 //! - `mouse:X,Y`: the pointer moved to that point of the window, in shares
 //!   of its width and height (`0.5,0.5` is the middle), so a script plays
@@ -95,6 +97,8 @@ enum Step {
     /// The scene's lights printed.
     Light,
     Wait(f32),
+    /// Frames made since the step began.
+    Frames(u32),
     Mouse(Vec2),
     Button(MouseButton),
     /// The left button held down, or let go: a drag.
@@ -182,11 +186,13 @@ struct Drawn<'w, 's> {
 
 /// Where the script is.
 #[derive(Resource, Default)]
-struct Script {
+pub struct Script {
     steps: Vec<(String, Step)>,
     at: usize,
     /// When the step under way began.
     began: Option<f32>,
+    /// The frame the step under way began on.
+    began_frame: Option<u32>,
     held: Option<Held>,
     /// The button to press after the pointer's own pass this frame.
     click: Option<String>,
@@ -195,11 +201,22 @@ struct Script {
 }
 
 impl Script {
+    /// The steps not played yet, as `--script` takes them: what a client started again (after an
+    /// import) plays on.
+    pub fn rest(&self) -> String {
+        self.steps[self.at.min(self.steps.len())..]
+            .iter()
+            .map(|(line, _)| line.as_str())
+            .collect::<Vec<_>>()
+            .join(";")
+    }
+
     fn finish_step(&mut self) {
         let (line, _) = self.steps.get(self.at).expect("the running script step");
         println!("script: {line}");
         self.at += 1;
         self.began = None;
+        self.began_frame = None;
         self.shot = None;
         self.click = None;
     }
@@ -318,6 +335,10 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                 "text" => Step::Text(arg.to_owned()),
                 "say" => Step::Say(arg.to_owned()),
                 "pick" => Step::Pick(arg.parse().map_err(|_| format!("'{arg}' is no hero id"))?),
+                "frames" => Step::Frames(
+                    arg.parse()
+                        .map_err(|_| format!("'{arg}' is not a number of frames"))?,
+                ),
                 "wait" => Step::Wait(
                     arg.parse()
                         .map_err(|_| format!("'{arg}' is not a number of seconds"))?,
@@ -529,6 +550,7 @@ fn play(
     mut exit: MessageWriter<AppExit>,
     mut said: ResMut<crate::chat::Queued>,
     scene: Scene,
+    frame: Res<bevy::diagnostic::FrameCount>,
 ) {
     let Ok((window, mut win)) = window.single_mut() else {
         return;
@@ -567,6 +589,7 @@ fn play(
         return;
     };
     let began = *script.began.get_or_insert(now);
+    let began_frame = *script.began_frame.get_or_insert(frame.0);
     let done = match &step {
         Step::Key(key) => {
             keys.write(typed(*key, ButtonState::Pressed));
@@ -679,6 +702,7 @@ fn play(
             true
         }
         Step::Wait(secs) => now - began >= *secs,
+        Step::Frames(count) => frame.0.wrapping_sub(began_frame) >= *count,
         Step::Pick(hero) => {
             session.0.act(bota_client_core::Intent::PickHero(*hero));
             if !session.0.ready {

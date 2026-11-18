@@ -107,6 +107,9 @@ pub fn inside_managed_cache(path: &Path) -> bool {
     }
 }
 
+/// The most an import writes into a cache: the room it needs on the cache's drive.
+pub const MAX_WRITTEN: u64 = crate::import::WRITE_LIMIT;
+
 /// Retention protects caches used within this window, up to the managed capacity.
 pub const CACHE_USE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 pub const MAX_CACHES: usize = 8;
@@ -595,13 +598,29 @@ fn import_capped(
 ) -> Result<Report> {
     let staging = sibling(cache, "importing")?;
     remove(&staging)?;
+    // A file that cannot be written (a full disk, a folder taken away) ends the import: what it
+    // made would be a cache with holes, its index listing what is there.
+    let failed = std::cell::RefCell::new(None);
     let made = run_capped(
         InstallSource::new(game),
         plan,
-        &mut DirSink::new(&staging),
-        progress,
+        &mut Watched {
+            inner: DirSink::new(&staging),
+            failed: &failed,
+        },
+        &mut |p: &Progress<'_>| {
+            if failed.borrow().is_some() {
+                Flow::Stop
+            } else {
+                progress(p)
+            }
+        },
         limit,
     );
+    let made = match failed.into_inner() {
+        Some(err) => Err(err),
+        None => made,
+    };
     let report = match made {
         Ok(report) => report,
         Err(err) => {
@@ -618,6 +637,25 @@ fn import_capped(
     sink.write(STAMP, stamp.as_bytes())?;
     replace(&staging, cache)?;
     Ok(report)
+}
+
+/// A sink that keeps the first file it could not write in `failed`.
+struct Watched<'a> {
+    inner: DirSink,
+    failed: &'a std::cell::RefCell<Option<Error>>,
+}
+
+impl Sink for Watched<'_> {
+    fn write(&mut self, path: &str, data: &[u8]) -> Result<()> {
+        let written = self.inner.write(path, data);
+        if let Err(Error::Io { path, source }) = &written {
+            self.failed.borrow_mut().get_or_insert_with(|| Error::Io {
+                path: path.clone(),
+                source: io::Error::new(source.kind(), source.to_string()),
+            });
+        }
+        written
+    }
 }
 
 /// Puts the whole cache in `staging` in the place of the one at `cache`.
@@ -745,6 +783,40 @@ mod tests {
         let made = import_capped(&game, &cache, &plan, "after", &mut |_| Flow::Continue, None);
         assert!(made.is_ok_and(|r| r.cut.is_none()));
         assert_eq!(read_stamp(&cache).as_deref(), Some("after"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file the import cannot write ends it unfinished, whatever comes after: no cache with
+    /// holes that its index hides is published, and the cache that was there stays.
+    #[test]
+    fn a_file_that_cannot_be_written_ends_the_import_and_keeps_the_old_cache() {
+        let dir = fresh_dir("unwritable");
+        let (game, cache) = (dir.join("game"), dir.join("cache"));
+        fs::create_dir_all(game.join("panorama/fonts")).unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(game.join("pak01_dir.vpk"), vpk(&[])).unwrap();
+        let face = include_bytes!("../../../assets/fonts/bota-sans-regular.ttf");
+        fs::write(game.join("panorama/fonts/f.otf"), face).unwrap();
+        fs::write(cache.join(STAMP), b"before").unwrap();
+        fs::write(cache.join(INDEX), b"").unwrap();
+        let plan = Plan::parse(
+            "font first panorama/fonts/f.otf fonts/first.otf\n\
+             font second panorama/fonts/f.otf fonts/second.otf\n",
+            "",
+        )
+        .unwrap();
+        let staging = sibling(&cache, "importing").unwrap();
+        // Once the first face is written, the second's place is taken by a folder.
+        let made = import_into(&game, &cache, &plan, "after", &mut |p| {
+            if p.done == 1 {
+                fs::create_dir_all(staging.join("fonts/second.otf")).unwrap();
+            }
+            Flow::Continue
+        });
+        let err = made.expect_err("an import whose file cannot be written fails");
+        assert!(err.to_string().contains("fonts/second.otf"), "{err}");
+        assert_eq!(read_stamp(&cache).as_deref(), Some("before"));
+        assert!(!staging.exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 

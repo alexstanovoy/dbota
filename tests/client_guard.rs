@@ -12,7 +12,7 @@ fn manifest() -> PathBuf {
 
 /// A copy of the shell tools into `scratch/tools`, to run them beside a target folder of the test's.
 #[cfg(unix)]
-fn copy_tools(scratch: &common::prepared::Scratch, names: &[&str]) -> PathBuf {
+fn copy_tools(scratch: &common::scratch::Scratch, names: &[&str]) -> PathBuf {
     let tools = scratch.path("tools");
     std::fs::create_dir_all(&tools).expect("tools directory");
     for name in names
@@ -52,7 +52,7 @@ fn untrusted_environment(command: &mut std::process::Command) {
 #[cfg(unix)]
 #[test]
 fn shell_test_client_uses_and_cleans_a_private_home() {
-    let scratch = common::prepared::Scratch::new("shell-client");
+    let scratch = common::scratch::Scratch::new("shell-client");
     let tools = copy_tools(&scratch, &["test_client.sh"]);
     let target = scratch.path("target");
     let cache = scratch.path("cache");
@@ -134,7 +134,7 @@ fn a_client_of_the_test_harness_plays_to_no_device() {
 #[cfg(unix)]
 #[test]
 fn the_private_environment_of_the_shell_wrappers_silences_the_audio_output() {
-    let scratch = common::prepared::Scratch::new("shell-silent");
+    let scratch = common::scratch::Scratch::new("shell-silent");
     let tools = copy_tools(&scratch, &[]);
     let target = scratch.path("target");
     let output = std::process::Command::new("bash")
@@ -159,7 +159,7 @@ fn the_private_environment_of_the_shell_wrappers_silences_the_audio_output() {
 /// the caller's own variable removed unless `caller` sets it.
 #[cfg(unix)]
 fn audio_policy_through_headless(how: &[(&str, &str)], caller: Option<&str>) -> String {
-    let scratch = common::prepared::Scratch::new("headless-silent");
+    let scratch = common::scratch::Scratch::new("headless-silent");
     let tools = copy_tools(&scratch, &["headless.sh"]);
     let mut wrapper = std::process::Command::new("bash");
     wrapper
@@ -218,7 +218,7 @@ fn headless_sh_silences_the_audio_output_on_its_early_exits_too() {
 #[cfg(unix)]
 #[test]
 fn headless_sh_inner_half_silences_the_audio_output() {
-    let scratch = common::prepared::Scratch::new("headless-inner");
+    let scratch = common::scratch::Scratch::new("headless-inner");
     let tools = copy_tools(&scratch, &["headless.sh"]);
     let output = std::process::Command::new("bash")
         .arg("-c")
@@ -245,7 +245,7 @@ fn headless_sh_inner_half_silences_the_audio_output() {
 #[cfg(unix)]
 #[test]
 fn shell_test_client_plays_to_no_device() {
-    let scratch = common::prepared::Scratch::new("shell-client-silent");
+    let scratch = common::scratch::Scratch::new("shell-client-silent");
     let tools = copy_tools(&scratch, &["test_client.sh"]);
     let target = scratch.path("target");
     let cache = scratch.path("cache");
@@ -275,7 +275,7 @@ fn shell_test_client_plays_to_no_device() {
 #[cfg(unix)]
 #[test]
 fn shell_test_client_runs_the_binary_of_the_cargo_target_dir() {
-    let scratch = common::prepared::Scratch::new("shell-client-target");
+    let scratch = common::scratch::Scratch::new("shell-client-target");
     let tools = copy_tools(&scratch, &["test_client.sh"]);
     let target = scratch.path("elsewhere");
     let cache = scratch.path("cache");
@@ -318,7 +318,7 @@ fn shell_test_client_refuses_to_run_without_an_asset_cache() {
 /// Runs a copy of `tools/bench.sh` on a stub client: the real binary of the run is `true`, and
 /// `BENCH_WRAP` swaps it for a script that prints the environment it got in a `bench:` line.
 #[cfg(unix)]
-fn bench(scratch: &common::prepared::Scratch, assets: Option<&Path>) -> std::process::Output {
+fn bench(scratch: &common::scratch::Scratch, assets: Option<&Path>) -> std::process::Output {
     let tools = copy_tools(scratch, &["bench.sh", "headless.sh"]);
     let stub = scratch.path("stub.sh");
     executable(
@@ -355,7 +355,7 @@ fn bench(scratch: &common::prepared::Scratch, assets: Option<&Path>) -> std::pro
 #[cfg(unix)]
 #[test]
 fn bench_runs_the_client_on_a_private_home_without_steering_variables() {
-    let scratch = common::prepared::Scratch::new("bench-private");
+    let scratch = common::scratch::Scratch::new("bench-private");
     let cache = scratch.path("cache");
     std::fs::create_dir_all(&cache).expect("cache directory");
     std::fs::write(cache.join("index.txt"), "").expect("cache index");
@@ -381,7 +381,7 @@ fn bench_runs_the_client_on_a_private_home_without_steering_variables() {
 #[cfg(unix)]
 #[test]
 fn bench_refuses_to_run_without_an_asset_cache_instead_of_taking_the_managed_one() {
-    let scratch = common::prepared::Scratch::new("bench-no-cache");
+    let scratch = common::scratch::Scratch::new("bench-no-cache");
     let output = bench(&scratch, None);
     assert!(!output.status.success());
     assert!(
@@ -395,7 +395,7 @@ fn bench_refuses_to_run_without_an_asset_cache_instead_of_taking_the_managed_one
 
 /// A cache in the shape of the managed one (`~/.cache/dbota/<fingerprint>`) under `scratch`, with an index.
 #[cfg(unix)]
-fn managed_looking_cache(scratch: &common::prepared::Scratch) -> PathBuf {
+fn managed_looking_cache(scratch: &common::scratch::Scratch) -> PathBuf {
     let cache = scratch.path("home/.cache/dbota/v9");
     std::fs::create_dir_all(&cache).expect("cache directory");
     std::fs::write(cache.join("index.txt"), "").expect("cache index");
@@ -405,7 +405,7 @@ fn managed_looking_cache(scratch: &common::prepared::Scratch) -> PathBuf {
 #[cfg(unix)]
 #[test]
 fn shell_test_client_refuses_the_managed_asset_cache() {
-    let scratch = common::prepared::Scratch::new("shell-managed-cache");
+    let scratch = common::scratch::Scratch::new("shell-managed-cache");
     let tools = copy_tools(&scratch, &["test_client.sh"]);
     let output = std::process::Command::new("bash")
         .arg(tools.join("test_client.sh"))
@@ -424,7 +424,7 @@ fn shell_test_client_refuses_the_managed_asset_cache() {
 #[cfg(unix)]
 #[test]
 fn bench_refuses_the_managed_asset_cache() {
-    let scratch = common::prepared::Scratch::new("bench-managed-cache");
+    let scratch = common::scratch::Scratch::new("bench-managed-cache");
     let output = bench(&scratch, Some(&managed_looking_cache(&scratch)));
     assert!(!output.status.success());
     assert!(
@@ -442,7 +442,7 @@ fn the_integration_harness_refuses_the_managed_asset_cache_by_name_and_through_a
         common::asset_cache();
         return;
     }
-    let scratch = common::prepared::Scratch::new("harness-managed-cache");
+    let scratch = common::scratch::Scratch::new("harness-managed-cache");
     let managed = managed_looking_cache(&scratch);
     let mut named = vec![scratch.path("home/.cache/dbota/not-made")];
     #[cfg(unix)]
@@ -475,7 +475,7 @@ fn the_integration_harness_refuses_the_managed_asset_cache_by_name_and_through_a
 
 #[test]
 fn a_client_built_on_a_managed_cache_is_refused() {
-    let scratch = common::prepared::Scratch::new("binary-managed-cache");
+    let scratch = common::scratch::Scratch::new("binary-managed-cache");
     let managed = scratch.path("home/.cache/dbota/v9");
     let refused = std::panic::catch_unwind(|| common::binary(&managed));
     assert!(refused.is_err(), "common::binary took a managed cache");
@@ -484,7 +484,7 @@ fn a_client_built_on_a_managed_cache_is_refused() {
 #[cfg(unix)]
 #[test]
 fn import_assets_refuses_the_managed_cache_before_it_touches_it() {
-    let scratch = common::prepared::Scratch::new("import-managed-cache");
+    let scratch = common::scratch::Scratch::new("import-managed-cache");
     let tools = copy_tools(&scratch, &[]);
     for spelling in [
         "home/.cache/dbota/v9",
@@ -519,7 +519,7 @@ fn import_assets_refuses_the_managed_cache_before_it_touches_it() {
 #[cfg(unix)]
 #[test]
 fn the_gate_refuses_a_managed_reference_cache() {
-    let scratch = common::prepared::Scratch::new("reference-managed-cache");
+    let scratch = common::scratch::Scratch::new("reference-managed-cache");
     let tools = copy_tools(&scratch, &[]);
     let output = std::process::Command::new("bash")
         .args([
@@ -547,7 +547,7 @@ fn the_gate_refuses_a_managed_reference_cache() {
 #[cfg(unix)]
 #[test]
 fn a_server_started_in_the_background_without_the_steering_variables_is_the_pid_the_shell_holds() {
-    let scratch = common::prepared::Scratch::new("background-scrubbed");
+    let scratch = common::scratch::Scratch::new("background-scrubbed");
     let tools = copy_tools(&scratch, &[]);
     let seen = scratch.path("seen.txt");
     let script = format!(
@@ -574,7 +574,7 @@ fn a_server_started_in_the_background_without_the_steering_variables_is_the_pid_
 #[cfg(unix)]
 #[test]
 fn run_scrubbed_starts_a_command_without_the_steering_variables() {
-    let scratch = common::prepared::Scratch::new("run-scrubbed");
+    let scratch = common::scratch::Scratch::new("run-scrubbed");
     let tools = copy_tools(&scratch, &[]);
     let mut command = std::process::Command::new("bash");
     command.args([
@@ -636,7 +636,7 @@ const PRIVATE_ENVIRONMENT_PROBE: &str = "printf \"%s\\n\" \"$HOME\" \"$CARGO_HOM
 #[cfg(unix)]
 #[test]
 fn a_private_environment_hides_the_home_and_keeps_the_toolchain_and_the_dota_install() {
-    let scratch = common::prepared::Scratch::new("private-environment");
+    let scratch = common::scratch::Scratch::new("private-environment");
     let tools = copy_tools(&scratch, &[]);
     let home = scratch.path("home");
     let install = home.join(".local/share/Steam/steamapps/common/dota 2 beta");
@@ -698,7 +698,7 @@ fn a_private_environment_hides_the_home_and_keeps_the_toolchain_and_the_dota_ins
 #[cfg(unix)]
 #[test]
 fn headless_runs_its_command_on_a_private_home() {
-    let scratch = common::prepared::Scratch::new("headless-private");
+    let scratch = common::scratch::Scratch::new("headless-private");
     let tools = copy_tools(&scratch, &["headless.sh"]);
     // A compositor that only runs what comes after `--`, as weston does.
     let weston = scratch.path("weston");
@@ -804,7 +804,7 @@ fn a_spawned_game_server_does_not_inherit_the_variables_that_steer_it() {
         }
         return;
     }
-    let scratch = common::prepared::Scratch::new("server-scrub");
+    let scratch = common::scratch::Scratch::new("server-scrub");
     let seen = scratch.path("seen.txt");
     let stub = scratch.path("bota_server");
     let probe: String = common::client_environment()
@@ -952,6 +952,11 @@ const APPROVED_LAUNCH_LINES: &[(&str, &str, &str)] = &[
         "tools/gate.sh",
         r#"(cd -- "$bota" && run_scrubbed cargo run --locked --release -q --manifest-path Cargo.toml -p bota_server --example local_match \"#,
         "bota's local_match example, not the client, without the variables that steer a server",
+    ),
+    (
+        "tools/windows_check.sh",
+        "exe=$out/target/$target/dist/dbota.exe",
+        "the Windows binary, started only under Wine in a fresh prefix on a private home",
     ),
     (
         "tools/build.sh",
@@ -1107,6 +1112,10 @@ const KNOWN_VARIABLES: &[(&str, &str)] = &[
         "DBOTA_QUIT_SHOTS",
         "a test names a folder for screenshots to keep",
     ),
+    (
+        "DBOTA_FIRST_RUN_SHOTS",
+        "a test names a folder for screenshots to keep",
+    ),
     ("DBOTA_HEADLESS_SIZE", "the size of the private compositor"),
     (
         "DBOTA_NULL_AUDIO",
@@ -1155,7 +1164,7 @@ const LOCATION_RESOLVERS: &[&str] = &[
     "src/replays/disk.rs",
     "src/import.rs",
     "src/main.rs",
-    "src/assets_notice.rs",
+    "src/desktop.rs",
 ];
 
 fn environment_problems(path: &str, source: &str) -> Vec<String> {

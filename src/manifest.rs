@@ -216,6 +216,10 @@ impl Manifest {
                 }
             }
         }
+        HOLDS_ASSETS.store(
+            !manifest.files.is_empty() || !manifest.models.is_empty(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         manifest
     }
 
@@ -506,5 +510,21 @@ mod index_tests {
         std::fs::write(root.join("index.txt"), valid).unwrap();
         assert_eq!(cached_icons(&root), ["icons/items/blink.png"]);
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+/// Whether the cache the client started on holds any asset: none before the first import, when
+/// every asset is missing as expected.
+static HOLDS_ASSETS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Says that a file the client reads from the cache is missing, at `level`; before the first
+/// import (an empty cache, the import screen up) every file is, which is said at debug only.
+pub fn say_missing(level: bevy::log::Level, text: &str) {
+    if !HOLDS_ASSETS.load(std::sync::atomic::Ordering::Relaxed) {
+        debug!("{text}");
+    } else if level == bevy::log::Level::ERROR {
+        error!("{text}");
+    } else {
+        warn!("{text}");
     }
 }

@@ -37,7 +37,7 @@ step = "none: the script, not a test (test_test_groups.py tests it)"
 
 # Files outside the groups' own.
 [[route]]
-paths = ["Cargo.toml", "Cargo.lock", "build.rs", "assets-manifest/**", "crates/dbota_import/Cargo.toml", "crates/dbota_import/src/**"]
+paths = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml", "build.rs", "assets-manifest/**", "crates/dbota_import/Cargo.toml", "crates/dbota_import/src/**"]
 groups = ["*"]
 
 [[route]]
@@ -111,7 +111,8 @@ paths = [
     "src/webpage.rs",
     "src/webcache.rs",
     "src/cursor.rs",
-    "src/assets_notice.rs",
+    "src/firstrun.rs",
+    "src/desktop.rs",
     "src/demo.rs",
     "src/logging.rs",
     "src/framestats.rs",
@@ -144,6 +145,7 @@ paths = [
     "src/settings/**",
     "tests/connect.rs",
     "tests/menu_quit.rs",
+    "tests/first_run.rs",
     "tests/port_lease.rs",
     "tests/common/lobby_friend.rs",
     "tests/ping.rs",
@@ -164,6 +166,7 @@ tests = [
         "input::",
         "window::tests::",
         "logging::",
+        "desktop::",
         "postgame::",
         "chat::version_tests::",
         "e2e::chat_log::",
@@ -190,6 +193,7 @@ tests = [
     ] },
     { package = "dbota", target = "test:connect" },
     { package = "dbota", target = "test:menu_quit" },
+    { package = "dbota", target = "test:first_run" },
     { package = "dbota", target = "test:port_lease" },
     { package = "dbota", target = "test:ping" },
     { package = "dbota", target = "test:refused_replays" },
@@ -232,7 +236,6 @@ paths = [
     "src/e2e/icons.rs",
     "src/e2e/arcane_tips.rs",
     "src/e2e/animation_reference.rs",
-    "tests/cache_import.rs",
     "tests/fonts.rs",
     "tests/io_stack.rs",
     "tests/portrait_talk.rs",
@@ -265,7 +268,6 @@ tests = [
         "e2e::icons::",
         "e2e::arcane_tips::",
     ] },
-    { package = "dbota", target = "test:cache_import" },
     { package = "dbota", target = "test:fonts" },
     { package = "dbota", target = "test:io_stack" },
     { package = "dbota", target = "test:portrait_talk" },

@@ -1116,6 +1116,42 @@ fn census_line(kit: &mut Kit, root: Entity) {
         flex_basis: px(0),
         ..default()
     });
+    #[cfg(not(target_arch = "wasm32"))]
+    reimport_button(kit, root);
+}
+
+/// The button that makes the copy of the Dota 2 files again: dbota starts again at its import
+/// screen (`firstrun`).
+#[cfg(not(target_arch = "wasm32"))]
+fn reimport_button(kit: &mut Kit, root: Entity) {
+    let button = kit
+        .commands
+        .spawn((
+            crate::firstrun::ReimportButton,
+            Button,
+            Hovered::default(),
+            Node {
+                height: px(34),
+                padding: UiRect::axes(px(14), px(0)),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BackgroundColor(theme::FIELD_SUNKEN),
+            BorderColor::all(theme::CARD_EDGE),
+            Name::new("re-import game files"),
+            ChildOf(root),
+        ))
+        .id();
+    let role = Type {
+        size: 13.0,
+        face: Face::Bold,
+        ..theme::BODY
+    };
+    let label = kit.typed(button, "RE-IMPORT GAME FILES", role, theme::ROW_INK);
+    kit.commands.entity(label).insert(Pickable::IGNORE);
 }
 
 /// The arrow that puts a changed row back to its default; in the row's top corner when the row

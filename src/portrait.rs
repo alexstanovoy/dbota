@@ -222,8 +222,11 @@ impl Framings {
         let file = dbota_import::import::PORTRAITS_FILE;
         let Some(bytes) = crate::cachefs::read_small(root, file) else {
             if say {
-                error!(
-                    "{file} is not in the asset cache; every portrait is framed by its model's bounds"
+                crate::manifest::say_missing(
+                    bevy::log::Level::ERROR,
+                    &format!(
+                        "{file} is not in the asset cache; every portrait is framed by its model's bounds"
+                    ),
                 );
             }
             return Self::default();

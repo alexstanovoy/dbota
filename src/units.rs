@@ -387,8 +387,9 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
     // A model the cache lacks is not drawn: loudly, not silently.
     for name in required_models(&manifest) {
         if manifest.model(&name).is_none() {
-            error!(
-                "model {name} is not in the asset cache: its units are not drawn; run dbota import"
+            crate::manifest::say_missing(
+                bevy::log::Level::ERROR,
+                &format!("model {name} is not in the asset cache: its units are not drawn"),
             );
         }
     }

@@ -1,7 +1,6 @@
 # Coverage-guided fuzz targets for what dbota reads or makes besides Valve's formats (heatel
 # fuzzes those): the importer that converts an install into the asset cache, its manifest plan
-# and stamps, the asset cache as the client reads it back, and a prepared cache (a zip or a
-# folder someone hands on) before it is taken. A workspace of its own: the
+# and stamps, and the asset cache as the client reads it back. A workspace of its own: the
 # fuzzer's flags and libFuzzer stay out of the main build. `fuzz.sh` builds and runs them on
 # stable Rust.
 [package]
@@ -19,8 +18,6 @@ cargo-fuzz = true
 ignored = ["hound", "rodio", "serde", "serde_json"]
 
 [dependencies]
-# The pack_folder target's structured input.
-arbitrary = { version = "1", features = ["derive"] }
 # The versions and decoders the client loads its cache with.
 bevy_asset = { version = "=0.20.1", default-features = false }
 bevy_image = { version = "=0.20.0", default-features = false, features = ["png", "ktx2", "zstd_rust"] }
@@ -82,20 +79,6 @@ bench = false
 [[bin]]
 name = "cache_text"
 path = "fuzz_targets/cache_text.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "pack_zip"
-path = "fuzz_targets/pack_zip.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "pack_folder"
-path = "fuzz_targets/pack_folder.rs"
 test = false
 doc = false
 bench = false

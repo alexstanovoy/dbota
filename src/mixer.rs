@@ -242,14 +242,20 @@ impl Mixer {
         let text = crate::cachefs::read_small(&manifest.root, "sounds/events.txt")
             .and_then(|bytes| String::from_utf8(bytes).ok());
         let Some(text) = text else {
-            warn!("sounds/events.txt is missing from the cache: using the fallback repeat policy");
+            crate::manifest::say_missing(
+                bevy::log::Level::WARN,
+                "sounds/events.txt is missing from the cache: using the fallback repeat policy",
+            );
             return Mixer::default();
         };
         let events = crate::cache_text::sound_events(&text, MAX_EVENTS);
         let mix = crate::cachefs::read_small(&manifest.root, "sounds/mixer.txt")
             .and_then(|bytes| String::from_utf8(bytes).ok());
         if mix.is_none() {
-            warn!("sounds/mixer.txt is missing from the cache: no sound is mixed");
+            crate::manifest::say_missing(
+                bevy::log::Level::WARN,
+                "sounds/mixer.txt is missing from the cache: no sound is mixed",
+            );
         }
         let (groups, layers) = crate::cache_text::mixer_lines(&mix.unwrap_or_default(), 4096);
         Mixer {

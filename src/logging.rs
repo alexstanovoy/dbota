@@ -80,9 +80,25 @@ fn limit<S>() -> impl tracing_subscriber::layer::Filter<S> {
 pub fn throttled(_: &mut App) -> Option<BoxedFmtLayer> {
     Some(Box::new(
         tracing_subscriber::fmt::Layer::default()
-            .with_writer(std::io::stderr)
+            .with_writer(|| Out)
             .with_filter(limit()),
     ))
+}
+
+/// The log's output: stderr, and the log file of a client started without a terminal
+/// (`desktop::log_file`).
+struct Out;
+
+impl std::io::Write for Out {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let _ = std::io::stderr().write_all(bytes);
+        crate::desktop::log().write(bytes, true);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::stderr().flush()
+    }
 }
 
 #[cfg(test)]

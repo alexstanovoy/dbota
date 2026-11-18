@@ -7,10 +7,17 @@ and are never committed or published. Only our code and the manifest are in git.
 player picks.
 
 ```sh
-target/release/dbota import                       # Flatpak Steam, then ~/.steam/steam, then ~/.local/share/Steam
+target/release/dbota import                       # every Steam library of this computer (registry, libraryfolders.vdf)
 target/release/dbota import --dota-path "/path/to/steamapps/common/dota 2 beta"
 DBOTA_ASSETS=/elsewhere target/release/dbota import   # cache location (default: `dbota cache-dir`)
 ```
+
+The client's first run does the same from its own screen before the sign-in (`src/firstrun.rs`): it searches the
+Steam libraries (Windows: the registry's Steam folder; Linux: native, Flatpak and Snap Steam; macOS: Application
+Support) and every library their `libraryfolders.vdf` lists, or takes the folder the player picks in the system's
+dialog, then makes the cache on a worker thread with its progress and a CANCEL, and starts dbota again on it. The
+settings' RE-IMPORT GAME FILES (`dbota --reimport`) brings that screen back. On Windows the cache, the settings, the
+replays and the log (`dbota.log`) are under `%LOCALAPPDATA%\dbota`.
 
 An import reads ~1 GB of the install, writes ~810 MB and takes about a minute. It builds beside the cache and swaps in
 when whole. `index.txt` lists the files; `stamp.txt` names the manifest version, importer revision and the size and
@@ -18,19 +25,6 @@ change time of `pak01_dir.vpk`. Running it again does nothing while the stamp ma
 build whose plan (what the manifest asks for; comments and layout don't count), importer or converters differ has
 another fingerprint and imports into a new `~/.cache/dbota/<fingerprint>`. `dbota import --verify` checks a cache
 against the manifest. An asset that doesn't convert is reported, and dbota draws nothing in its place.
-
-## A cache for someone without Dota 2
-
-```sh
-target/release/dbota export-cache cache.zip       # with Dota 2: the cache as a zip (~400 MB)
-target/release/dbota import-cache cache.zip       # elsewhere: the zip, or the cache folder itself
-```
-
-`import-cache` (also the menu's USE A PREPARED CACHE and the browser page's prepared cache) treats the cache as
-untrusted and checks all of it before installing anything: its stamp must be this build's asset fingerprint (both
-sides run the same build), `index.txt` must list exactly the files present with their sizes, and every path must be
-plain, in one of the cache's folders, with an extension and size the importer makes. A refused cache leaves the old
-one untouched. The zip holds Valve's converted assets: hand it only to people you may.
 
 ## Files
 

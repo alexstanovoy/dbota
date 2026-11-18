@@ -80,7 +80,10 @@ pub fn plugin(app: &mut App) {
             app.insert_resource(dota)
                 .add_systems(Update, (turn, light).chain());
         }
-        None => error!("map/mid/lighting.txt is missing or malformed: the map stays in daylight"),
+        None => crate::manifest::say_missing(
+            bevy::log::Level::ERROR,
+            "map/mid/lighting.txt is missing or malformed: the map stays in daylight",
+        ),
     }
 }
 

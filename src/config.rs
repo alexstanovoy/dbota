@@ -711,6 +711,10 @@ pub fn ignored_old_file(settings: &std::path::Path) -> Option<PathBuf> {
 /// Where the settings live when no path is given:
 /// `$XDG_CONFIG_HOME/dbota/settings.conf`, else `~/.config/dbota/settings.conf`.
 pub fn default_path() -> Option<PathBuf> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(data) = crate::desktop::windows_data() {
+        return Some(data.join("config").join(FILE_NAME));
+    }
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|dir| !dir.is_empty())
         .map(PathBuf::from)

@@ -2,17 +2,18 @@
 //!
 //! The game logic lives in `bota_client_core`; this crate draws it with
 //! Dota's own assets from a local cache (see `tools/README.md`) and from nothing else: without
-//! one the client shows the screen that makes it (`assets_notice`). World mapping (see `coords`): bota
+//! one the client shows the screen that makes it (`firstrun`). World mapping (see `coords`): bota
 //! (x, y) with y north maps to Bevy (x, height, -y).
 
 // Bevy systems take their data as arguments and queries.
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
+// On Windows a windowed program: a double-click opens no console window. A client started from
+// a terminal writes to it all the same (`desktop::attach_console`).
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
 mod ability_art;
 mod ambient;
 mod anim;
-#[cfg(not(target_arch = "wasm32"))]
-mod assets_notice;
 mod attenuation;
 mod audio_output;
 mod bag;
@@ -39,6 +40,8 @@ mod cursor;
 mod daylight;
 mod death;
 mod demo;
+#[cfg(not(target_arch = "wasm32"))]
+mod desktop;
 mod dota_text;
 mod drag;
 mod drill;
@@ -47,6 +50,8 @@ mod error_msg;
 mod face;
 mod faces;
 mod feed;
+#[cfg(not(target_arch = "wasm32"))]
+mod firstrun;
 mod fog;
 mod fortified;
 mod framestats;
@@ -221,6 +226,25 @@ pub struct Args {
     /// Root of the asset cache `dbota import` makes.
     #[arg(long, global = true, default_value_os_t = default_cache_dir())]
     pub cache_dir: PathBuf,
+    /// Open at the screen that imports the Dota 2 files again (the settings' RE-IMPORT GAME
+    /// FILES), even when the cache is this version's.
+    #[arg(long)]
+    pub reimport: bool,
+    /// Debug: what the import screen's dialogs answer, in turn, instead of opening (for the
+    /// tests of choosing a folder or a file).
+    #[arg(long, value_name = "PATH", hide = true)]
+    pub dialog_answer: Vec<PathBuf>,
+    /// Debug: the import screen's dialogs answer as on a system without one: the path is typed.
+    #[arg(long, hide = true)]
+    pub no_dialog: bool,
+    /// Debug: the Steam folders the import screen searches for Dota 2, instead of this
+    /// computer's (for the tests of finding it).
+    #[arg(long, value_name = "DIR", hide = true)]
+    pub steam_folder: Vec<PathBuf>,
+    /// Debug: an import or a copy on the import screen waits before its first step until this
+    /// file exists, or until it is cancelled (for the tests of its screen while it works).
+    #[arg(long, value_name = "FILE", hide = true)]
+    pub import_hold: Option<PathBuf>,
     /// The settings file; `~/.config/dbota/settings.conf` when absent.
     #[arg(long, value_name = "FILE")]
     pub config: Option<PathBuf>,
@@ -377,7 +401,8 @@ pub enum Command {
     /// texts, converted on this machine for your own use (one to two minutes; nothing is
     /// downloaded). Run again after a Dota update.
     Import {
-        /// The `dota 2 beta` folder; by default the usual Steam places are searched.
+        /// The `dota 2 beta` folder (or its Steam library); by default every Steam library of
+        /// this computer is searched.
         #[arg(long, value_name = "DIR")]
         dota_path: Option<PathBuf>,
         /// Import even when the cache was made from the same install already.
@@ -388,23 +413,9 @@ pub enum Command {
         #[arg(long, conflicts_with_all = ["dota_path", "force"])]
         verify: bool,
     },
-    /// Take an asset cache someone prepared (a folder, or a zip made by `export-cache`) instead
-    /// of importing from Dota 2: for a player without it. The cache must be of this version of
-    /// dbota; it is checked whole before it replaces the one in place.
-    ImportCache {
-        /// The prepared cache: a folder, or a .zip file.
-        #[arg(value_name = "FOLDER|ZIP")]
-        from: PathBuf,
-    },
-    /// Write the asset cache in place as a zip, for someone without Dota 2 to take with
-    /// `import-cache`. The zip holds Valve's converted assets: hand it only to people you may.
-    ExportCache {
-        /// The zip to make; it must not exist.
-        #[arg(value_name = "ZIP")]
-        to: PathBuf,
-    },
     /// Print the folder this build keeps its asset cache in (`$DBOTA_ASSETS`, else the folder
-    /// named by this build's fingerprint under `~/.cache/dbota`).
+    /// named by this build's fingerprint under `~/.cache/dbota`, on Windows
+    /// `%LOCALAPPDATA%\dbota\cache`).
     CacheDir,
     /// Print where this process would play its sounds, opening nothing: `device` (the machine's
     /// default) or `silent` (a client of a test, a check or a measurement, `DBOTA_NULL_AUDIO`).
@@ -432,9 +443,10 @@ impl Args {
 #[derive(Resource, Clone, Debug)]
 pub struct SettingsPath(pub Option<PathBuf>);
 
-/// `$DBOTA_ASSETS`, else `~/.cache/dbota/<fingerprint>`: each build's assets have a folder of
-/// their own, named by the fingerprint (`dbota_import::import::folder_name`), so clients of
-/// different builds share a machine.
+/// `$DBOTA_ASSETS`, else `<managed root>/<fingerprint>` (`~/.cache/dbota`, on Windows
+/// `%LOCALAPPDATA%\dbota\cache`): each build's assets have a folder of their own, named by the
+/// fingerprint (`dbota_import::import::folder_name`), so clients of different builds share a
+/// machine.
 fn default_cache_dir() -> PathBuf {
     #[cfg(target_arch = "wasm32")]
     {
@@ -443,60 +455,40 @@ fn default_cache_dir() -> PathBuf {
     #[cfg(not(target_arch = "wasm32"))]
     {
         import::cache_dir_in(
-            std::env::var_os("HOME").as_deref(),
+            import::managed_cache_root(),
             std::env::var_os("DBOTA_ASSETS").as_deref(),
         )
     }
 }
 
-/// `dbota import`, `import-cache` and `export-cache`: what the command does to the asset cache
-/// at `cache`, and how it ends.
+/// The arguments dbota starts again with once this run has ended (the import screen sets them
+/// when the copy is made): `main` starts it after the window is closed.
+#[cfg(not(target_arch = "wasm32"))]
+pub static RESTART: std::sync::OnceLock<Vec<std::ffi::OsString>> = std::sync::OnceLock::new();
+
+/// `dbota import`, `cache-dir` and `audio-output`: what the command does, and how it ends.
 #[cfg(not(target_arch = "wasm32"))]
 fn run_command(command: &Command, cache: &std::path::Path) -> AppExit {
-    let (name, done) = match command {
-        Command::Import {
-            dota_path,
-            force,
-            verify,
-        } => {
-            if *verify {
-                return match import::verify(cache) {
-                    Ok(true) => AppExit::Success,
-                    Ok(false) => AppExit::from_code(3),
-                    Err(why) => {
-                        eprintln!("dbota import --verify: {why}");
-                        AppExit::error()
-                    }
-                };
-            }
-            return match import::run(dota_path.as_deref(), cache, *force) {
-                Ok(true) => AppExit::Success,
-                Ok(false) => AppExit::from_code(3),
-                Err(why) => {
-                    eprintln!("dbota import: {why}");
-                    AppExit::error()
-                }
-            };
-        }
-        Command::ImportCache { from } => (
-            "import-cache",
-            import::load_cache(from, cache, &mut import::tenths()),
-        ),
-        Command::ExportCache { to } => ("export-cache", import::export_cache(cache, to)),
-        Command::CacheDir => {
-            println!("{}", cache.display());
-            return AppExit::Success;
-        }
-        Command::AudioOutput => {
-            println!("{}", audio_output::Kind::requested().name());
-            return AppExit::Success;
-        }
-    };
-    match done {
-        Ok(()) => AppExit::Success,
+    let ended = |name: &str, done: Result<bool, String>| match done {
+        Ok(true) => AppExit::Success,
+        Ok(false) => AppExit::from_code(3),
         Err(why) => {
             eprintln!("dbota {name}: {why}");
             AppExit::error()
+        }
+    };
+    match command {
+        Command::Import { verify: true, .. } => ended("import --verify", import::verify(cache)),
+        Command::Import {
+            dota_path, force, ..
+        } => ended("import", import::run(dota_path.as_deref(), cache, *force)),
+        Command::CacheDir => {
+            println!("{}", cache.display());
+            AppExit::Success
+        }
+        Command::AudioOutput => {
+            println!("{}", audio_output::Kind::requested().name());
+            AppExit::Success
         }
     }
 }
@@ -523,6 +515,8 @@ pub fn since_start() -> f32 {
 
 fn main() -> AppExit {
     STARTED.get_or_init(bevy::platform::time::Instant::now);
+    #[cfg(not(target_arch = "wasm32"))]
+    desktop::attach_console();
     // A browser build with `web-replay` takes its arguments from
     // DBOTA_WEB_ARGS when it was built: a page has no command line.
     #[cfg(all(target_arch = "wasm32", feature = "web-replay"))]
@@ -548,10 +542,10 @@ fn main() -> AppExit {
     #[cfg(not(target_arch = "wasm32"))]
     let font_cx = ui::font_cx();
     // Without a cache of this build the run is held at the screen that makes one: no game
-    // starts, not even one the command line names (see `assets_notice`). A run nobody watches
+    // starts, not even one the command line names (see `firstrun`). A run nobody watches
     // has no screen to show.
     #[cfg(not(target_arch = "wasm32"))]
-    let held = import::need(&args.cache_dir);
+    let held = firstrun::held(&args);
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(need) = held
         && args.unattended()
@@ -568,7 +562,7 @@ fn main() -> AppExit {
         && let Err(why) =
             import::note_cache_use(import::managed_cache_root().as_deref(), &args.cache_dir)
     {
-        eprintln!("dbota: cache use could not be recorded: {why}");
+        fail(&format!("cache use could not be recorded: {why}"));
         return AppExit::from_code(2);
     }
     #[cfg(target_arch = "wasm32")]
@@ -580,7 +574,7 @@ fn main() -> AppExit {
         match session::open(&args) {
             Ok(session) => session,
             Err(err) => {
-                eprintln!("dbota: {err}");
+                fail(&err.to_string());
                 return AppExit::error();
             }
         }
@@ -634,7 +628,7 @@ fn main() -> AppExit {
     if held.is_none()
         && let Err(err) = menu(&mut app, &args, store, menu_first)
     {
-        eprintln!("dbota: {err}");
+        fail(&err.to_string());
         return AppExit::error();
     }
     // GPU buffers of at most 128 MiB: a browser's WebGPU refuses ones over
@@ -658,7 +652,26 @@ fn main() -> AppExit {
         webpage::report_panics();
         app.add_plugins(webpage::plugin);
     }
-    app.run()
+    #[cfg(not(target_arch = "wasm32"))]
+    desktop::report_panics();
+    let exit = app.run();
+    // The window, the GPU and the sound device are let go before dbota starts again.
+    drop(app);
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(args) = RESTART.get() {
+        let why = desktop::restart(args);
+        fail(&format!("dbota could not start again: {why}"));
+        return AppExit::error();
+    }
+    exit
+}
+
+/// Why the client cannot go on, told where the player sees it (see `desktop::tell_failure`).
+fn fail(why: &str) {
+    #[cfg(not(target_arch = "wasm32"))]
+    desktop::tell_failure("dbota could not start", why);
+    #[cfg(target_arch = "wasm32")]
+    eprintln!("dbota: {why}");
 }
 
 /// What the client's plugins read, inserted before Bevy's: the run's arguments and settings, the
@@ -794,7 +807,7 @@ fn client_plugins(app: &mut App, read_environment: bool) {
         app.add_plugins(drill::plugin);
     }
     #[cfg(not(target_arch = "wasm32"))]
-    app.add_plugins(assets_notice::plugin);
+    app.add_plugins(firstrun::plugin);
 }
 
 /// The main menu: its core connected to the service when the command line

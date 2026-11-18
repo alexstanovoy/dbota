@@ -2668,6 +2668,7 @@ dependencies = [
  "hound",
  "jiff",
  "js-sys",
+ "libc",
  "radovid",
  "rodio",
  "serde",
@@ -2677,6 +2678,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "windows",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 //! What a glTF or GLB file of the asset cache may name, read from its JSON before Bevy's loader
-//! sees it. The cache is a folder on the user's disk like any other (or a prepared one someone
-//! handed on), and the loader takes a model at its word: an image embedded in it (a `data:` URI
+//! sees it. The cache is a folder on the user's disk like any other, anyone's to
+//! write, and the loader takes a model at its word: an image embedded in it (a `data:` URI
 //! or a buffer view) is decoded without the caps `cachefs` puts on the texture files it reads
 //! (Bevy decodes it with no limits at all: a PNG of 256 x 4 billion pixels is a 4 TB
 //! allocation, and a supercompressed KTX2 inflates without a bound), and a URI that is no plain

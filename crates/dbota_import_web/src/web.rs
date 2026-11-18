@@ -11,8 +11,6 @@ use wasm_bindgen::prelude::*;
 use web_sys::{File, FileReaderSync};
 
 use dbota_import::import::{self, IDS, Importer, MANIFEST, Plan, Sink};
-use dbota_import::pack::{Container, MAX_FILES, Pack, SliceFolder};
-use dbota_import::zip::ZipContainer;
 use dbota_import::{source, voice};
 
 /// Most files an install may hold: Dota's has ~700 packages; a folder of more is not one.
@@ -239,93 +237,7 @@ pub fn cache_version() -> String {
     import::fingerprint()
 }
 
-/// A prepared cache the player picked, a zip or a folder of one, checked whole before anything
-/// of it is read (see [`dbota_import::pack`]): the worker copies its files into the page's cache one by
-/// one with [`read`](Prepared::read).
-#[wasm_bindgen]
-pub struct Prepared(Pack<Box<dyn Container>>);
-
-#[wasm_bindgen]
-impl Prepared {
-    /// The cache in the zip file `file`; fails with the reason when it is not one of this build.
-    pub fn from_zip(file: File) -> Result<Prepared, JsError> {
-        let reader = shared_reader(&mut None)?;
-        let container = ZipContainer::open(Picked { file, reader })?;
-        Ok(Prepared(Pack::open(
-            Box::new(container) as Box<dyn Container>
-        )?))
-    }
-
-    /// The cache in the files of a picked folder: an array of `[path, File]` pairs, the paths
-    /// as the picker names them (`webkitRelativePath`).
-    pub fn from_folder(files: Array) -> Result<Prepared, JsError> {
-        if files.length() as usize > dbota_import::pack::MAX_ENTRIES {
-            return Err(JsError::new(&format!(
-                "This folder has {} files, an asset cache has at most {MAX_FILES}.",
-                files.length()
-            )));
-        }
-        let mut reader = None;
-        let mut picked = Vec::new();
-        for pair in files.iter() {
-            let pair = Array::from(&pair);
-            let (path, file) = (pair.get(0), pair.get(1));
-            let path = path
-                .as_string()
-                .ok_or_else(|| JsError::new("a file without a path"))?;
-            let file = file
-                .dyn_into::<File>()
-                .map_err(|_| JsError::new("not a file"))?;
-            picked.push((
-                path,
-                Picked {
-                    file,
-                    reader: shared_reader(&mut reader)?,
-                },
-            ));
-        }
-        let container = SliceFolder::new(picked)?;
-        Ok(Prepared(Pack::open(
-            Box::new(container) as Box<dyn Container>
-        )?))
-    }
-
-    /// How many files it holds (besides the stamp and the index).
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Their size together.
-    pub fn bytes(&self) -> f64 {
-        self.0.bytes() as f64
-    }
-
-    /// The `n`th file's path in the cache.
-    pub fn path(&self, n: usize) -> Option<String> {
-        self.0.entry(n).map(|e| e.path.clone())
-    }
-
-    /// The `n`th file's bytes, checked against the index.
-    pub fn read(&self, n: usize) -> Result<Uint8Array, JsError> {
-        Ok(Uint8Array::from(&self.0.read(n)?[..]))
-    }
-
-    /// The stamp to write when the files are in: the cache's own.
-    pub fn stamp(&self) -> String {
-        self.0.stamp().to_owned()
-    }
-
-    /// The index file's text to write when the files are in.
-    pub fn index(&self) -> String {
-        self.0.index().to_owned()
-    }
-}
-
-/// The same index parser used by native runtime discovery and prepared-cache validation.
+/// The same index parser the native client reads its cache with.
 #[wasm_bindgen]
 pub struct CacheIndex(dbota_import::index::CacheIndex);
 
