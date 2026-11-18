@@ -157,6 +157,7 @@ tests = [
         "session::environment_tests::",
         "e2e::harness::",
         "main_menu::",
+        "ui::help::",
         "an_empty_native_command_line_opens_the_menu_when_the_environment_is_ignored",
         "config::",
         "keys::",
