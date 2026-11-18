@@ -215,6 +215,33 @@ fn an_occupied_roshan_pit_sounds_and_the_empty_one_does_not() {
     );
 }
 
+/// Gives a silent sink to the loops that began while the client loaded, before
+/// [`super::channels::listen`] watched for them. Whether one began before or after depends on how
+/// fast the sound files load, and a loop with no sink is dropped at once by a mute, not let fall.
+fn sound_the_loops_begun_before_listening(client: &mut Client) {
+    use crate::channels::Tuned;
+    use bevy::audio::AudioSink;
+    let (output, source) = rodio::mixer::mixer(
+        2.try_into().expect("two channels"),
+        48_000.try_into().expect("a rate"),
+    );
+    // The mixer's source keeps the sinks connected for as long as the test runs.
+    std::mem::forget(source);
+    let world = client.world_mut();
+    let unheard: Vec<Entity> = world
+        .query_filtered::<Entity, (With<Tuned>, Without<AudioSink>)>()
+        .iter(world)
+        .collect();
+    for loop_ in unheard {
+        let player = rodio::Player::connect_new(&output);
+        player.append(rodio::source::Zero::new(
+            2.try_into().expect("two channels"),
+            48_000.try_into().expect("a rate"),
+        ));
+        world.entity_mut(loop_).insert(AudioSink::new(player));
+    }
+}
+
 /// A loop that a mute ends falls instead of being cut: it stops being tuned at once (the mute
 /// does not reach its sink, which would cut it), its source is told to fall, and it is dropped
 /// once the taper has passed; unmuting starts a new one, which rises.
@@ -225,6 +252,7 @@ fn a_mute_lets_the_ambience_loops_fall_instead_of_cutting_them() {
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     super::channels::listen(&mut client);
+    sound_the_loops_begun_before_listening(&mut client);
     client.cheat(Cheat::TimeOfDay { night: false });
     look_at(&mut client, (-7350.0, -6825.0));
     client.within(Duration::from_secs(60), "day ambience", |c| {
@@ -255,7 +283,10 @@ fn a_mute_lets_the_ambience_loops_fall_instead_of_cutting_them() {
         .set_muted(Channel::Ambience, true);
     client.frames(2);
     for loop_ in &playing {
-        let loop_ = client.world().entity(*loop_);
+        let loop_ = client
+            .world()
+            .get_entity(*loop_)
+            .expect("the muted loop is falling, not cut away");
         assert!(
             loop_.contains::<Ending>(),
             "the muted loop is falling, not cut"
