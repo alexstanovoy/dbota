@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 use dbota_import::cache_dir::{
     Gate, Held, ManagedCacheLock, PruneReport, begin_managed_import, import_held, is_current,
-    lock_cache, lock_managed_root, prune, read_stamp, record_managed, stamp, touch_last_use,
+    lock_cache, lock_managed_root, prune, read_stamp, record_managed, recover_interrupted_swap,
+    stamp, touch_last_use,
 };
 use dbota_import::import::{Flow, IDS, MANIFEST, plan, plan_id, stamped_here};
 use heatel::locate::Install;
@@ -204,6 +205,9 @@ fn import_in(
     let Some(lock) = lock else {
         return stopped();
     };
+    // A process killed while it swapped a new cache in left a cache missing or an old one beside
+    // it: settled first, so that the look below sees the cache there is.
+    recover_interrupted_swap(cache, &lock).map_err(|why| why.to_string())?;
     // Whoever held the lock may have made the cache we wait to make: it is looked at again.
     if !force && is_current(cache, &stamp) && dbota_import::import::layouts_current(cache) {
         println!("dbota import: {} is up to date", cache.display());
@@ -680,5 +684,59 @@ mod tests {
         let imported = imported.unwrap();
         assert!(!imported.stopped);
         assert_eq!(imported.files, 0);
+    }
+
+    /// What an install made now would be stamped with, as a finished cache at `folder`.
+    fn current_cache(custom: &Custom, folder: &Path) {
+        fs::create_dir_all(folder).unwrap();
+        let stamp = stamp(&custom.install.game, &plan_id(plan().unwrap())).unwrap();
+        fs::write(folder.join(STAMP), stamp).unwrap();
+        fs::write(folder.join(INDEX), format!("{}\n", CacheIndex::header())).unwrap();
+    }
+
+    fn nothing_converts(custom: &Custom) -> Result<Imported, String> {
+        import_in(
+            &custom.install,
+            &custom.cache,
+            false,
+            &mut Watcher {
+                gate: &Gate::default(),
+                progress: &mut |_| panic!("a current cache is not converted again"),
+                waiting: &mut || panic!("nobody holds the cache"),
+            },
+            None,
+        )
+    }
+
+    /// A process killed after the new cache took its place left the whole old one beside it
+    /// (about 800 MB nothing else removes): the next import removes it, finds the cache current
+    /// and converts nothing.
+    #[test]
+    fn a_leftover_old_copy_beside_a_current_cache_is_removed_when_the_next_import_starts() {
+        let custom = Custom::new("swap-leftover");
+        current_cache(&custom, &custom.cache);
+        let old = custom.scratch.join(".cache.old");
+        fs::create_dir_all(old.join("models")).unwrap();
+        let imported = nothing_converts(&custom).unwrap();
+        assert!(!imported.stopped && imported.files == 0);
+        assert!(!old.exists(), "the old copy stays for ever");
+        assert!(custom.cache.join(INDEX).is_file());
+    }
+
+    /// A process killed between the two renames of the swap left no cache and a whole one as
+    /// `.old`: the next import puts it back, finds it current, and the player is not made to
+    /// import again.
+    #[test]
+    fn an_old_copy_left_with_no_cache_is_put_back_and_judged_by_the_usual_check() {
+        let custom = Custom::new("swap-between");
+        current_cache(&custom, &custom.scratch.join(".cache.old"));
+        fs::create_dir_all(custom.scratch.join(".cache.importing/models")).unwrap();
+        let imported = nothing_converts(&custom).unwrap();
+        assert!(!imported.stopped && imported.files == 0);
+        assert!(
+            custom.cache.join(INDEX).is_file(),
+            "the old copy is the cache again"
+        );
+        assert!(!custom.scratch.join(".cache.old").exists());
     }
 }

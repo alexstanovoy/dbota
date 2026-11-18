@@ -64,7 +64,10 @@ fn registered_steam() -> Vec<PathBuf> {
             return None;
         }
         let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
-        let path = PathBuf::from(String::from_utf16_lossy(&buffer[..len]));
+        // The wide characters as the registry holds them, also when they are not valid UTF-16:
+        // a lossy decoding would turn an unusual folder name into one that is not there.
+        use std::os::windows::ffi::OsStringExt;
+        let path = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..len]));
         path.is_absolute().then_some(path)
     }
     [

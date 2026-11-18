@@ -237,13 +237,33 @@ pub fn lock_managed_root_waiting(
     plain_directory(root)?;
     ensure_marker(&root.join(ROOT_MARKER), ROOT_TEXT.as_bytes())?;
     let path = root.join(".dbota-cache-lock");
-    ensure_marker(&path, b"dbota cache lock 1\n")?;
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .map_err(|e| managed_io(&path, e))?;
+    let file = open_lock_file(&path)?;
     Ok(lock_polling(&file, &path, wait)?.then_some(ManagedCacheLock { _file: file }))
+}
+
+/// Opens (making it when it is not there) the file whose lock stands for a folder. This is the
+/// only place that opens a lock file, and it opens it for writing only: nothing ever reads a
+/// lock file's contents, which on Windows (where a lock is mandatory for the other handles'
+/// reads) would fail for as long as another process holds the lock instead of waiting for it.
+/// The file is empty and stays so; a link or a folder in its place is refused.
+fn open_lock_file(path: &Path) -> Result<fs::File> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if !meta.is_file() => {
+            return Err(managed_io(
+                path,
+                io::Error::other("a lock file must be a plain file, not a link or a folder"),
+            ));
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(managed_io(path, e)),
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| managed_io(path, e))
 }
 
 /// How often an import waiting for another's lock looks whether it was stopped.
@@ -289,13 +309,7 @@ pub fn lock_cache(cache: &Path, wait: &mut dyn FnMut() -> Flow) -> Result<Option
     {
         fs::create_dir_all(parent).map_err(|e| managed_io(parent, e))?;
     }
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .map_err(|e| managed_io(&path, e))?;
+    let file = open_lock_file(&path)?;
     Ok(lock_polling(&file, &path, wait)?.then_some(CacheLock { _file: file }))
 }
 
@@ -747,6 +761,7 @@ fn import_capped(
     progress: &mut dyn FnMut(&Progress<'_>) -> Flow,
     limit: Option<u64>,
 ) -> Result<Report> {
+    recover_swap(cache)?;
     let staging = sibling(cache, "importing")?;
     remove(&staging)?;
     // A staging folder is gone on every way out but a published cache.
@@ -856,6 +871,29 @@ pub(crate) fn replace(staging: &Path, cache: &Path) -> Result<()> {
         return Err(io(source));
     }
     remove(&old)
+}
+
+/// Settles what a process killed inside [`replace`] left, under the lock of the folder: a cache
+/// and a leftover `.<name>.old` (killed after the new one took its place) lose the `.old`, which
+/// is a whole old cache nothing else would ever remove; no cache and an `.old` (killed between
+/// the two renames) gets its `.old` back as the cache, for the usual currency check to judge.
+/// The `.importing` folder is never trusted: an import clears it as it starts.
+pub fn recover_interrupted_swap(cache: &Path, _held: &CacheLock) -> Result<()> {
+    recover_swap(cache)
+}
+
+fn recover_swap(cache: &Path) -> Result<()> {
+    let old = sibling(cache, "old")?;
+    if fs::symlink_metadata(&old).is_err() {
+        return Ok(());
+    }
+    if fs::symlink_metadata(cache).is_ok() {
+        return remove(&old);
+    }
+    fs::rename(&old, cache).map_err(|source| Error::Io {
+        path: cache.display().to_string(),
+        source,
+    })
 }
 
 /// `.<name>.<what>` beside `cache`.
@@ -1111,6 +1149,104 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// No code path reads a lock file's contents: on Windows a lock is mandatory for another
+    /// handle's reads, so a reader would fail while the lock is held instead of waiting for it.
+    /// Here (Unix) a lock file that cannot be opened for reading stands for that: locking, waiting
+    /// and releasing all work with it, and the file stays empty.
+    #[cfg(unix)]
+    #[test]
+    fn a_lock_file_is_only_ever_opened_for_writing_and_stays_empty() {
+        use std::os::unix::fs::PermissionsExt;
+        let write_only = |path: &Path| {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o200)).unwrap();
+        };
+        let root = fresh_dir("lock-unreadable");
+        let requested = root.join(crate::import::folder_name());
+        let first = lock_managed_root(&root).unwrap();
+        let root_lock = root.join(".dbota-cache-lock");
+        write_only(&root_lock);
+        let mut waited = 0;
+        let second = begin_managed_import_at(&root, &requested, now(), &mut || {
+            waited += 1;
+            Flow::Stop
+        });
+        assert!(second.is_ok_and(|lock| lock.is_none()), "waits, no error");
+        assert_eq!(waited, 1);
+        drop(first);
+        assert!(lock_managed_root(&root).is_ok());
+        assert_eq!(fs::metadata(&root_lock).unwrap().len(), 0);
+
+        let cache = root.join("cache");
+        let first = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
+        let cache_lock = sibling(&cache, "lock").unwrap();
+        write_only(&cache_lock);
+        let second = lock_cache(&cache, &mut || Flow::Stop);
+        assert!(second.is_ok_and(|lock| lock.is_none()), "waits, no error");
+        drop(first);
+        assert!(lock_cache(&cache, &mut || Flow::Stop).unwrap().is_some());
+        assert_eq!(fs::metadata(&cache_lock).unwrap().len(), 0);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A link or a folder where a lock file goes is refused, not followed.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_place_of_a_lock_file_is_refused() {
+        let root = fresh_dir("lock-link");
+        let cache = root.join("cache");
+        std::os::unix::fs::symlink(root.join("elsewhere"), sibling(&cache, "lock").unwrap())
+            .unwrap();
+        let why = lock_cache(&cache, &mut || Flow::Stop)
+            .err()
+            .expect("refused");
+        assert!(why.to_string().contains("a plain file"), "{why}");
+        assert!(!root.join("elsewhere").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Killed after the new cache took its place but before the old one was removed, a process
+    /// leaves a whole old cache beside the cache: the next import under the lock removes it.
+    #[test]
+    fn a_leftover_old_copy_beside_a_cache_is_removed_at_the_next_start() {
+        let dir = fresh_dir("swap-leftover");
+        let cache = dir.join("cache");
+        let old = sibling(&cache, "old").unwrap();
+        for folder in [&cache, &old] {
+            fs::create_dir_all(folder).unwrap();
+        }
+        fs::write(cache.join(STAMP), b"new").unwrap();
+        fs::write(old.join(STAMP), b"old").unwrap();
+        let lock = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
+        recover_interrupted_swap(&cache, &lock).unwrap();
+        assert!(!old.exists(), "the old copy stays for ever");
+        assert_eq!(read_stamp(&cache).as_deref(), Some("new"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Killed between the two renames of the swap, a process leaves no cache and the old one
+    /// beside it (and a whole new one in the staging folder, which is never trusted): the old one
+    /// is the cache again, and the staging folder is not.
+    #[test]
+    fn an_old_copy_without_a_cache_is_put_back_and_the_staging_folder_is_not_trusted() {
+        let dir = fresh_dir("swap-between");
+        let cache = dir.join("cache");
+        let (old, staging) = (
+            sibling(&cache, "old").unwrap(),
+            sibling(&cache, "importing").unwrap(),
+        );
+        for folder in [&old, &staging] {
+            fs::create_dir_all(folder).unwrap();
+        }
+        fs::write(old.join(STAMP), b"old").unwrap();
+        fs::write(staging.join(STAMP), b"half-trusted").unwrap();
+        let lock = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
+        recover_interrupted_swap(&cache, &lock).unwrap();
+        assert_eq!(read_stamp(&cache).as_deref(), Some("old"));
+        assert!(!old.exists());
+        assert!(staging.exists(), "an import clears it as it starts");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// While another import of the same cache folder holds its lock (also a folder outside the
     /// managed root), a second one is told it waits and gives up when it is stopped; a
     /// different folder beside it is not held up.
@@ -1162,8 +1298,14 @@ mod tests {
         fs::create_dir_all(&cache).unwrap();
         fs::write(cache.join(STAMP), b"before").unwrap();
         fs::write(cache.join(INDEX), b"").unwrap();
-        fs::write(sibling(&cache, "old").unwrap(), b"in the way").unwrap();
-        let made = import_into(&game, &cache, &plan, "after", &mut |_| Flow::Continue);
+        let old = sibling(&cache, "old").unwrap();
+        // Something takes the place of the old copy's folder while the import works.
+        let made = import_into(&game, &cache, &plan, "after", &mut |p| {
+            if p.done == 1 {
+                fs::write(&old, b"in the way").unwrap();
+            }
+            Flow::Continue
+        });
         assert!(made.is_err());
         assert!(!sibling(&cache, "importing").unwrap().exists());
         assert_eq!(read_stamp(&cache).as_deref(), Some("before"));

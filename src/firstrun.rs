@@ -552,6 +552,14 @@ fn types_characters(control: bool, alt_gr: bool, windows: bool) -> bool {
     !control || (windows && alt_gr)
 }
 
+/// Whether a key press is the paste shortcut (Ctrl+V, Shift+Insert). AltGr is decided first: on
+/// Windows it arrives as Ctrl+Alt, and AltGr+V types a character on some layouts (`@` on a
+/// Croatian or Slovenian keyboard), which must not be taken for Ctrl+V.
+fn is_paste(key: KeyCode, control: bool, alt_gr: bool, shift: bool, windows: bool) -> bool {
+    let typing_altgr = windows && alt_gr;
+    (control && !typing_altgr && key == KeyCode::KeyV) || (shift && key == KeyCode::Insert)
+}
+
 /// The longest path typed or pasted, in characters.
 const MAX_PATH: usize = 1024;
 /// The most of a paste taken into the path, in characters.
@@ -584,9 +592,7 @@ fn typing(
         if event.state != ButtonState::Pressed {
             continue;
         }
-        if (control && event.key_code == KeyCode::KeyV)
-            || (shift && event.key_code == KeyCode::Insert)
-        {
+        if is_paste(event.key_code, control, alt_gr, shift, cfg!(windows)) {
             *pasting = Some(clipboard.fetch_text());
             continue;
         }
@@ -1038,6 +1044,25 @@ mod tests {
         assert!(!types_characters(true, false, true));
         assert!(types_characters(true, true, true));
         assert!(!types_characters(true, true, false));
+    }
+
+    /// AltGr+V types a character on Windows layouts that have one there; Ctrl+V and Shift+Insert
+    /// paste everywhere, and Ctrl+Alt+V (AltGr) pastes only where AltGr is no Ctrl+Alt.
+    #[test]
+    fn altgr_v_on_windows_is_a_character_and_not_a_paste() {
+        use KeyCode::{Insert, KeyV};
+        assert!(is_paste(KeyV, true, false, false, true));
+        assert!(is_paste(KeyV, true, false, false, false));
+        assert!(is_paste(Insert, false, false, true, true));
+        assert!(
+            !is_paste(KeyV, true, true, false, true),
+            "AltGr+V on Windows"
+        );
+        assert!(
+            is_paste(KeyV, true, true, false, false),
+            "Ctrl+Alt+V elsewhere"
+        );
+        assert!(!is_paste(KeyV, false, false, false, true));
     }
 
     #[test]
