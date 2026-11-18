@@ -614,6 +614,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     });
     commands.spawn((
         PortraitCamera,
+        crate::kept_targets::KeepTargets,
         Camera3d::default(),
         Camera {
             order: -2,

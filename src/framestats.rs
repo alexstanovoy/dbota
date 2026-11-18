@@ -28,6 +28,8 @@ struct Bench {
     work: [Option<Work>; 2],
     /// Render pipelines and assets made before the first frame timed.
     first_work: Option<Work>,
+    /// Textures and buffers the renderer had created when the timing began.
+    first_created: Option<(u32, u32)>,
     /// Frames over twice the display's period that came with new pipelines, with new assets,
     /// with neither.
     hitch_causes: [usize; 3],
@@ -182,10 +184,7 @@ fn made(app: &mut App) {
 
 /// Counts the render pipelines, and names each new one on stderr (`pipeline:` lines, with the
 /// seconds since the start): what a long frame compiled.
-fn count_pipelines(
-    cache: Res<bevy::render::render_resource::PipelineCache>,
-    made: Res<Made>,
-) {
+fn count_pipelines(cache: Res<bevy::render::render_resource::PipelineCache>, made: Res<Made>) {
     use bevy::render::render_resource::PipelineDescriptor;
     let known = made.pipelines.load(std::sync::atomic::Ordering::Relaxed);
     let mut count = 0;
@@ -223,10 +222,8 @@ fn count_assets(
             .filter(|e| matches!(e, AssetEvent::LoadedWithDependencies { .. }))
             .count()
     }
-    made.assets += loaded(&mut images)
-        + loaded(&mut meshes)
-        + loaded(&mut models)
-        + loaded(&mut materials);
+    made.assets +=
+        loaded(&mut images) + loaded(&mut meshes) + loaded(&mut models) + loaded(&mut materials);
 }
 
 /// Milliseconds each frame's work took on the main thread (`First` to
@@ -404,6 +401,7 @@ fn bench(
         );
     }
     state.work = [state.work[1], work];
+    state.first_created.get_or_insert_with(created);
     if state.first_work.is_none() {
         state.first_work = work;
     }
@@ -425,6 +423,13 @@ fn bench(
         _ => String::new(),
     };
     let [by_pipelines, by_assets, by_other] = state.hitch_causes;
+    let (textures, buffers) = created();
+    let (first_textures, first_buffers) = state.first_created.unwrap_or((textures, buffers));
+    let made_while_timed = format!(
+        "{made_while_timed} textures_created={} buffers_created={}",
+        textures - first_textures,
+        buffers - first_buffers
+    );
     let times = &mut state.times;
     let mean = times.iter().sum::<f32>() / times.len() as f32;
     times.sort_by(f32::total_cmp);
@@ -464,6 +469,15 @@ fn bench(
         gpu_report(&device);
     }
     exit.write(AppExit::Success);
+}
+
+/// Textures and buffers the renderer has created so far (see `kept_targets.rs`).
+fn created() -> (u32, u32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        crate::kept_targets::TEXTURES_CREATED.load(Relaxed),
+        crate::kept_targets::BUFFERS_CREATED.load(Relaxed),
+    )
 }
 
 /// What a long frame came with: what was made in it (or the frame before, which the renderer

@@ -67,6 +67,7 @@ mod io_pool;
 mod item_look;
 mod item_menu;
 mod item_names;
+mod kept_targets;
 mod keys;
 mod kill_banner;
 mod kill_calls;
@@ -748,6 +749,7 @@ fn client_plugins(app: &mut App, read_environment: bool) {
             quality::plugin,
             heap::plugin,
         ))
+        .add_plugins(kept_targets::plugin)
         .add_plugins(pregame::plugin)
         .add_plugins(scan::plugin)
         .add_plugins((

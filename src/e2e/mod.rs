@@ -60,6 +60,7 @@ mod icons;
 mod item_drop_range;
 mod item_states;
 mod items;
+mod kept_targets;
 mod kill_announcements;
 mod kill_credit;
 mod loot_names;

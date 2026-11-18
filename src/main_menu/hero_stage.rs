@@ -269,6 +269,7 @@ fn spawn_camera(commands: &mut Commands, image: Handle<Image>, lit: bool) {
     commands.spawn((
         StageEntity,
         HeroCamera,
+        crate::kept_targets::KeepTargets,
         Camera3d::default(),
         Camera {
             order: -3,
