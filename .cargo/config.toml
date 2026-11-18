@@ -1,0 +1,4 @@
+# The Windows client links Microsoft's C runtime statically: a player needs no Visual C++
+# redistributable installed (tools/windows_check.sh checks the binary imports none).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

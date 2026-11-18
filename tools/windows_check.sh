@@ -5,7 +5,9 @@
 #      Windows-only code (the registry, the folder dialog, the message box, the console);
 #   2. with cargo-xwin (which downloads Microsoft's C runtime and Windows SDK libraries and
 #      accepts their license for you), it links the release binary (`--profile dist`);
-#   3. that binary is a windowed program (no console window opens with it);
+#   3. that binary is a windowed program (no console window opens with it) and imports no C
+#      runtime DLL (vcruntime, msvcp, ucrtbase, api-ms-win-crt): it needs no Visual C++
+#      redistributable, and no file beside it;
 #   4. with Wine, it starts in a fresh Wine prefix (a fresh profile, no cache, no settings) and
 #      draws its first frame: the import screen.
 #
@@ -70,13 +72,20 @@ CARGO_TARGET_DIR=$out/target cargo xwin build --profile dist --target "$target" 
 exe=$out/target/$target/dist/dbota.exe
 echo "windows check: PASS $exe links"
 
-# 3. A windowed program.
+# 3. A windowed program that needs no C runtime beside it.
 readobj=$(command -v llvm-readobj || ls /usr/bin/llvm-readobj-* 2> /dev/null | sort -V | tail -1 || true)
 [ -n "$readobj" ] || missing "no llvm-readobj (Debian: llvm)"
 headers=$("$readobj" --file-headers "$exe")
 grep -q "Subsystem: IMAGE_SUBSYSTEM_WINDOWS_GUI" <<< "$headers" ||
     { echo "windows check: FAIL $exe is not a windowed program (a console opens with it)" >&2; exit 1; }
-echo "windows check: PASS windowed"
+imports=$("$readobj" --coff-imports "$exe" | sed -n 's/^ *Name: //p' | sort -u)
+echo "$imports" > "$out/imports.txt"
+if grep -Eiq '^(vcruntime|msvcp|ucrtbase|api-ms-win-crt)' <<< "$imports"; then
+    echo "windows check: FAIL $exe needs the Visual C++ runtime:" >&2
+    grep -Ei '^(vcruntime|msvcp|ucrtbase|api-ms-win-crt)' <<< "$imports" >&2
+    exit 1
+fi
+echo "windows check: PASS windowed, no C runtime DLL (imports in $out/imports.txt)"
 
 # 4. Starts in a fresh profile and draws the import screen.
 command -v wine > /dev/null || missing "no Wine to start the binary (Debian: wine wine64)"

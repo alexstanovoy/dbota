@@ -41,7 +41,7 @@ step = "none: the script, not a test (test_test_groups.py tests it)"
 
 # Files outside the groups' own.
 [[route]]
-paths = ["Cargo.toml", "Cargo.lock", "assets-manifest/**", "crates/dbota_bevy/**", "crates/dbota_import/Cargo.toml", "crates/dbota_import/src/**"]
+paths = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml", "assets-manifest/**", "crates/dbota_bevy/**", "crates/dbota_import/Cargo.toml", "crates/dbota_import/src/**"]
 groups = ["*"]
 
 [[route]]
