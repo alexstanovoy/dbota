@@ -17,6 +17,7 @@ while IFS= read -r file; do
             grep -Fq -- '--bin dbota pacing::tests::native_static_ui_stops_presenting_until_its_next_change' tools/visual_check.sh \
                 || { echo "ignored_audit: $file has no native pacing check"; bad=1; }
             ;;
+        src/e2e/face_frames.rs) ;;      # evidence capture run by hand (frame sheets of the portrait's face); the faces tests check what it shows
         src/fog/clarity_render.rs | src/overlay/render_tests.rs | src/minimap/render_tests.rs | src/e2e/ground_effect_pixels.rs)
             case "$file" in
                 src/fog/clarity_render.rs) test_name=fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels ;;

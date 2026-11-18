@@ -649,7 +649,29 @@ impl Client {
                 .world_mut()
                 .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(frame));
         }
-        client.until("the hero picked", |c| {
+        client.pick_hero(hero);
+        client
+    }
+
+    /// [`Client::join`] with the production renderer, `prepare` directing it (see
+    /// [`Client::run_rendered`]).
+    pub fn join_rendered(
+        server: &Server,
+        hero: bota_proto::HeroId,
+        extra: &[&str],
+        prepare: fn(&mut App),
+    ) -> Client {
+        let mut args = vec!["--addr", server.address.as_str()];
+        args.extend_from_slice(extra);
+        let mut client = Self::build_configured(&args, None, &[], Some(prepare));
+        client.pick_hero(hero);
+        client.until("the hero on the map", |c| c.core().ears().is_some());
+        client
+    }
+
+    /// Picks `hero` and readies: returns once the pick is past.
+    fn pick_hero(&mut self, hero: bota_proto::HeroId) {
+        self.until("the hero picked", |c| {
             let core = c.core_mut();
             if core.view().is_none() && core.my_slot.is_some() && !core.ready {
                 core.act(Intent::PickHero(hero.0));
@@ -657,7 +679,6 @@ impl Client {
             }
             core.in_tactical_phase() || core.ears().is_some()
         });
-        client
     }
 
     /// A client of this test server, including a spectator when requested.

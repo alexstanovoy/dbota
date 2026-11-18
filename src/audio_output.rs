@@ -178,6 +178,8 @@ impl Drop for Silent {
 enum Stream {
     Device(MixerDeviceSink),
     Silent(Silent),
+    #[cfg(test)]
+    Pulled(Pulled),
 }
 
 impl Stream {
@@ -185,7 +187,70 @@ impl Stream {
         match self {
             Stream::Device(device) => device.mixer(),
             Stream::Silent(silent) => &silent.mixer,
+            #[cfg(test)]
+            Stream::Pulled(pulled) => &pulled.mixer,
         }
+    }
+}
+
+/// A test's output pulled as a device pulls one, a buffer at a time on the app's own clock: a
+/// device's callback takes [`DeviceBuffers::buffer`] of sound at once, [`DeviceBuffers::ahead`]
+/// buffers ahead of what is heard, so a sound's reported position moves in those steps. With
+/// the resource present, a test's client plays to it instead of to nothing.
+#[cfg(test)]
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct DeviceBuffers {
+    pub buffer: Duration,
+    pub ahead: u32,
+}
+
+#[cfg(test)]
+struct Pulled {
+    mixer: Mixer,
+    source: std::sync::Mutex<MixerSource>,
+    /// How much sound the device has taken since it opened, and when it opened.
+    taken: Duration,
+    opened: Duration,
+}
+
+/// Pulls the test's output up to [`DeviceBuffers::ahead`] buffers past now, a whole buffer at a
+/// time, opening it first.
+#[cfg(test)]
+fn pull_buffers(
+    buffers: Option<Res<DeviceBuffers>>,
+    time: Res<Time<Real>>,
+    mut output: ResMut<Output>,
+) {
+    let Some(buffers) = buffers else {
+        return;
+    };
+    let now = time.elapsed();
+    let stream = output.0.stream.get_or_insert_with(|| {
+        let (mixer, source) = silent_mixer();
+        Stream::Pulled(Pulled {
+            mixer,
+            source: std::sync::Mutex::new(source),
+            taken: Duration::ZERO,
+            opened: now,
+        })
+    });
+    let Stream::Pulled(pulled) = stream else {
+        return;
+    };
+    let samples = SILENT_RATE as f64 * f64::from(SILENT_CHANNELS) * buffers.buffer.as_secs_f64();
+    let per_buffer = samples.round() as usize;
+    let mut source = pulled.source.lock().expect("the pulled source");
+    let wanted = now - pulled.opened + buffers.buffer * buffers.ahead;
+    for _ in 0..1_000 {
+        if pulled.taken >= wanted {
+            break;
+        }
+        for _ in 0..per_buffer {
+            if source.next().is_none() {
+                break;
+            }
+        }
+        pulled.taken += buffers.buffer;
     }
 }
 
@@ -417,6 +482,8 @@ pub fn plugin(app: &mut App) {
             )
                 .chain(),
         );
+    #[cfg(test)]
+    app.add_systems(PostUpdate, pull_buffers.before(supervise));
 }
 
 /// Notices a lost stream: the sounds that were playing on it are gone, a loop

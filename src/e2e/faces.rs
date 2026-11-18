@@ -2,35 +2,39 @@
 //! (its morph weights as drawn, and the joints its meshes are skinned to) has no discontinuity
 //! while the hero stands idle, while it runs and answers its order, and through each of its voice
 //! lines (every kind the cache holds: moves, attacks, runes, the Bottle...) over its idle
-//! expression, wherever in the expression's loop the line starts.
+//! expression, wherever in the expression's loop a line starts, and when one line takes over from
+//! another; and the face shown on a display's frames moves as the time of each frame says.
 //!
 //! The client draws the face on simulated frames 2 ms apart: through a whole loop of the idle
 //! clip, the run through a whole loop of its clip with the answer its hero says, and one whole
-//! line. Each drawn frame must be the face [`Face::pose`] gives at that frame's moment and line
-//! (the face's rigs set every morph weight, so that is all of them), posed by clocks that do not
-//! jump (the expression's never restarts; a line's moves on by the frame), and its joints may
-//! move [`MAX_TURN`] and [`MAX_MOVE`] a frame. The joints come from the body's clips alone (the
-//! expression and the lines move morph weights, nothing else), so these frames cover them whole.
+//! line. The portrait is drawn on every one of them (a frame it is not drawn on holds the face
+//! still, to jump it on at the next). Each drawn frame must be the face [`Face::pose`] gives at
+//! that frame's moment and line (the face's rigs set every morph weight, so that is all of them),
+//! posed by clocks that do not jump (the expression's never restarts; a line's moves on by the
+//! frame), and its joints may move [`MAX_TURN`] and [`MAX_MOVE`] a frame. The joints come from
+//! the body's clips alone (the expression and the lines move morph weights, nothing else), so
+//! these frames cover them whole.
 //!
 //! Whether that face jumps is then judged apart from the client: a copy of the portrait's face,
 //! posed by the client's own [`Face::pose`] and [`Speech`] at any instant, plays its idle
-//! expression through a whole loop and every line of the pack starting at each of [`PHASES`]
-//! instants of the expression's loop, in frames of 2 ms (the idle) and 4 ms (a line). A frame on
-//! which a weight moves more than [`EXAMINE`], or all of them together more than
-//! [`EXAMINE_TOTAL`], is halved down to [`FINEST`], following the half all the weights together
-//! move more in: a jump is a change still more than [`JUMP`] in a weight there, or more than
-//! [`TOTAL_JUMP`] in all of them together (a jump does not shrink as the step does; motion does).
-//! No speed is capped: a frame with no jump moves a weight up to 0.123 in 4 ms (Pudge's line 25
-//! started 3480 ms into the loop, weight 7) and all of them together up to 0.553 (Pudge's line 159
-//! started 2780 ms in), 0.0019 and 0.0086 in [`FINEST`].
+//! expression through a whole loop and every line of the pack said as the hero's voice says it
+//! (its face trailing its sound's start by the line's lead), starting at each of [`PHASES`]
+//! instants of the expression's loop, and taken over halfway by the next line at every
+//! [`TAKEOVER_EVERY`]th, in frames of 2 ms (the idle) and 4 ms (a line). A frame on which a weight
+//! moves more than [`EXAMINE`], or all of them together more than [`EXAMINE_TOTAL`], is halved
+//! down to [`FINEST`], following the half all the weights together move more in: a jump is a
+//! change still more than [`JUMP`] in a weight there, or more than [`TOTAL_JUMP`] in all of them
+//! together (a jump does not shrink as the step does; motion does). No speed is capped: a frame
+//! with no jump moves a weight up to 0.123 in 4 ms (Pudge's line 25 started 3480 ms into the loop,
+//! weight 7) and all of them together up to 0.553 (Pudge's line 159 started 2780 ms in), 0.0019
+//! and 0.0086 in [`FINEST`]. No jump is allowed anywhere: a line that ends, or that another takes
+//! over, eases out of the face ([`crate::talk::EASE_OUT`]).
 //!
-//! The client drops a line on the first frame past its data's end ([`Speech::finish`]) and draws
-//! the expression alone from that frame, with no blend, so a line steps back once there by what
-//! its last key holds, and that one jump is allowed it. A line whose own authored face does not
-//! return to rest where its data ends (read here from its lip sync record) steps back by up to
-//! 0.52 of a weight (Pudge's line 25); one that does, within [`REST`] of each controller, by a
-//! step spread over the weights, each under [`JUMP`] (Pudge's twelve such lines, 4 to 158, by 0.20
-//! to 0.36 in all, at every phase).
+//! Then every line's face is shown as the client shows it on the frames of a 240 Hz and a 60 Hz
+//! display and of a browser's uneven frames ([`Pacing`]), its sound reported as a device takes it
+//! (a buffer of about 45 ms at a time, two ahead of what is heard): on each frame the face shown
+//! must move as much as the face of that frame's time does ([`Played::shown`]), so that it never
+//! holds still for a frame or two and then jumps on.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,9 +46,10 @@ use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use bota_proto::{Cheat, EntityId, HeroId, Order, Target, Vec2 as At};
 
+use super::face_frames::Pacing;
 use super::harness::{Client, Server};
 use crate::portrait::Stage;
-use crate::talk::{Face, Faces, LineFace, Speech};
+use crate::talk::{Face, Faces, Heard, LineFace, Saying, Speech};
 
 /// How near each controller of a line's own face must be to rest where its data ends for the
 /// line to end at rest.
@@ -94,6 +99,11 @@ const ANSWER_FRAMES: usize = 2500;
 const LEAD_FRAMES: usize = 25;
 /// Seconds between the copy's frames through a whole line.
 const LINE_STEP: f32 = 0.004;
+/// How many buffers ahead of what is heard a device takes a sound.
+const DEVICE_AHEAD: f32 = 2.0;
+/// How much more or less than its time's face a face shown on a frame may move (all its weights
+/// together): what float rounding leaves.
+const SHOWN_SLACK: f32 = 0.02;
 
 /// The portrait's face as drawn: every morph weight of its meshes, and every joint they are
 /// skinned to (turn and place against the stage's pivot). None while the stage has no face.
@@ -167,13 +177,16 @@ impl Mirror {
         for mut mesh in weights.iter_mut() {
             mesh.weights_mut().fill(-1.0);
         }
-        self.pose(0.0, None, faces).iter().all(|w| *w >= 0.0)
+        self.pose(0.0, Saying::default(), faces)
+            .iter()
+            .all(|w| *w >= 0.0)
     }
 
-    /// The face posed at `now` saying `line`: every morph weight of its meshes in turn.
-    fn pose(&mut self, now: f32, line: Option<(&LineFace, f32)>, faces: &Faces) -> Vec<f32> {
+    /// The face posed at `now` saying what `saying` says: every morph weight of its meshes in
+    /// turn.
+    fn pose(&mut self, now: f32, saying: Saying, faces: &Faces) -> Vec<f32> {
         let mut weights = self.weights.query_mut(&mut self.world);
-        self.face.pose(now, line, faces, &mut weights);
+        self.face.pose(now, saying, faces, &mut weights);
         let world = &self.world;
         let weights = self
             .nodes
@@ -188,9 +201,9 @@ impl Mirror {
 fn drawn_is_posed(client: &Client) -> bool {
     let world = client.world();
     let now = world.resource::<Time<bevy::time::Real>>().elapsed_secs();
-    let line = world.resource::<Speech>().of(Some(client.me().id), now);
+    let saying = world.resource::<Speech>().saying(Some(client.me().id), now);
     let drawn = drawn_face(client).map(|(weights, _)| weights);
-    Some(Mirror::of(client).pose(now, line, world.resource())) == drawn
+    Some(Mirror::of(client).pose(now, saying, world.resource())) == drawn
 }
 
 /// The controllers of the face on the portrait's stage and their ranges, by token, from its
@@ -251,15 +264,6 @@ fn ends_at_rest(ranges: &HashMap<u32, (f32, f32)>, text: &str) -> bool {
     })
 }
 
-/// A frame that jumped: how far into the line the hero says it was before and after it (none:
-/// saying none), what jumped on it, and whether only all the weights together did (each under
-/// [`JUMP`]).
-struct Jump {
-    said: (Option<f32>, Option<f32>),
-    what: String,
-    spread: bool,
-}
-
 /// How far into the line it says the hero is now.
 fn said(client: &Client) -> Option<f32> {
     spoken(client).map(|(_, t)| t)
@@ -297,7 +301,8 @@ fn clock_jump(
         (Some((was, t0)), Some((file, t1))) if was == file => ((t1 - t0 - step).abs()
             > CLOCK_SLACK)
             .then(|| format!("{file}'s clock moved {:.5} s in a {step} s frame", t1 - t0)),
-        (_, Some((file, t))) => (*t > CLOCK_SLACK).then(|| format!("{file} started {t:.5} s in")),
+        (_, Some((file, t))) => (*t > -crate::face::PHONEME_FILTER + CLOCK_SLACK)
+            .then(|| format!("{file} started {t:.5} s in")),
         (_, None) => None,
     }
 }
@@ -305,8 +310,9 @@ fn clock_jump(
 /// Runs `frames` frames of `step` seconds, each checked against the one before: the frames
 /// something jumped on. A frame jumps when a joint moves more than its limits, when the face
 /// drawn is not the face [`Face::pose`] gives at the frame's moment and line (or none is drawn),
-/// or when the clocks it is posed by jump: the expression's restarts, or a line's ([`clock_jump`]).
-fn watch(client: &mut Client, frames: usize, step: f32, phase: &str) -> Vec<Jump> {
+/// or when the clocks it is posed by jump: the expression's restarts, or a line's ([`clock_jump`]);
+/// and a frame the portrait is not drawn on holds the face still, to jump it on at the next.
+fn watch(client: &mut Client, frames: usize, step: f32, phase: &str) -> Vec<String> {
     watch_until(client, frames, step, phase, |_| false)
 }
 
@@ -317,7 +323,7 @@ fn watch_until(
     step: f32,
     phase: &str,
     mut done: impl FnMut(&Client) -> bool,
-) -> Vec<Jump> {
+) -> Vec<String> {
     client
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
@@ -354,20 +360,19 @@ fn watch_until(
                 if !drawn_is_posed(client) {
                     what.push("not the face of its expression and line now".into());
                 }
+                if !client.world().resource::<Stage>().drawing() {
+                    what.push("the portrait not drawn: the face held from a frame before".into());
+                }
             }
             _ => what.push("no face drawn".into()),
         }
         if !what.is_empty() {
-            out.push(Jump {
-                spread: false,
-                said: (last.1.as_ref().map(|s| s.1), now.1.as_ref().map(|s| s.1)),
-                what: format!(
-                    "{phase} frame {frame}: {}; speech {:?} -> {:?}",
-                    what.join(", "),
-                    last.1,
-                    now.1
-                ),
-            });
+            out.push(format!(
+                "{phase} frame {frame}: {}; speech {:?} -> {:?}",
+                what.join(", "),
+                last.1,
+                now.1
+            ));
         }
         last = now;
         if done(client) {
@@ -427,61 +432,6 @@ fn line_frames(authored: &AuthoredLine, step: f32) -> (usize, f32) {
     (((lead + end + 2.0 * lead) / step).ceil() as usize, lead)
 }
 
-/// The jumps of a whole line that count: all but one on the frame its face leaves on (said up to
-/// its end before it, a frame landing on the end itself still saying it; saying none, or past
-/// its end, after it). A line whose own face ends off rest may step back there by any amount; one
-/// whose face ends at rest only by a spread step, each weight under [`JUMP`] (what its last key
-/// holds within [`REST`] of each controller's rest, dropped with no blend).
-fn counted(jumps: Vec<Jump>, end: f32, rests: bool) -> impl Iterator<Item = String> {
-    let mut allowed = true;
-    jumps.into_iter().filter_map(move |jump| {
-        let ends_here = matches!(jump.said, (Some(before), after) if before <= end && after.is_none_or(|t| t > end));
-        if allowed && ends_here && (!rests || jump.spread) {
-            allowed = false;
-            return None;
-        }
-        Some(jump.what)
-    })
-}
-
-#[test]
-fn a_line_ending_off_rest_steps_back_once_on_a_frame_landing_on_its_end() {
-    let end = 2.28;
-    let jump = |said, what: &str| Jump {
-        said,
-        what: what.to_owned(),
-        spread: false,
-    };
-    let jumps = vec![
-        jump((Some(end - 0.004), Some(end)), "a jump onto its end"),
-        jump((Some(end), None), "the step back"),
-    ];
-    let counted: Vec<String> = counted(jumps, end, false).collect();
-    assert_eq!(
-        counted,
-        ["a jump onto its end"],
-        "only the step back is allowed"
-    );
-}
-
-#[test]
-fn a_line_ending_at_rest_steps_back_only_by_a_spread_residual() {
-    let end = 2.28;
-    let leaving = |what: &str, spread| Jump {
-        said: (Some(end), None),
-        what: what.to_owned(),
-        spread,
-    };
-    let residual = counted(vec![leaving("a spread residual", true)], end, true);
-    assert_eq!(residual.count(), 0, "a spread residual is its step back");
-    let weight = counted(vec![leaving("a weight's jump", false)], end, true);
-    assert_eq!(
-        weight.collect::<Vec<_>>(),
-        ["a weight's jump"],
-        "no weight jumps as a line at rest ends"
-    );
-}
-
 /// Every voice line of the hero's resident pack, of every kind, with its lip sync; and how many
 /// of its lines have no lip sync.
 fn lines(client: &Client, hero: HeroId) -> (Vec<AuthoredLine>, usize) {
@@ -522,8 +472,8 @@ fn lines(client: &Client, hero: HeroId) -> (Vec<AuthoredLine>, usize) {
     (out, silent)
 }
 
-/// The line the client plays whole: the shortest whose own face ends off rest (and so has its
-/// one step back), else the shortest.
+/// The line the client plays whole: the shortest whose own face ends off rest (and so eases out
+/// of the face as it ends), else the shortest.
 fn drawn_line<'a>(
     lines: &'a [AuthoredLine],
     ranges: &HashMap<u32, (f32, f32)>,
@@ -536,12 +486,7 @@ fn drawn_line<'a>(
 /// Plays a whole line on the client, every frame checked at [`STEP`]. The hero starts
 /// saying it a lead from now, the face still its own until then: no frame of the face is left
 /// unchecked by it.
-fn say_line(
-    client: &mut Client,
-    name: &str,
-    authored: &AuthoredLine,
-    ranges: &HashMap<u32, (f32, f32)>,
-) -> Vec<String> {
+fn say_line(client: &mut Client, name: &str, authored: &AuthoredLine) -> Vec<String> {
     let line = &authored.face;
     let file = &line.file;
     let (frames, lead) = line_frames(authored, STEP);
@@ -555,8 +500,7 @@ fn say_line(
     let mut speech = world.resource_mut::<Speech>();
     speech.say(Some(unit), line.clone(), None, now + lead);
     let found = watch(client, frames, STEP, &format!("{name} {file}"));
-    let rests = ends_at_rest(ranges, &authored.text);
-    let jumps = counted(found, line.lipsync.end(), rests).collect();
+    let jumps = found;
     assert!(
         said(client).is_none(),
         "{name} {file}: the line over, now {:?}",
@@ -565,8 +509,9 @@ fn say_line(
     jumps
 }
 
-/// A line registered with a [`Speech`]: its face, and the instant registered to start at.
-type Said = (Arc<LineFace>, f32);
+/// The lines said in turn, as the hero's voice says them: each line's face, and the instant it
+/// is said at (the line at its start then, the one before it leaving).
+type Script<'s> = &'s [(Arc<LineFace>, f32)];
 
 /// The most a frame that held no jump moved one weight, and all of them together, and where.
 #[derive(Default)]
@@ -592,8 +537,8 @@ impl Fastest {
 }
 
 /// The client's face played apart from the client, its expression's clock started at 0: at any
-/// instant, a [`Speech`] of the client's is given the line said (if any) and ends it by that
-/// instant, then [`Face::pose`] poses the copy, as a client frame does.
+/// instant, a [`Speech`] of the client's is told the lines said by then (each at its instant)
+/// and ends them by that instant, then [`Face::pose`] poses the copy, as a client frame does.
 struct Played<'a> {
     mirror: Mirror,
     faces: &'a Faces,
@@ -610,53 +555,55 @@ impl<'a> Played<'a> {
         }
     }
 
-    /// The face at `now` saying `line`, and how far into it the hero says it is.
-    fn at(&mut self, now: f32, line: Option<&Said>) -> (Vec<f32>, Option<f32>) {
+    /// The face at `now` with `script` said by then, and how far into its line the hero says it
+    /// is.
+    fn at(&mut self, now: f32, script: Script) -> (Vec<f32>, Option<f32>) {
         assert!(
             now < MAX_CLOCK,
             "posed within the clock's resolution: {now} s"
         );
         let mut speech = Speech::default();
-        if let Some((face, start)) = line {
-            speech.say(Some(self.unit), face.clone(), None, *start);
+        for (face, said) in script.iter().filter(|(_, said)| *said <= now) {
+            speech.finish(*said);
+            speech.say(Some(self.unit), face.clone(), None, *said);
         }
         speech.finish(now);
-        let said = speech.of(Some(self.unit), now);
-        (
-            self.mirror.pose(now, said, self.faces),
-            said.map(|(_, t)| t),
-        )
+        self.posed(now, &speech)
     }
 
-    /// Plays `frames` frames of `step` seconds from `start`, saying `line`, each checked against
-    /// the one before: a frame on which a weight moves more than [`EXAMINE`] is halved down to
-    /// [`FINEST`], following the half that moves more, and holds a jump when the change is still
-    /// more than [`JUMP`] there. The jumps, each with how far into the line it is said on both
-    /// sides of the finest step.
+    /// The face `speech` gives at `now`, and how far into its line the hero says it is.
+    fn posed(&mut self, now: f32, speech: &Speech) -> (Vec<f32>, Option<f32>) {
+        let saying = speech.saying(Some(self.unit), now);
+        let t = saying.line.map(|(_, t)| t);
+        (self.mirror.pose(now, saying, self.faces), t)
+    }
+
+    /// Plays `frames` frames of `step` seconds from `start`, saying `script`, each checked
+    /// against the one before: a frame on which a weight moves more than [`EXAMINE`] (or all of
+    /// them together more than [`EXAMINE_TOTAL`]) is halved down to [`FINEST`], and holds a jump
+    /// when the change is still more than [`JUMP`] in a weight there (or [`TOTAL_JUMP`] in all).
     fn play(
         &mut self,
         (start, frames, step): (f32, usize, f32),
-        line: Option<&Said>,
+        script: Script,
         phase: &str,
         fastest: &mut Fastest,
-    ) -> Vec<Jump> {
+    ) -> Vec<String> {
         let halvings = (step / FINEST).log2().round() as u32;
         let at = |frame: usize| start + frame as f32 * step;
-        let mut last = self.at(at(0), line);
+        let mut last = self.at(at(0), script);
         let mut out = Vec::new();
         for frame in 0..frames {
-            let now = self.at(at(frame + 1), line);
+            let now = self.at(at(frame + 1), script);
             let (i, by) = largest_change(&last.0, &now.0);
             let total = total_change(&last.0, &now.0);
             let jump = (by > EXAMINE || total > EXAMINE_TOTAL)
-                .then(|| self.halve((at(frame), &last), (at(frame + 1), &now), halvings, line))
+                .then(|| self.halve((at(frame), &last), (at(frame + 1), &now), halvings, script))
                 .flatten();
             match jump {
-                Some((said, what, spread)) => out.push(Jump {
-                    said,
-                    what: format!("{phase} frame {frame}: {what} at once; said {said:?}"),
-                    spread,
-                }),
+                Some((said, what)) => out.push(format!(
+                    "{phase} frame {frame}: {what} at once; said {said:?}"
+                )),
                 None => fastest.note((by, total), || format!("{phase} frame {frame}, weight {i}")),
             }
             last = now;
@@ -673,12 +620,12 @@ impl<'a> Played<'a> {
         before: (f32, &(Vec<f32>, Option<f32>)),
         after: (f32, &(Vec<f32>, Option<f32>)),
         halvings: u32,
-        line: Option<&Said>,
-    ) -> Option<((Option<f32>, Option<f32>), String, bool)> {
+        script: Script,
+    ) -> Option<((Option<f32>, Option<f32>), String)> {
         let (mut lo, mut hi) = ((before.0, before.1.clone()), (after.0, after.1.clone()));
         for _ in 0..halvings {
             let mid = (lo.0 + hi.0) / 2.0;
-            let face = (mid, self.at(mid, line));
+            let face = (mid, self.at(mid, script));
             let first = total_change(&lo.1.0, &face.1.0);
             let second = total_change(&face.1.0, &hi.1.0);
             if first >= second {
@@ -691,49 +638,120 @@ impl<'a> Played<'a> {
         let total = total_change(&lo.1.0, &hi.1.0);
         let said = (lo.1.1, hi.1.1);
         match (by > JUMP, total > TOTAL_JUMP) {
-            (true, _) => Some((said, format!("weight {i} by {by:.3}"), false)),
-            (false, true) => Some((said, format!("all weights by {total:.3}"), true)),
+            (true, _) => Some((said, format!("weight {i} by {by:.3}"))),
+            (false, true) => Some((said, format!("all weights by {total:.3}"))),
             (false, false) => None,
         }
     }
 
-    /// Plays a whole line starting `start` seconds into the expression's loop, as [`say_line`]
-    /// does on the client: the jumps that count.
+    /// Says a whole line `start` seconds into the expression's loop, as the hero's voice says
+    /// one (from its start at once), and takes it over halfway with `next` when there is one,
+    /// from the face at rest before it to the face eased back to its own after: the jumps.
     fn say(
         &mut self,
         start: f32,
-        authored: &AuthoredLine,
-        ranges: &HashMap<u32, (f32, f32)>,
+        line: &AuthoredLine,
+        next: Option<&AuthoredLine>,
         fastest: &mut Fastest,
     ) -> Vec<String> {
-        let line = &authored.face;
-        let (frames, lead) = line_frames(authored, LINE_STEP);
-        let said: Said = (line.clone(), start + lead);
-        let phase = format!("{} from {:.0} ms", line.file, start * 1000.0);
-        let found = self.play((start, frames, LINE_STEP), Some(&said), &phase, fastest);
-        let rests = ends_at_rest(ranges, &authored.text);
-        let jumps = counted(found, line.lipsync.end(), rests).collect();
-        let end = start + frames as f32 * LINE_STEP;
-        let after = self.at(end, Some(&said)).1;
+        let lead = LINE_STEP * LEAD_FRAMES as f32;
+        let said = start + lead;
+        let mut script = vec![(line.face.clone(), said)];
+        let mut end = said + line.face.lipsync.end();
+        if let Some(next) = next {
+            let over = said + line.face.lipsync.end() / 2.0;
+            script.push((next.face.clone(), over));
+            end = over + next.face.lipsync.end();
+        }
+        let frames = ((end + crate::talk::EASE_OUT + lead - start) / LINE_STEP).ceil() as usize;
+        let names: Vec<&str> = script.iter().map(|(f, _)| f.file.as_str()).collect();
+        let phase = format!("{} from {:.0} ms", names.join(" then "), start * 1000.0);
+        let found = self.play((start, frames, LINE_STEP), &script, &phase, fastest);
+        let after = self.at(start + frames as f32 * LINE_STEP, &script).1;
         assert!(after.is_none(), "{phase}: the line over, now {after:?}");
-        jumps
+        found
+    }
+
+    /// The line's face on the frames of `pacing` as the client shows it, against the face its
+    /// frames' times give: the line said on a frame and heard from the next, its sound reported
+    /// as a device takes it (a buffer at a time, [`DEVICE_AHEAD`] ahead of what is heard). On
+    /// each frame the face shown must move as much as the face of its time does, within
+    /// [`SHOWN_SLACK`] of all its weights together: the frames it moves more or less on (it
+    /// holds still and then jumps on), and the most it did.
+    fn shown(&mut self, line: &AuthoredLine, pacing: Pacing) -> (Vec<String>, f32) {
+        let frames = pacing.frames(line.face.lipsync.end() + crate::talk::EASE_OUT + 0.3);
+        let times: Vec<f32> = frames
+            .iter()
+            .scan(0.0, |t, step| {
+                *t += step.as_secs_f32();
+                Some(*t)
+            })
+            .collect();
+        let (said, heard) = (times[0], times[1]);
+        let mut speech = Speech::default();
+        let mut last: Option<(Vec<f32>, Vec<f32>)> = None;
+        let (mut out, mut most) = (Vec::new(), 0.0f32);
+        for (frame, &now) in times.iter().enumerate() {
+            if frame == 0 {
+                speech.say(
+                    Some(self.unit),
+                    line.face.clone(),
+                    Some(Entity::PLACEHOLDER),
+                    now,
+                );
+            }
+            let buffer = pacing.device_buffer().as_secs_f32();
+            let position = buffer * ((now - heard) / buffer + DEVICE_AHEAD).floor();
+            let report = match now < heard {
+                true => Heard::Waiting,
+                false if position < line.face.lipsync.end() => Heard::At(position),
+                false => Heard::Gone,
+            };
+            speech.hear(now, report);
+            speech.finish(now);
+            let shown = self.posed(now, &speech).0;
+            // The face of the frame's time: the line from the frame its sound began.
+            let script = [(line.face.clone(), heard.min(now.max(said)))];
+            let own = self.at(now, &script).0;
+            if let Some((shown_before, own_before)) = &last {
+                let off: f32 = shown
+                    .iter()
+                    .zip(shown_before)
+                    .zip(own.iter().zip(own_before))
+                    .map(|((s, s0), (o, o0))| ((s - s0) - (o - o0)).abs())
+                    .sum();
+                most = most.max(off);
+                if off > SHOWN_SLACK {
+                    out.push(format!(
+                        "{} at {}: frame {frame} ({now:.4} s) moves {off:.3} off its time's face",
+                        line.face.file,
+                        pacing.name()
+                    ));
+                }
+            }
+            last = Some((shown, own));
+        }
+        (out, most)
     }
 }
 
+/// Every [`TAKEOVER_EVERY`]th phase, each line is also taken over halfway by the next one.
+const TAKEOVER_EVERY: usize = 10;
+
 /// The face's jumps apart from the client: its idle expression through a whole loop, and every
-/// line starting at each of [`PHASES`] instants of the loop, the phases shared among threads (a
-/// copy of the face, `copies[0]` for the idle and one more for each thread).
+/// line starting at each of [`PHASES`] instants of the loop (and taken over by the next line at
+/// some of them), the phases shared among threads (a copy of the face, `copies[0]` for the idle
+/// and one more for each thread).
 fn played_apart(
     (mut copies, faces, unit): (Vec<Mirror>, &Faces, EntityId),
     name: &str,
     lines: &[AuthoredLine],
-    ranges: &HashMap<u32, (f32, f32)>,
 ) -> Vec<String> {
     let mut fastest = Fastest::default();
     let idle = (0.0, IDLE_FRAMES, STEP);
     let mut played = Played::of(copies.remove(0), faces, unit);
-    let found = played.play(idle, None, &format!("{name} idle"), &mut fastest);
-    let mut jumps: Vec<(usize, String)> = found.into_iter().map(|j| (0, j.what)).collect();
+    let found = played.play(idle, &[], &format!("{name} idle"), &mut fastest);
+    let mut jumps: Vec<(usize, String)> = found.into_iter().map(|j| (0, j)).collect();
     let threads = copies.len();
     let copies = copies
         .into_iter()
@@ -748,8 +766,12 @@ fn played_apart(
                     let mut jumps = Vec::new();
                     for phase in (first..PHASES).step_by(threads) {
                         let start = phase as f32 * PHASE_STEP;
-                        for line in lines {
-                            let found = played.say(start, line, ranges, &mut fastest);
+                        for (k, line) in lines.iter().enumerate() {
+                            let next = &lines[(k + 1) % lines.len()];
+                            let mut found = played.say(start, line, None, &mut fastest);
+                            if phase % TAKEOVER_EVERY == 0 {
+                                found.extend(played.say(start, line, Some(next), &mut fastest));
+                            }
                             jumps.extend(found.into_iter().map(|j| (phase, format!("{name} {j}"))));
                         }
                     }
@@ -782,6 +804,28 @@ fn played_apart(
     out
 }
 
+/// Every line's face as the client shows it on the frames of a 240 Hz and a 60 Hz display and of
+/// a browser ([`Played::shown`]): the frames it moves off its time's face on.
+fn shown_apart(played: &mut Played, name: &str, lines: &[AuthoredLine]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut most = 0.0f32;
+    for pacing in [Pacing::Hz240, Pacing::Hz60, Pacing::Browser] {
+        for line in lines {
+            let (off, worst) = played.shown(line, pacing);
+            most = most.max(worst);
+            out.extend(off.into_iter().map(|o| format!("{name} {o}")));
+        }
+    }
+    let count = out.len();
+    out.truncate(20);
+    if count > 0 {
+        out.push(format!(
+            "{count} frames shown off their time's face; the most {most:.3} of all weights"
+        ));
+    }
+    out
+}
+
 /// The idle/run phase hears real answers. Injected playback starts only once those answers,
 /// including an already chosen delayed line, finish; no transition goes unchecked.
 fn finish_automatic(client: &mut Client, name: &str) -> Vec<String> {
@@ -803,7 +847,7 @@ fn finish_automatic(client: &mut Client, name: &str) -> Vec<String> {
         patience.pass("the automatic voice line to finish before injected playback");
         let phase = format!("{name} finishing automatic speech");
         let found = watch(client, 1, STEP, &phase);
-        jumps.extend(found.into_iter().map(|jump| jump.what));
+        jumps.extend(found);
     }
 }
 
@@ -824,16 +868,11 @@ fn loop_frames(client: &Client, name: &str) -> usize {
 
 /// The client draws the face idle through a loop of its clip, running through a loop of its
 /// clip and answering the order whole, and saying `line` whole.
-fn drawn_on_the_client(
-    client: &mut Client,
-    name: &str,
-    line: &AuthoredLine,
-    ranges: &HashMap<u32, (f32, f32)>,
-) -> Vec<String> {
+fn drawn_on_the_client(client: &mut Client, name: &str, line: &AuthoredLine) -> Vec<String> {
     let idle = loop_frames(client, "idle");
     let found = watch(client, idle, STEP, &format!("{name} idle"));
     if !found.is_empty() {
-        return found.into_iter().map(|j| j.what).collect();
+        return found;
     }
     let away = client.me().pos + At::from_ints(-1500, -1500);
     client.core_mut().send_order_to(
@@ -855,10 +894,10 @@ fn drawn_on_the_client(
     found.extend(watch_until(client, ANSWER_FRAMES, STEP, &running, |c| {
         said(c).is_none()
     }));
-    let mut jumps: Vec<String> = found.into_iter().map(|j| j.what).collect();
+    let mut jumps = found;
     jumps.extend(finish_automatic(client, name));
     if jumps.is_empty() {
-        jumps.extend(say_line(client, name, line, ranges));
+        jumps.extend(say_line(client, name, line));
     }
     jumps
 }
@@ -870,13 +909,11 @@ fn check_hero(hero: HeroId) -> Vec<String> {
     let server = Server::start(1, &["--tick-rate", &rate]);
     let mut client = Client::join(&server, hero, &[]);
     client.cheat(Cheat::StartGame);
-    // From the start: posed on every frame (not at most 30 times a second), 2 ms apart, so the
-    // first face drawn is the first one checked.
+    // From the start: 2 ms apart, so the first face drawn is the first one checked.
     let world = client.world_mut();
     world.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
         STEP,
     )));
-    world.resource_mut::<Stage>().every = true;
     client.within(Duration::from_secs(120), "the portrait's face posed", |c| {
         drawn_face(c).is_some()
     });
@@ -891,20 +928,27 @@ fn check_hero(hero: HeroId) -> Vec<String> {
         "{name}: the face's rigs set every morph weight of its meshes"
     );
     let line = drawn_line(&lines, &ranges);
-    let jumps = drawn_on_the_client(&mut client, &name, line, &ranges);
+    let jumps = drawn_on_the_client(&mut client, &name, line);
     if !jumps.is_empty() {
         return jumps;
     }
     // The copies taken, the client and the server go: other tests' clients may run meanwhile.
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-    let copies: Vec<Mirror> = (0..=threads.clamp(1, MAX_THREADS))
+    let mut copies: Vec<Mirror> = (0..=threads.clamp(1, MAX_THREADS))
         .map(|_| Mirror::of(&client))
         .collect();
+    let shown = Mirror::of(&client);
     let faces: Faces = client.world().resource::<Faces>().clone();
     let unit = client.me().id;
     drop(client);
     drop(server);
-    played_apart((copies, &faces, unit), &name, &lines, &ranges)
+    let mut jumps = shown_apart(&mut Played::of(shown, &faces, unit), &name, &lines);
+    jumps.extend(played_apart(
+        (std::mem::take(&mut copies), &faces, unit),
+        &name,
+        &lines,
+    ));
+    jumps
 }
 
 /// A test a hero, one for every hero.

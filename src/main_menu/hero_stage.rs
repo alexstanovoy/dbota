@@ -451,7 +451,7 @@ fn frame(
         stage.next_render = now + 1.0 / RATE;
         stage.render = true;
         if let Some(face) = stage.actor.as_ref().and_then(|a| a.face.as_ref()) {
-            face.pose(now, None, &faces, &mut weights);
+            face.pose(now, crate::talk::Saying::default(), &faces, &mut weights);
         }
     }
 }

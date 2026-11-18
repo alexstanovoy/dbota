@@ -125,6 +125,14 @@ impl Resident {
     }
 }
 
+impl Resident {
+    /// Each of the pack's sounds' faces, by the sound's index.
+    #[cfg(test)]
+    pub fn faces(&self) -> &[Option<Arc<LineFace>>] {
+        &self.faces
+    }
+}
+
 impl HeroVoice {
     /// The hero whose pack is resident, loading or failed.
     pub fn hero(&self) -> Option<&str> {

@@ -33,6 +33,7 @@ mod death;
 mod effect_bounds;
 mod enemy_base_shop;
 mod event_visibility;
+mod face_frames;
 mod faces;
 mod feed;
 mod flagbearer;

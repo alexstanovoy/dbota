@@ -145,8 +145,6 @@ const FRAMING_KEYS: [&str; crate::cache_text::FRAMING_NUMBERS] = [
 /// Where a camera framed by bounds stands, in the model's own axes (x to its
 /// right, y up, -z ahead): in front, a little to the left and above.
 const BOUNDS_VIEW: Vec3 = Vec3::new(-0.35, 0.3, -0.9);
-/// Renders a second at most of an animated portrait.
-const RATE: f32 = 30.0;
 /// Where the stage stands: far under the map, out of every other view.
 pub(crate) const STAGE: Vec3 = Vec3::new(0.0, -50_000.0, 0.0);
 /// Renders of a still made after the GPU has every pipeline it asked for:
@@ -491,15 +489,11 @@ pub struct Stage {
     backdrops: HashMap<String, Handle<Image>>,
     /// The image an animated portrait is drawn into.
     live: Handle<Image>,
-    /// Seconds since the start when an animated portrait is drawn next.
-    next_render: f32,
     /// Whether the camera draws this frame, and whether it drew the last.
     render: bool,
     rendered: bool,
-    /// Debug: the model shown whatever the panel's unit, at its own scale,
-    /// and drawn every frame.
+    /// Debug: the model shown whatever the panel's unit, at its own scale.
     pub forced: Option<usize>,
-    pub every: bool,
 }
 
 impl Actor {
@@ -609,11 +603,9 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         stills: Vec::new(),
         backdrops: HashMap::new(),
         live: live.clone(),
-        next_render: 0.0,
         render: false,
         rendered: false,
         forced: None,
-        every: false,
     });
     commands.spawn((
         PortraitCamera,
@@ -1001,7 +993,6 @@ fn aim(
     framings: Res<Framings>,
     bank: Res<ModelBank>,
     ready: Res<crate::warmup::PipelinesReady>,
-    time: Res<Time<bevy::time::Real>>,
     mut stage: ResMut<Stage>,
     mut commands: Commands,
     children: Query<&Children>,
@@ -1066,23 +1057,20 @@ fn aim(
     }
     let ready = ready.get();
     stage.rendered = stage.render;
-    stage.render = draw(&mut stage, ready, time.elapsed_secs(), &mut commands);
+    stage.render = draw(&mut stage, ready, &mut commands);
 }
 
 /// Whether the camera draws this frame: a still until its render is whole
-/// (then it is kept and its model leaves the stage), an animated portrait
-/// at most [`RATE`] times a second.
-fn draw(stage: &mut Stage, ready: bool, now: f32, commands: &mut Commands) -> bool {
+/// (then it is kept and its model leaves the stage), an animated portrait on
+/// every frame, as the panel shows it (a portrait drawn at a lower rate than the
+/// frames holds its face still and then jumps it on).
+fn draw(stage: &mut Stage, ready: bool, commands: &mut Commands) -> bool {
     let rendered = stage.rendered;
     let Some(actor) = stage.actor.as_mut() else {
         return false;
     };
     let Some(still) = actor.still.clone() else {
-        let render = stage.every || now >= stage.next_render;
-        if render {
-            stage.next_render = (stage.next_render + 1.0 / RATE).max(now);
-        }
-        return render;
+        return true;
     };
     // The render drawn last frame counts once nothing was compiling.
     if rendered && ready {
@@ -1115,7 +1103,7 @@ fn speak(
     };
     if stage.render {
         let now = time.elapsed_secs();
-        face.pose(now, speech.of(stage.unit, now), &faces, &mut weights);
+        face.pose(now, speech.saying(stage.unit, now), &faces, &mut weights);
     }
 }
 

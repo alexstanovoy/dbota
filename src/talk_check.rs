@@ -234,7 +234,6 @@ fn load(
         let logical = format!("hero.{}.model", check.hero);
         let model = bank.0.iter().position(|m| m.model.logical == logical);
         stage.forced = Some(model.ok_or(format!("no model {logical}"))?);
-        stage.every = true;
     }
     if check.line.is_none() {
         return Err("no line with a lip sync".into());
@@ -258,6 +257,8 @@ fn enter(check: &Check, scene: &mut Scene, now: f32) {
         }
         Phase::Along(i) => {
             let t = line.lipsync.end() * (i + 1) as f32 / (CHECK_FRAMES + 1) as f32;
+            // Held points, not a line said: no point eases out of the one before.
+            scene.speech.stop();
             scene.speech.say(None, line, None, now);
             scene.speech.hold(t);
         }

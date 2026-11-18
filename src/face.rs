@@ -160,6 +160,14 @@ impl Lipsync {
         Some(out)
     }
 
+    /// Seconds before the line's start from which its face moves: its earliest phoneme's start
+    /// (authored ahead of the sound for some lines), less the span the phonemes' filter looks
+    /// ahead. From there every viseme comes in through the filter, none at once.
+    pub fn lead(&self) -> f32 {
+        let earliest = self.phonemes.iter().map(|p| p.0).fold(0.0, f32::min);
+        PHONEME_FILTER - earliest
+    }
+
     /// Seconds into the line after which its face does nothing more (the phonemes' filter looks
     /// ahead of the time, never back).
     pub fn end(&self) -> f32 {
