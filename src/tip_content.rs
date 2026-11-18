@@ -618,6 +618,151 @@ mod tests {
         assert!(look.search_rank(yasha, "yas").is_some());
     }
 
+    /// The items whose text in Dota's localization has no description, as the game shows them: a
+    /// stat item's tooltip is its stat lines and notes. Recipes are exempt by their key (their
+    /// tooltip is their price). An item that gains a description in the install has to leave this
+    /// list, and one that is not here must have one.
+    const WITHOUT_DESCRIPTION: &[&str] = &[
+        "item_circlet",
+        "item_gauntlets",
+        "item_slippers",
+        "item_mantle",
+        "item_belt_of_strength",
+        "item_boots_of_elves",
+        "item_robe",
+        "item_ogre_axe",
+        "item_blade_of_alacrity",
+        "item_staff_of_wizardry",
+        "item_gloves",
+        "item_blades_of_attack",
+        "item_broadsword",
+        "item_quarterstaff",
+        "item_ring_of_protection",
+        "item_chainmail",
+        "item_ring_of_regen",
+        "item_sobi_mask",
+        "item_vitality_booster",
+        "item_energy_booster",
+        "item_bracer",
+        "item_wraith_band",
+        "item_null_talisman",
+        "item_eagle",
+        "item_claymore",
+        "item_talisman_of_evasion",
+        "item_butterfly",
+        "item_demon_edge",
+        "item_blitz_knuckles",
+        "item_crown",
+        "item_diadem",
+        "item_splintmail",
+        "item_helm_of_iron_will",
+        "item_mithril_hammer",
+        "item_fluffy_hat",
+        "item_wizard_hat",
+        "item_ring_of_health",
+        "item_void_stone",
+        "item_platemail",
+        "item_ring_of_tarrasque",
+        "item_tiara_of_selemene",
+        "item_hyperstone",
+        "item_point_booster",
+        "item_relic",
+        "item_reaver",
+        "item_mystic_staff",
+        "item_ultimate_orb",
+        "item_shawl",
+        "item_cloak",
+        "item_chasm_stone",
+        "item_oblivion_staff",
+        "item_pers",
+        "item_soul_booster",
+        "item_falcon_blade",
+        "item_yasha",
+        "item_sange",
+        "item_kaya",
+        "item_sange_and_yasha",
+        "item_kaya_and_sange",
+        "item_yasha_and_kaya",
+        "item_aether_lens",
+        "item_octarine_core",
+        "item_dragon_lance",
+    ];
+
+    /// The items the install's localization has no entry for at all (a recipe the game never
+    /// names); the client names them itself ([`crate::item_names`]).
+    const WITHOUT_TEXT: &[&str] = &["item_recipe_specialists_array"];
+
+    /// Every item the server knows, through the resolver and the install's own text: a name, and a
+    /// description unless the game has none ([`WITHOUT_DESCRIPTION`]), which then shows a stat line
+    /// or a note instead. An item the text does not reach (as the Chasm Stone, which the
+    /// localization names only as `<key>:n`, was not) fails by key.
+    #[test]
+    fn every_item_the_server_knows_has_its_name_and_description_from_the_install_text() {
+        let root = std::env::var_os("DBOTA_ASSETS")
+            .filter(|path| !path.is_empty())
+            .map(std::path::PathBuf::from)
+            .expect("DBOTA_ASSETS must name the test asset cache");
+        let manifest = Manifest::load(&root);
+        let texts = Texts::load(&manifest.root);
+        assert!(!texts.is_empty(), "no text file in {}", root.display());
+        let look = Lookup {
+            texts: &texts,
+            manifest: &manifest,
+            rates: tip_numbers::Rates::default(),
+        };
+        let (mut unnamed, mut undescribed, mut stale, mut bare) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for item in bota_proto::registered(bota_proto::IdSpace::Item).filter(|item| !item.retired) {
+            let found = manifest
+                .text_key("item", item.id)
+                .and_then(|key| texts.get(&key));
+            let Some(text) = found.filter(|text| !text.name.trim().is_empty()) else {
+                let named_by_client = look
+                    .item_name(item.id)
+                    .is_some_and(|name| !name.trim().is_empty());
+                if !(WITHOUT_TEXT.contains(&item.name) && named_by_client) {
+                    unnamed.push(item.name);
+                }
+                continue;
+            };
+            if WITHOUT_TEXT.contains(&item.name) {
+                stale.push(item.name);
+            }
+            let described = !text.description.trim().is_empty();
+            let recipe = item.name.starts_with("item_recipe_");
+            let listed = WITHOUT_DESCRIPTION.contains(&item.name);
+            match (described, listed || recipe) {
+                (false, false) => undescribed.push(item.name),
+                (true, true) => stale.push(item.name),
+                _ => {}
+            }
+            let tip = look.item(item.id, None).expect("a tooltip of a live item");
+            let shows_something = !(tip.bonuses.is_empty()
+                && tip.stats.is_empty()
+                && tip.notes.is_empty()
+                && tip.sections.is_empty());
+            if !described && !recipe && !shows_something {
+                bare.push(item.name);
+            }
+        }
+        assert!(
+            unnamed.is_empty(),
+            "no name in the install text: {unnamed:?}"
+        );
+        assert!(
+            undescribed.is_empty(),
+            "no description in the install text, and not listed as having none: {undescribed:?}"
+        );
+        assert!(
+            stale.is_empty(),
+            "listed as without text or description, but the install text has it: {stale:?}"
+        );
+        assert!(
+            bare.is_empty(),
+            "no description and no stat line or note either, a blank tooltip: {bare:?}"
+        );
+    }
+
     /// Dota's numbers against the simulator's, for every item and ability
     /// of the cache's text: prints where they differ and where the
     /// simulator has no number of its own (`cargo test -- --ignored
