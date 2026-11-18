@@ -8,7 +8,6 @@ use bevy::prelude::*;
 const MAX_FRAMES: usize = 1 << 20;
 
 /// Milliseconds of a frame `--bench` calls a hitch: a frame missed at 30 fps.
-/// Each is also said on stderr with its tick, to find what caused it.
 const HITCH_MS: f32 = 1000.0 / 30.0;
 
 /// What `--bench` has seen so far.
@@ -21,7 +20,26 @@ struct Bench {
     /// Seconds from the start the timing began at, and the process's CPU
     /// time then.
     began: Option<(f32, Option<u64>)>,
+    /// Each timed frame's milliseconds, in the order they came.
     times: Vec<f32>,
+    /// Render pipelines and assets made before each of the last two frames timed: the renderer
+    /// draws a frame while the app makes the next, so what a frame waited for may show a frame
+    /// late.
+    work: [Option<Work>; 2],
+    /// Render pipelines and assets made before the first frame timed.
+    first_work: Option<Work>,
+    /// Frames over twice the display's period that came with new pipelines, with new assets,
+    /// with neither.
+    hitch_causes: [usize; 3],
+}
+
+/// What the client has made so far that a frame may wait for.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Work {
+    /// Render pipelines compiled.
+    pipelines: usize,
+    /// Images, meshes, models and materials loaded.
+    assets: usize,
 }
 
 /// MiB of image or mesh data still held on the CPU side.
@@ -92,6 +110,7 @@ pub fn plugin(app: &mut App) {
     app.add_systems(Last, (bench, game_drawn));
     if app.world().resource::<crate::Args>().bench.is_some() {
         threads(app);
+        made(app);
     }
     #[cfg(target_arch = "wasm32")]
     app.add_systems(Last, browser_memory);
@@ -129,6 +148,85 @@ fn game_drawn(
             now - began
         );
     }
+}
+
+/// Render pipelines compiled (counted by the renderer) and assets loaded so far, for `--bench`'s
+/// hitch causes.
+#[derive(Resource, Clone, Default)]
+struct Made {
+    pipelines: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    assets: usize,
+}
+
+impl Made {
+    fn work(&self) -> Work {
+        Work {
+            pipelines: self.pipelines.load(std::sync::atomic::Ordering::Relaxed),
+            assets: self.assets,
+        }
+    }
+}
+
+/// Counts what the client makes that a frame may wait for.
+fn made(app: &mut App) {
+    use bevy::render::{Render, RenderApp, RenderSystems};
+    let made = Made::default();
+    app.insert_resource(made.clone())
+        .add_systems(First, count_assets);
+    if let Some(render) = app.get_sub_app_mut(RenderApp) {
+        render
+            .insert_resource(made)
+            .add_systems(Render, count_pipelines.after(RenderSystems::Render));
+    }
+}
+
+/// Counts the render pipelines, and names each new one on stderr (`pipeline:` lines, with the
+/// seconds since the start): what a long frame compiled.
+fn count_pipelines(
+    cache: Res<bevy::render::render_resource::PipelineCache>,
+    made: Res<Made>,
+) {
+    use bevy::render::render_resource::PipelineDescriptor;
+    let known = made.pipelines.load(std::sync::atomic::Ordering::Relaxed);
+    let mut count = 0;
+    for (i, pipeline) in cache.pipelines().enumerate() {
+        count += 1;
+        if i < known {
+            continue;
+        }
+        let what = match &pipeline.descriptor {
+            PipelineDescriptor::RenderPipelineDescriptor(d) => format!(
+                "{:?} samples {} defs {:?}",
+                d.label,
+                d.multisample.count,
+                d.fragment.as_ref().map(|f| &f.shader_defs)
+            ),
+            PipelineDescriptor::ComputePipelineDescriptor(d) => format!("compute {:?}", d.label),
+            PipelineDescriptor::MeshPipelineDescriptor(d) => format!("mesh {:?}", d.label),
+        };
+        eprintln!("pipeline: {:.2} s {what}", crate::since_start());
+    }
+    made.pipelines
+        .store(count, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn count_assets(
+    mut made: ResMut<Made>,
+    mut images: MessageReader<AssetEvent<Image>>,
+    mut meshes: MessageReader<AssetEvent<Mesh>>,
+    mut models: MessageReader<AssetEvent<bevy::gltf::Gltf>>,
+    mut materials: MessageReader<AssetEvent<StandardMaterial>>,
+) {
+    fn loaded<A: Asset>(events: &mut MessageReader<AssetEvent<A>>) -> usize {
+        events
+            .read()
+            .filter(|e| matches!(e, AssetEvent::LoadedWithDependencies { .. }))
+            .count()
+    }
+    made.assets += loaded(&mut images)
+        + loaded(&mut meshes)
+        + loaded(&mut models)
+        + loaded(&mut materials);
 }
 
 /// Milliseconds each frame's work took on the main thread (`First` to
@@ -256,12 +354,17 @@ fn bench(
     photo: Res<crate::minimap::PhotoTaken>,
     bank: Res<crate::units::ModelBank>,
     units: Res<crate::units::UnitIndex>,
-    entities: Query<()>,
+    (entities, targets, posed): (
+        Query<()>,
+        Query<&bevy::animation::AnimatedBy>,
+        Query<(), (With<AnimationPlayer>, With<AnimationGraphHandle>)>,
+    ),
     assets: (Res<Assets<Image>>, Res<Assets<Mesh>>),
     device: Option<Res<bevy::render::renderer::RenderDevice>>,
-    (threads, store): (
+    (threads, store, made): (
         Option<Res<ThreadTimes>>,
         Res<bevy::diagnostic::DiagnosticsStore>,
+        Option<Res<Made>>,
     ),
     mut state: Local<Bench>,
     mut exit: MessageWriter<AppExit>,
@@ -285,16 +388,24 @@ fn bench(
     let (Some(ready), Some((began, cpu))) = (state.ready, state.began) else {
         return;
     };
+    let budget = 1000.0 / args.bench_hz.max(1.0);
     let dt = time.delta_secs() * 1000.0;
     if dt > 0.0 && state.times.len() < MAX_FRAMES {
         state.times.push(dt);
     }
-    if dt > HITCH_MS {
+    let work = made.as_deref().map(Made::work);
+    if dt > 2.0 * budget {
         let tick = session.0.view().map(|v| v.tick);
+        let cause = hitch_cause(state.work[0], work);
+        state.hitch_causes[cause.index()] += 1;
         eprintln!(
-            "hitch: {dt:.1} ms at tick {tick:?}, {:.2} s into the timing",
+            "hitch: {dt:.1} ms at tick {tick:?}, {:.2} s into the timing, {cause}",
             now - began
         );
+    }
+    state.work = [state.work[1], work];
+    if state.first_work.is_none() {
+        state.first_work = work;
     }
     let wall = now - began;
     if wall < seconds || state.times.is_empty() {
@@ -304,6 +415,16 @@ fn bench(
         (Some(a), Some(b)) => (b - a) as f32 / wall,
         _ => f32::NAN,
     };
+    let pacing = Pacing::of(&state.times);
+    let made_while_timed = match (state.first_work, work) {
+        (Some(first), Some(last)) => format!(
+            " pipelines_made={} assets_loaded={}",
+            last.pipelines - first.pipelines,
+            last.assets - first.assets
+        ),
+        _ => String::new(),
+    };
+    let [by_pipelines, by_assets, by_other] = state.hitch_causes;
     let times = &mut state.times;
     let mean = times.iter().sum::<f32>() / times.len() as f32;
     times.sort_by(f32::total_cmp);
@@ -311,17 +432,26 @@ fn bench(
     let over = |ms: f32| times.iter().filter(|&&t| t > ms).count();
     let (rss, peak, anon) = memory_mb();
     let line = format!(
-        "bench: frames={} mean_ms={mean:.2} p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} max_ms={:.2} over_16ms={} over_33ms={} cpu_pct={cpu:.0} rss_mb={rss} peak_rss_mb={peak} anon_mb={anon} first_frame_s={:.2} ready_s={ready:.2} units={} entities={} images_mb={} meshes_mb={}",
+        "bench: frames={} mean_ms={mean:.2} p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} p999_ms={:.2} max_ms={:.2} over_16ms={} over_33ms={} hz={} over_budget={} over_2x={} over_4x={} hitch_pipelines={by_pipelines} hitch_assets={by_assets} hitch_other={by_other} interval_sd_ms={:.3} interval_jump_ms={:.3}{made_while_timed} cpu_pct={cpu:.0} rss_mb={rss} peak_rss_mb={peak} anon_mb={anon} first_frame_s={:.2} ready_s={ready:.2} units={} entities={} animation_targets={} posed_targets={} images_mb={} meshes_mb={}",
         times.len(),
         at(0.5),
         at(0.95),
         at(0.99),
+        at(0.999),
         at(1.0),
         over(1000.0 / 60.0),
         over(HITCH_MS),
+        args.bench_hz,
+        over(budget),
+        over(2.0 * budget),
+        over(4.0 * budget),
+        pacing.sd,
+        pacing.jump,
         state.first_frame.unwrap_or(f32::NAN),
         units.0.len(),
         entities.iter().count(),
+        targets.iter().count(),
+        targets.iter().filter(|by| posed.contains(by.0)).count(),
         cpu_side_mb(&assets.0),
         cpu_side_mb(&assets.1),
     ) + &threads.map_or_else(String::new, |t| t.summary());
@@ -334,6 +464,72 @@ fn bench(
         gpu_report(&device);
     }
     exit.write(AppExit::Success);
+}
+
+/// What a long frame came with: what was made in it (or the frame before, which the renderer
+/// may still have been drawing).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HitchCause {
+    Pipelines(usize),
+    Assets(usize),
+    Unknown,
+}
+
+impl HitchCause {
+    fn index(self) -> usize {
+        match self {
+            HitchCause::Pipelines(_) => 0,
+            HitchCause::Assets(_) => 1,
+            HitchCause::Unknown => 2,
+        }
+    }
+}
+
+impl std::fmt::Display for HitchCause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HitchCause::Pipelines(n) => write!(f, "{n} render pipelines compiled"),
+            HitchCause::Assets(n) => write!(f, "{n} assets loaded"),
+            HitchCause::Unknown => write!(f, "nothing compiled or loaded"),
+        }
+    }
+}
+
+fn hitch_cause(before: Option<Work>, now: Option<Work>) -> HitchCause {
+    let (Some(before), Some(now)) = (before, now) else {
+        return HitchCause::Unknown;
+    };
+    if now.pipelines > before.pipelines {
+        HitchCause::Pipelines(now.pipelines - before.pipelines)
+    } else if now.assets > before.assets {
+        HitchCause::Assets(now.assets - before.assets)
+    } else {
+        HitchCause::Unknown
+    }
+}
+
+/// How evenly frames came: "smooth" is even, not only fast.
+struct Pacing {
+    /// The standard deviation of the frame intervals, ms.
+    sd: f32,
+    /// The mean change from one interval to the next, ms: a frame that comes late and one that
+    /// comes early after it count, a slow but even pace does not.
+    jump: f32,
+}
+
+impl Pacing {
+    /// Of frame intervals in the order they came.
+    fn of(intervals: &[f32]) -> Pacing {
+        let n = intervals.len().max(1) as f32;
+        let mean = intervals.iter().sum::<f32>() / n;
+        let variance = intervals.iter().map(|t| (t - mean).powi(2)).sum::<f32>() / n;
+        let jumps = intervals.windows(2).map(|w| (w[1] - w[0]).abs());
+        let pairs = intervals.len().saturating_sub(1).max(1) as f32;
+        Pacing {
+            sd: variance.sqrt(),
+            jump: jumps.sum::<f32>() / pairs,
+        }
+    }
 }
 
 /// The GPU memory the allocator holds, by what it was allocated for, on

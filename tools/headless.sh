@@ -14,6 +14,8 @@
 #                              go to no device unless DBOTA_NULL_AUDIO=0
 #   DBOTA_HEADLESS_SIZE=WxH    the virtual output's size (default 1920x1080)
 #   DBOTA_HEADLESS_SCALE=N     its integer scale (default 1)
+#   DBOTA_HEADLESS_HZ=N        its refresh rate in Hz, the pace vsync holds a window to (default 60; 240 for a
+#                              display like the one the frame-rate goal is set for)
 #   DBOTA_WESTON=PATH          the weston to run (default: `weston` on PATH; packaged as `weston`)
 #   DBOTA_HEADLESS_LOG=FILE    weston's log and what its helpers print (default: discarded)
 #   DBOTA_HEADLESS_XWAYLAND=1  also an X server (Xwayland) in the compositor, DISPLAY set for COMMAND: X11 clients,
@@ -66,6 +68,11 @@ if ! [[ $size =~ ^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}$ ]]; then
     echo "tools/headless.sh: DBOTA_HEADLESS_SIZE '$size' is not WIDTHxHEIGHT" >&2
     exit 2
 fi
+hz=${DBOTA_HEADLESS_HZ:-60}
+if ! [[ $hz =~ ^[1-9][0-9]{0,2}$ ]]; then
+    echo "tools/headless.sh: DBOTA_HEADLESS_HZ '$hz' is not 1 to 999" >&2
+    exit 2
+fi
 scale=${DBOTA_HEADLESS_SCALE:-1}
 if ! [[ $scale =~ ^[1-4]$ ]]; then
     echo "tools/headless.sh: DBOTA_HEADLESS_SCALE '$scale' is not 1 to 4" >&2
@@ -93,7 +100,7 @@ log=${DBOTA_HEADLESS_LOG:-/dev/null}
 xwayland=()
 [ "${DBOTA_HEADLESS_XWAYLAND:-0}" = 1 ] && xwayland=(--xwayland)
 env -u DISPLAY DBOTA_HEADLESS="$socket" "${pdeath[@]}" "$weston" --backend=headless --renderer=gl "${xwayland[@]}" \
-    --width="${size%x*}" --height="${size#*x}" --scale="$scale" --socket="$socket" \
+    --refresh-rate="${hz}000" --width="${size%x*}" --height="${size#*x}" --scale="$scale" --socket="$socket" \
     --config="$dir/weston.ini" --log="$log" \
     -- "$(realpath -- "${BASH_SOURCE[0]}")" --dbota-headless-inner "$dir/status" "$@" \
     3>&1 4>&2 >> "$log" 2>&1

@@ -26,13 +26,15 @@ from playwright.sync_api import sync_playwright
 
 from smoke import serve
 
-# The real GPU, not SwiftShader, and nothing pacing the frames: no vsync, no frame rate limit.
+# The real GPU, not SwiftShader.
 ARGS = [
     "--enable-unsafe-webgpu", "--enable-features=Vulkan", "--use-angle=vulkan", "--ignore-gpu-blocklist",
-    "--disable-gpu-vsync", "--disable-frame-rate-limit",
     "--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests",
     "--mute-audio",
 ]
+# Nothing pacing the frames: no vsync, no frame rate limit (what a frame costs). Without these the
+# browser draws on the display's pace, as a player's does (how evenly frames come).
+UNPACED = ["--disable-gpu-vsync", "--disable-frame-rate-limit"]
 # What ends a run: the client died. Its other ERROR lines are said on stderr with the result.
 FAILED = re.compile(r"panicked|RuntimeError")
 # What makes a run no measure: any error the renderer logs (wgpu, naga, Bevy's render crates: a
@@ -51,9 +53,11 @@ def platform():
     sys.exit("no window system: run inside tools/headless.sh")
 
 
-def run(p, base, api, size, timeout):
+def run(p, base, api, size, timeout, paced=False, exe=None):
     """One page load until its `bench:` line; returns the line."""
-    browser = p.chromium.launch(args=ARGS + platform(), headless=False)
+    browser = p.chromium.launch(
+        args=ARGS + ([] if paced else UNPACED) + platform(), headless=False, executable_path=exe
+    )
     try:
         width, height = size
         page = browser.new_context(viewport={"width": width, "height": height}).new_page()
@@ -87,6 +91,8 @@ def main():
     ap.add_argument("--runs", type=int, default=1, help="runs of each client")
     ap.add_argument("--size", default="1920x1080", help="the page's viewport, WxH")
     ap.add_argument("--timeout", type=int, default=600, help="seconds a run may take")
+    ap.add_argument("--paced", action="store_true", help="frames on the display's pace (vsync), not unpaced")
+    ap.add_argument("--exe", help="the Chromium to run (default: Playwright's own)")
     args = ap.parse_args()
     size = tuple(int(n) for n in args.size.split("x"))
     server = serve(args.page)
@@ -94,7 +100,8 @@ def main():
     with sync_playwright() as p:
         for _ in range(args.runs):
             for api in args.apis.split():
-                print(api, run(p, base, api, size, args.timeout), flush=True)
+                line = run(p, base, api, size, args.timeout, args.paced, args.exe)
+                print(api, line, flush=True)
     server.shutdown()
 
 

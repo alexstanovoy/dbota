@@ -333,6 +333,11 @@ pub struct Args {
     /// Debug: seconds `--bench` lets pass before it starts timing.
     #[arg(long, value_name = "SECONDS", default_value_t = 2.0)]
     pub bench_warmup: f32,
+    /// Debug: the display rate `--bench` judges frames against: how many come in over its period,
+    /// twice it and four times it (a frame over twice the period is a hitch, said on stderr
+    /// with what was made in it).
+    #[arg(long, value_name = "HZ", default_value_t = 240.0, requires = "bench")]
+    pub bench_hz: f32,
     /// Debug: with `--bench`, also time each render pass on the GPU (where
     /// the adapter has timestamp queries) and print them as `pass:` lines.
     #[arg(long, requires = "bench")]
