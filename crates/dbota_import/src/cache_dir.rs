@@ -878,22 +878,57 @@ pub(crate) fn replace(staging: &Path, cache: &Path) -> Result<()> {
 /// is a whole old cache nothing else would ever remove; no cache and an `.old` (killed between
 /// the two renames) gets its `.old` back as the cache, for the usual currency check to judge.
 /// The `.importing` folder is never trusted: an import clears it as it starts.
+///
+/// Only a real folder is a cache or an old copy: a link or a file in either place is removed
+/// without being followed, never moved into the cache's place, and never makes an import fail.
+/// Running it again changes nothing.
 pub fn recover_interrupted_swap(cache: &Path, _held: &CacheLock) -> Result<()> {
     recover_swap(cache)
 }
 
+/// What is at a path, judged without following a link.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Entry {
+    Missing,
+    Folder,
+    /// A file, a link (also to a folder), or anything else that is not a folder.
+    Other,
+}
+
+fn entry_at(path: &Path) -> Result<Entry> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_dir() => Ok(Entry::Folder),
+        Ok(_) => Ok(Entry::Other),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Entry::Missing),
+        Err(e) => Err(managed_io(path, e)),
+    }
+}
+
+/// Removes a file or a link (a link to a folder on Windows is removed as a folder is), never
+/// what it points to.
+fn remove_entry(path: &Path) -> Result<()> {
+    fs::remove_file(path)
+        .or_else(|_| fs::remove_dir(path))
+        .map_err(|e| managed_io(path, e))
+}
+
 fn recover_swap(cache: &Path) -> Result<()> {
     let old = sibling(cache, "old")?;
-    if fs::symlink_metadata(&old).is_err() {
-        return Ok(());
+    match (entry_at(&old)?, entry_at(cache)?) {
+        (Entry::Missing, _) => Ok(()),
+        (Entry::Other, _) => remove_entry(&old),
+        (Entry::Folder, Entry::Folder) => remove(&old),
+        (Entry::Folder, found) => {
+            // Whatever stands in a cache's place that is no folder is no cache.
+            if found == Entry::Other {
+                remove_entry(cache)?;
+            }
+            fs::rename(&old, cache).map_err(|source| Error::Io {
+                path: cache.display().to_string(),
+                source,
+            })
+        }
     }
-    if fs::symlink_metadata(cache).is_ok() {
-        return remove(&old);
-    }
-    fs::rename(&old, cache).map_err(|source| Error::Io {
-        path: cache.display().to_string(),
-        source,
-    })
 }
 
 /// `.<name>.<what>` beside `cache`.
@@ -1165,6 +1200,13 @@ mod tests {
         let first = lock_managed_root(&root).unwrap();
         let root_lock = root.join(".dbota-cache-lock");
         write_only(&root_lock);
+        assert!(
+            fs::File::open(&root_lock).is_err(),
+            "this test cannot prove its property as this user: a write-only file can be read \
+             (a privileged user reads anything); \
+             the lock files are only ever opened by one function is checked by \
+             `no_other_code_names_the_lock_files`, which does not depend on permissions"
+        );
         let mut waited = 0;
         let second = begin_managed_import_at(&root, &requested, now(), &mut || {
             waited += 1;
@@ -1188,6 +1230,54 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
+    /// The lock files are named in one place, which opens them for writing only: no other code
+    /// of this crate or of the client names them, so nothing else can read their contents. This
+    /// holds for any user (the permission test above needs one that cannot read a write-only
+    /// file).
+    #[test]
+    fn no_other_code_names_the_lock_files() {
+        fn sources(dir: &Path, found: &mut Vec<(PathBuf, String)>) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    sources(&path, found);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    found.push((path.clone(), fs::read_to_string(&path).unwrap()));
+                }
+            }
+        }
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        sources(&manifest.join("src"), &mut files);
+        sources(&manifest.join("../../src"), &mut files);
+        let mut root_named = 0;
+        let mut sibling_named = 0;
+        for (path, text) in &files {
+            // This module's tests name them to test them.
+            let code = text.split("#[cfg(test)]").next().unwrap();
+            let root = code.matches("dbota-cache-lock").count();
+            let sibling = code.matches("\"lock\")").count();
+            assert!(
+                path.ends_with("cache_dir.rs") || root + sibling == 0,
+                "{} names a lock file",
+                path.display()
+            );
+            if path.ends_with("cache_dir.rs") {
+                (root_named, sibling_named) = (root, sibling);
+            }
+        }
+        assert_eq!((root_named, sibling_named), (1, 1));
+        let code = include_str!("cache_dir.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert_eq!(
+            code.matches("open_lock_file(").count(),
+            3,
+            "its definition and two uses"
+        );
+    }
+
     /// A link or a folder where a lock file goes is refused, not followed.
     #[cfg(unix)]
     #[test]
@@ -1202,6 +1292,150 @@ mod tests {
         assert!(why.to_string().contains("a plain file"), "{why}");
         assert!(!root.join("elsewhere").exists());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// What is in a scratch folder, as a sorted list of names, with the stamp of the folders
+    /// that have one: two equal listings are the same state.
+    fn listing(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                let kind = match fs::symlink_metadata(&path).unwrap().file_type() {
+                    t if t.is_symlink() => "link".to_owned(),
+                    t if t.is_dir() => {
+                        format!("folder:{}", read_stamp(&path).unwrap_or_default())
+                    }
+                    _ => "file".to_owned(),
+                };
+                format!("{name} {kind}")
+            })
+            .filter(|line| !line.contains(".lock"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Where the interrupted swap's leftovers are, of each kind: a whole old cache, a file, a
+    /// link to a folder that holds one (which must never be followed or moved into the cache's
+    /// place).
+    #[derive(Clone, Copy, Debug)]
+    enum OldKind {
+        Folder,
+        File,
+        #[cfg(unix)]
+        Link,
+    }
+
+    fn state(label: &str, cache_present: bool, old: OldKind) -> (PathBuf, PathBuf) {
+        let dir = fresh_dir(label);
+        let cache = dir.join("cache");
+        let old_path = sibling(&cache, "old").unwrap();
+        if cache_present {
+            fs::create_dir_all(&cache).unwrap();
+            fs::write(cache.join(STAMP), b"new").unwrap();
+        }
+        match old {
+            OldKind::Folder => {
+                fs::create_dir_all(&old_path).unwrap();
+                fs::write(old_path.join(STAMP), b"old").unwrap();
+            }
+            OldKind::File => fs::write(&old_path, b"a file").unwrap(),
+            #[cfg(unix)]
+            OldKind::Link => {
+                let target = dir.join("target");
+                fs::create_dir_all(&target).unwrap();
+                fs::write(target.join(STAMP), b"target").unwrap();
+                std::os::unix::fs::symlink(&target, &old_path).unwrap();
+            }
+        }
+        (dir, cache)
+    }
+
+    /// Every kind of leftover in both states ends the same way however many times recovery runs:
+    /// only a real folder is ever put back, a file or a link is removed (never followed, and
+    /// never made the cache), and the cache that is there stays.
+    #[test]
+    fn recovery_settles_each_kind_of_leftover_in_both_states_and_again_changes_nothing() {
+        let kinds = [
+            OldKind::Folder,
+            OldKind::File,
+            #[cfg(unix)]
+            OldKind::Link,
+        ];
+        for cache_present in [true, false] {
+            for kind in kinds {
+                let (dir, cache) = state("swap-kinds", cache_present, kind);
+                let lock = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
+                recover_interrupted_swap(&cache, &lock).unwrap();
+                let once = listing(&dir);
+                recover_interrupted_swap(&cache, &lock).unwrap();
+                assert_eq!(
+                    listing(&dir),
+                    once,
+                    "{kind:?}, cache present: {cache_present}"
+                );
+                let want_cache = match (cache_present, kind) {
+                    (true, _) => Some("new"),
+                    (false, OldKind::Folder) => Some("old"),
+                    (false, _) => None,
+                };
+                assert_eq!(
+                    read_stamp(&cache).as_deref(),
+                    want_cache,
+                    "{kind:?} {cache_present}"
+                );
+                assert!(
+                    !sibling(&cache, "old").unwrap().exists(),
+                    "{kind:?} {cache_present}"
+                );
+                #[cfg(unix)]
+                if matches!(kind, OldKind::Link) {
+                    assert_eq!(
+                        read_stamp(&dir.join("target")).as_deref(),
+                        Some("target"),
+                        "the link's folder was followed"
+                    );
+                }
+                fs::remove_dir_all(&dir).unwrap();
+            }
+        }
+    }
+
+    /// A file or a link where a cache goes is no cache: with an old copy beside it, the old copy
+    /// is put back and the link (not what it points to) is gone.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_cache_s_place_does_not_hide_the_old_copy_that_is_put_back() {
+        let (dir, cache) = state("swap-link-cache", false, OldKind::Folder);
+        let target = dir.join("elsewhere");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join(STAMP), b"elsewhere").unwrap();
+        std::os::unix::fs::symlink(&target, &cache).unwrap();
+        let lock = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
+        recover_interrupted_swap(&cache, &lock).unwrap();
+        assert_eq!(read_stamp(&cache).as_deref(), Some("old"));
+        assert!(
+            !fs::symlink_metadata(&cache)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(read_stamp(&target).as_deref(), Some("elsewhere"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file where the old copy goes no longer makes every import fail: it is removed and the
+    /// import goes on.
+    #[test]
+    fn a_file_where_the_old_copy_goes_does_not_stop_an_import() {
+        let (dir, game, cache, plan) = two_font_install("old-file");
+        fs::write(sibling(&cache, "old").unwrap(), b"a file").unwrap();
+        let made = import_into(&game, &cache, &plan, "after", &mut |_| Flow::Continue);
+        assert!(made.is_ok(), "{made:?}");
+        assert_eq!(read_stamp(&cache).as_deref(), Some("after"));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Killed after the new cache took its place but before the old one was removed, a process
