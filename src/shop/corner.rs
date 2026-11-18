@@ -427,6 +427,15 @@ fn spawn_shop_button(
     (fonts, manifest, server): (&Fonts, &Manifest, &AssetServer),
     controls: Entity,
 ) {
+    // Before the button, so that it stands behind it as Dota's `z-index: -1` has it.
+    commands.spawn((
+        crate::buyback::shop_frame(
+            dota(SHOP_BUTTON_LEFT),
+            (LAUNCHER.1 - SHOP_BUTTON.1) / 2.0 * DOTA,
+            dota(SHOP_BUTTON.0),
+        ),
+        ChildOf(controls),
+    ));
     let button = commands
         .spawn((
             ShopButton,

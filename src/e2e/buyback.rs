@@ -234,3 +234,43 @@ fn a_click_on_a_dead_heros_button_buys_it_back_and_the_button_tells_why_it_canno
         !drawn_shop_marks(c.world_mut()).1
     });
 }
+
+/// The gold of a seat with buyback is drawn as Dota draws it: a line above and a line below the shop
+/// button, running along the button's width, and nothing at its left and right edges. It was a
+/// bright frame round all four sides of the box.
+#[test]
+fn the_shop_button_of_a_seat_with_buyback_has_gold_lines_above_and_below_and_no_frame_round_it() {
+    let server = Server::start(1, &["--map", "1"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.until("its buyback told", |c| me(c).buyback.is_some());
+    client.until("the frame of a seat with buyback", |c| {
+        drawn_shop_marks(c.world_mut()).0
+    });
+    client.frames(10);
+    let world = client.world_mut();
+    let button = *world
+        .query_filtered::<&ComputedNode, With<crate::shop::ShopButton>>()
+        .single(world)
+        .expect("the shop button");
+    let frame = *world
+        .query_filtered::<&ComputedNode, With<crate::buyback::BuybackFrame>>()
+        .single(world)
+        .expect("the frame");
+    let (left, right) = (frame.border().min_inset.x, frame.border().max_inset.x);
+    assert_eq!(
+        (left, right),
+        (0.0, 0.0),
+        "nothing is drawn at the left and right edges of the shop button"
+    );
+    assert!(
+        frame.border().min_inset.y > 0.0 && frame.border().max_inset.y > 0.0,
+        "a gold line above and below: {:?}",
+        frame.border()
+    );
+    assert!(
+        frame.size().y > button.size().y,
+        "the lines stand outside the button's top and bottom: frame {:?} button {:?}",
+        frame.size(),
+        button.size()
+    );
+}

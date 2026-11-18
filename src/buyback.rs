@@ -44,7 +44,7 @@ struct Coin;
 #[derive(Component)]
 struct Amount;
 
-/// The gold frame round the shop button while the seat has buyback.
+/// The gold lines over and under the shop button while the seat has buyback.
 #[derive(Component)]
 pub struct BuybackFrame;
 
@@ -75,6 +75,12 @@ const COST_INK: Color = Color::srgb(0.937, 0.859, 0.388);
 const RED: Color = Color::srgb(1.0, 0.125, 0.125);
 /// The frame's gold (`#ffd932`) and the header's ground (`#4C5059`).
 const FRAME: Color = Color::srgb(1.0, 0.851, 0.196);
+/// The frame's ends (`#a86700`), its height (42), how far it stands over the button's top (the
+/// button is 36 high) and its edge's width.
+const FRAME_END: Color = Color::srgb(0.659, 0.404, 0.0);
+const FRAME_HEIGHT: f32 = 42.0;
+const FRAME_REACH: f32 = 3.0;
+const FRAME_EDGE: f32 = 1.5;
 const HEADER_GROUND: Color = Color::srgb(0.298, 0.314, 0.349);
 /// The header's inks: its word (`#FFCC33`, `#a6aBb1` without buyback) and a surplus (`#af2`).
 const HEADER_WORD: Color = Color::srgb(1.0, 0.8, 0.2);
@@ -228,19 +234,37 @@ impl BuybackLook {
     }
 }
 
-/// The frame and the header of the shop button.
-pub fn spawn_shop_marks(commands: &mut Commands, fonts: &Fonts, shop_button: Entity) {
-    commands.spawn((
+/// The gold line above and the one below the shop button while the seat has buyback, as Dota
+/// draws `#ShopButtonBuybackOverlay`: a black plate three of Dota's pixels taller than the button
+/// on either side, behind it, with a gradient edge (dark gold at the ends, bright in the middle)
+/// along its top and bottom and none at the sides. `left`, `top` (in interface pixels) and `width`
+/// are the button's.
+pub fn shop_frame(left: Val, top: f32, width: Val) -> impl Bundle {
+    (
         BuybackFrame,
         Node {
-            border: UiRect::all(dota(2.0)),
-            ..ui::fill()
+            position_type: PositionType::Absolute,
+            left,
+            top: px(top - FRAME_REACH * DOTA),
+            width,
+            height: dota(FRAME_HEIGHT),
+            border: UiRect::axes(px(0), dota(FRAME_EDGE)),
+            border_radius: BorderRadius::all(dota(3.0)),
+            ..default()
         },
-        BorderColor::all(FRAME),
+        BackgroundColor(Color::BLACK),
+        BorderGradient::from(LinearGradient::to_right(vec![
+            ColorStop::auto(FRAME_END),
+            ColorStop::auto(FRAME),
+            ColorStop::auto(FRAME_END),
+        ])),
         Visibility::Hidden,
         Pickable::IGNORE,
-        ChildOf(shop_button),
-    ));
+    )
+}
+
+/// The header of the shop button.
+pub fn spawn_shop_marks(commands: &mut Commands, fonts: &Fonts, shop_button: Entity) {
     let header = commands
         .spawn((
             BuybackHeader,
