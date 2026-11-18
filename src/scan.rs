@@ -16,12 +16,12 @@ use bota_client_core::{App as Core, ScanSide};
 use bota_core::rules::{SCAN_MAX_CHARGES, SCAN_RADIUS, SCAN_RECHARGE_TICKS};
 
 use crate::camera::CursorGround;
-use crate::hud::{Blocker, Docks};
+use crate::hud::Docks;
 use crate::manifest::Manifest;
 use crate::map::Ground;
 use crate::minimap::MinimapFrame;
 use crate::session::{MatchKnown, Session};
-use crate::ui::{self, Fonts};
+use crate::ui::{self, Fonts, dota};
 
 /// The frame the button sits in.
 #[derive(Component)]
@@ -53,9 +53,6 @@ pub(crate) struct ScanCount;
 #[derive(Component)]
 struct MinimapRing;
 
-/// Logical pixels across the button, and the frame's padding round it.
-const BUTTON: f32 = 42.0;
-const PAD: f32 = 7.0;
 /// The badge's diameter, in logical pixels.
 const BADGE: f32 = 18.0;
 /// The ring colours of the running scan particle: green while nothing is found, red when found.
@@ -81,36 +78,32 @@ fn spawn(
     server: Res<AssetServer>,
     docks: Res<Docks>,
 ) {
+    // On the plate, in the upper of its two wells (`#RadarButton`).
     let frame = commands
         .spawn((
             ScanFrame,
             Node {
-                padding: UiRect::all(px(PAD)),
-                border: UiRect::new(px(0), px(2), px(2), px(2)),
-                border_radius: BorderRadius::right(px(10)),
+                position_type: PositionType::Absolute,
+                left: dota(crate::glyph::PLATE_LEFT),
+                bottom: dota(crate::glyph::SCAN_BOTTOM),
                 ..default()
             },
-            BackgroundColor(ui::PANEL),
-            BorderColor::all(ui::EDGE),
-            Hovered::default(),
-            Blocker,
             Visibility::Hidden,
         ))
         .id();
-    // Above the Glyph's, whichever plugin spawned first.
     commands
         .entity(docks.minimap_buttons)
         .insert_children(0, &[frame]);
     let button = commands
         .spawn((
             ScanButton,
-            Name::new("scan"),
+            Name::new("hud scan"),
             Button,
             Hovered::default(),
             bevy::picking::hover::DirectlyHovered::default(),
             Node {
-                width: px(BUTTON),
-                height: px(BUTTON),
+                width: dota(crate::glyph::BUTTON),
+                height: dota(crate::glyph::BUTTON),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 border_radius: BorderRadius::MAX,

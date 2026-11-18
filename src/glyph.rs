@@ -13,10 +13,10 @@ use bevy::{
 };
 use bota_core::rules::Schedule;
 
-use crate::hud::{Blocker, Docks};
+use crate::hud::Docks;
 use crate::manifest::Manifest;
 use crate::session::{MatchKnown, Session};
-use crate::ui::{self, Fonts};
+use crate::ui::{self, Fonts, dota};
 
 /// The frame the button sits in.
 #[derive(Component)]
@@ -24,7 +24,7 @@ struct GlyphFrame;
 
 /// The button.
 #[derive(Component)]
-struct GlyphButton;
+pub struct GlyphButton;
 
 /// The button's icon: Dota's lit and dimmed Glyph, where the cache has them.
 #[derive(Component)]
@@ -39,11 +39,14 @@ struct GlyphSweep;
 
 /// The seconds left, in the middle.
 #[derive(Component)]
-struct GlyphSeconds;
+pub(crate) struct GlyphSeconds;
 
-/// Logical pixels across the button, and the frame's padding round it.
-const BUTTON: f32 = 55.0;
-const PAD: f32 = 7.0;
+/// Dota's pixels across the button, how far the plate's wells stand from its left edge, and how far
+/// the Glyph's and the Scan's wells stand from its foot (`#glyph`, `#RadarButton`).
+pub(crate) const BUTTON: f32 = 44.0;
+pub(crate) const PLATE_LEFT: f32 = 6.0;
+const GLYPH_BOTTOM: f32 = 6.0;
+pub(crate) const SCAN_BOTTOM: f32 = 50.0;
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn)
@@ -58,19 +61,17 @@ fn spawn(
     server: Res<AssetServer>,
     docks: Res<Docks>,
 ) {
+    // On the plate, in the lower of its two wells (`#glyph`: 44 of Dota's pixels across, 6 from the
+    // plate's left and foot).
     let frame = commands
         .spawn((
             GlyphFrame,
             Node {
-                padding: UiRect::all(px(PAD)),
-                border: UiRect::new(px(0), px(2), px(2), px(2)),
-                border_radius: BorderRadius::right(px(10)),
+                position_type: PositionType::Absolute,
+                left: dota(PLATE_LEFT),
+                bottom: dota(GLYPH_BOTTOM),
                 ..default()
             },
-            BackgroundColor(ui::PANEL),
-            BorderColor::all(ui::EDGE),
-            Hovered::default(),
-            Blocker,
             Visibility::Hidden,
             ChildOf(docks.minimap_buttons),
         ))
@@ -81,9 +82,10 @@ fn spawn(
             Name::new("hud glyph"),
             Button,
             Hovered::default(),
+            bevy::picking::hover::DirectlyHovered::default(),
             Node {
-                width: px(BUTTON),
-                height: px(BUTTON),
+                width: dota(BUTTON),
+                height: dota(BUTTON),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 border_radius: BorderRadius::MAX,
@@ -194,6 +196,35 @@ fn click(
     if event.button == PointerButton::Primary && button.contains(event.entity) {
         session.0.activate_glyph();
     }
+}
+
+/// The hover popup of the button: Dota's title and description, and the wait while it runs.
+pub fn tip(texts: &crate::dota_text::Texts, core: &bota_client_core::App) -> Option<String> {
+    let ready_in = core.my_slot.and_then(|_| core.glyph())?.ready_after?;
+    let word = |key: &str, own: &str| texts.label(key, &[]).unwrap_or_else(|| own.to_owned());
+    let mut lines = format!(
+        "{}\n{}",
+        word(
+            "DOTA_Glossary_Map_Structures_Glyph",
+            "Glyph of Fortification"
+        ),
+        word(
+            "DOTA_Glossary_Map_Structures_Glyph_Desc",
+            "A shared Cooldown Ability that any player on the team can activate. This Ability makes all Structures invulnerable, and amplifies the attacking power of allied Towers."
+        )
+    );
+    if ready_in > 0 {
+        let rate = u32::from(core.tick_rate().max(1));
+        // The word's template, where the install's text keeps its placeholder.
+        let template = texts
+            .label("DOTA_HUD_GlyphCooldown", &[])
+            .filter(|text| text.contains("{s:cooldown_time}"))
+            .unwrap_or_else(|| "Cooldown: {s:cooldown_time}".to_owned());
+        let wait = template.replace("{s:cooldown_time}", &ready_in.div_ceil(rate).to_string());
+        lines.push('\n');
+        lines.push_str(&wait);
+    }
+    Some(lines)
 }
 
 #[cfg(test)]

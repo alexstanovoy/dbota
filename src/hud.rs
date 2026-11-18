@@ -61,11 +61,17 @@ const LEVEL_UP_GAP: f32 = 11.0;
 /// The height of the row of level pips under an ability, and the room over it.
 const PIPS: f32 = 4.0;
 const PIPS_GAP: f32 = 7.0;
-/// The panel's room left of the abilities' column after the portrait, between the column and the
-/// inventory, and the column's width: the health and mana bars run so far, past the last ability,
-/// where Dota keeps the scepter's and the shard's marks.
+/// The panel's room left of the abilities' column after the portrait, and between the column and the
+/// inventory. The column is as wide as its row of abilities needs: the health and mana bars run
+/// under all of it, so far past the last ability as Dota keeps the scepter's and the shard's marks.
 const COLUMN_LEFT: f32 = 15.5;
-const COLUMN_WIDTH: f32 = 555.0;
+/// The pitch of the ability boxes of a hero of four abilities or fewer, and of one of five or six
+/// (`.Reborn DOTAAbilityPanel` is 65 of Dota's pixels wide, 58 with five or six).
+const ABILITY_PITCH_FEW: f32 = 65.0 * ui::DOTA;
+const ABILITY_PITCH_MANY: f32 = ABILITY + GAP;
+/// How far the bars run past the last ability's box: the room of the Aghanim's marks
+/// (`#AghsStatusContainer`, 62 of Dota's pixels with its margins), including the gap of the row.
+const AGHS_REACH: f32 = 55.4;
 const INVENTORY_LEFT: f32 = 19.3;
 /// The panel's room under the abilities' column and the inventory.
 const PANEL_FOOT: f32 = 9.6;
@@ -96,6 +102,14 @@ const PORTAL_SLOT: f32 = 52.0;
 const GAP: f32 = 6.0;
 /// A seat's portrait in the top bar (the seats touch: Dota's bar is one strip of them).
 const SEAT: (f32, f32) = (68.5, 36.0);
+/// The player-colour strip along the top of a place (`#PlayerColor`, 4 pixels of Dota's) that stands
+/// over the portrait's room, and the slant of the dark edge between two places (`rotateZ(8deg)`
+/// of Dota's pips; the places' mask leans so much).
+const SEAT_STRIP: f32 = 4.0 * ui::DOTA;
+const SEAT_SLANT_DEGREES: f32 = 7.5;
+/// The level badge on a portrait of the top bar, and the gold of a level (`#E7D291`).
+const SEAT_BADGE: f32 = 20.0;
+const LEVEL_GOLD: Color = Color::srgb(0.906, 0.82, 0.569);
 /// The health under a seat's portrait.
 const SEAT_HEALTH: f32 = 5.0;
 /// The clock's figures, a side's score, and the sun or the moon over the time.
@@ -108,6 +122,20 @@ const CLOCK: (f32, f32) = (235.5, 47.5);
 const SLOT_EDGE: Color = Color::srgb(0.2, 0.22, 0.27);
 /// The gold of the name over the portrait.
 const NAME_GOLD: Color = Color::srgb(0.93, 0.74, 0.4);
+
+/// The row of the abilities, whose gaps follow how many there are.
+#[derive(Component)]
+struct AbilityRow;
+
+/// An ability's cell of the row (the box, its pips and its level-up plate), by slot: it takes room
+/// only while the hero has that ability.
+#[derive(Component, Clone, Copy)]
+struct AbilityCell(u8);
+
+/// The room at the right of the abilities that Dota keeps for the Aghanim's Scepter and Shard: their
+/// marks, dim while the hero has neither.
+#[derive(Component)]
+struct AghsMark;
 
 /// An ability box of the bottom panel, by slot.
 #[derive(Component, Clone, Copy)]
@@ -147,17 +175,43 @@ pub(crate) fn seats_shown(columns: &Query<(&SeatColumn, &Node)>) -> (u8, u8) {
     (count(Team::Radiant), count(Team::Dire))
 }
 
-/// A place of the top bar, by place: what holds the room of a seat nobody holds.
-#[derive(Component, Clone, Copy)]
-struct SeatPlace(Place);
+/// The body of a place, held or not (`.TopBarHeroImage`'s gradient): its portrait covers it, an empty
+/// place shows it as a dark box.
+fn place_body() -> BackgroundGradient {
+    let stop = |hex: u32, at: f32| {
+        let [_, red, green, blue] = hex.to_be_bytes();
+        ColorStop::new(Color::srgb_u8(red, green, blue), Val::Percent(at))
+    };
+    BackgroundGradient::from(LinearGradient::to_bottom(vec![
+        stop(0x333333, 0.0),
+        stop(0x444444, 20.0),
+        stop(0x333333, 50.0),
+        stop(0x111111, 100.0),
+    ]))
+}
 
-/// The dark of a place nobody holds.
-const EMPTY_PLACE: Color = Color::srgba(0.04, 0.045, 0.05, 0.75);
+/// The dark that edges a place at its top and its foot over its portrait (`#PlayerColorShadow`).
+fn place_shadow() -> BackgroundGradient {
+    let stop = |color: Color, at: f32| ColorStop::new(color, Val::Percent(at));
+    let black = |alpha: f32| Color::srgba(0.0, 0.0, 0.0, alpha);
+    BackgroundGradient::from(LinearGradient::to_bottom(vec![
+        stop(black(1.0), 0.0),
+        stop(black(0.667), 3.0),
+        stop(black(0.0), 10.0),
+        stop(black(0.0), 91.0),
+        stop(black(0.4), 95.0),
+        stop(black(0.667), 100.0),
+    ]))
+}
 
 /// A seat's portrait in the top bar, by place.
 #[derive(Component, Clone, Copy)]
 #[require(bevy::picking::hover::DirectlyHovered)]
 pub struct SeatBox(pub Place);
+
+/// The ring of a seat's level badge, filled with the hero's experience, by place.
+#[derive(Component, Clone, Copy)]
+struct SeatRing(Place);
 
 /// Dota's player-colour strip along the top of a seat's portrait
 /// (`#PlayerColor`, 4 pixels), by place.
@@ -206,6 +260,9 @@ pub(crate) enum Part {
 /// The parent box of a part, to find a part's slot.
 #[derive(Component, Clone, Copy)]
 pub(crate) struct PartOf(pub(crate) Entity);
+
+/// The plate the Glyph and the Scan stand on, its width in Dota's pixels.
+const GLYPH_PLATE: f32 = 74.0;
 
 /// The frame rate at the top right, and on a live link the ping and the time orders take to be
 /// received.
@@ -390,6 +447,7 @@ pub fn plugin(app: &mut App) {
                 xp,
                 level_ups,
                 innate,
+                ability_row,
             )
                 .run_if(crate::select::match_or_tactical),
         )
@@ -418,7 +476,7 @@ fn fallen(p: Option<&PlayerView>) -> bool {
 /// The bottom row is a grid of three columns: the docks take their own
 /// width and share the rest equally, so the hero panel between them is
 /// centred while the window has room and shifts, never overlaps, when not.
-fn spawn_docks(mut commands: Commands) {
+fn spawn_docks(mut commands: Commands, manifest: Res<Manifest>, server: Res<AssetServer>) {
     let root = commands.spawn((HudRoot, ui::fill(), Pickable::IGNORE)).id();
     let row = commands
         .spawn((
@@ -485,14 +543,19 @@ fn spawn_docks(mut commands: Commands) {
     let minimap = commands
         .spawn((Node::default(), Pickable::IGNORE, ChildOf(left)))
         .id();
+    // The plate of the Glyph and the Scan, against the minimap's right edge: Dota's
+    // `#GlyphScanContainer`, 74 of its pixels wide and as high as the minimap, its art with two round
+    // wells for the buttons, which stand in it at their own places.
     let minimap_buttons = commands
         .spawn((
+            Name::new("hud glyph plate"),
             Node {
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::FlexEnd,
+                width: ui::dota(GLYPH_PLATE),
                 ..default()
             },
-            Pickable::IGNORE,
+            ui::art(&manifest, &server, "hud.glyph_scan_bg"),
+            Hovered::default(),
+            Blocker,
             ChildOf(left),
         ))
         .id();
@@ -694,7 +757,6 @@ fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
             Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: px(POOLS_GAP),
-                width: px(COLUMN_WIDTH),
                 margin: UiRect::left(px(COLUMN_LEFT)).with_bottom(px(PANEL_FOOT)),
                 ..default()
             },
@@ -721,6 +783,7 @@ fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
     let row = kit
         .commands
         .spawn((
+            AbilityRow,
             Node {
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::FlexStart,
@@ -735,7 +798,80 @@ fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
     for slot in 0..6u8 {
         spawn_ability_cell(kit, row, slot);
     }
+    spawn_aghs_mark(kit, row);
     spawn_pools(kit, column);
+}
+
+/// The Aghanim's marks after the last ability: the Scepter's over the Shard's, in the height of an
+/// ability's box and its pips.
+fn spawn_aghs_mark(kit: &mut Spawner, row: Entity) {
+    let mark = kit
+        .commands
+        .spawn((
+            AghsMark,
+            Name::new("hud aghs"),
+            Node {
+                width: px(AGHS_REACH - GAP),
+                height: px(ABILITY + PIPS_GAP + PIPS),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(row),
+        ))
+        .id();
+    for (logical, share) in [("hud.aghs_scepter", 65.0), ("hud.aghs_shard", 35.0)] {
+        kit.commands.spawn((
+            Node {
+                height: percent(share),
+                ..default()
+            },
+            ui::art(kit.manifest, kit.server, logical),
+            Pickable::IGNORE,
+            ChildOf(mark),
+        ));
+    }
+}
+
+/// The ability row as the hero's abilities make it: only the cells of abilities it has take room, and
+/// the boxes stand a pitch apart that depends on how many there are, as Dota's panels do.
+fn ability_row(
+    session: NonSend<Session>,
+    mut row: Single<&mut Node, With<AbilityRow>>,
+    mut cells: Query<(&AbilityCell, &mut Node), Without<AbilityRow>>,
+    mut aghs: Single<&mut Node, (With<AghsMark>, Without<AbilityRow>, Without<AbilityCell>)>,
+) {
+    let core = &session.0;
+    let (_, unit, kit) = subject(core);
+    // Before the hero's abilities are known the row has Dota's usual four.
+    let count = match subject_abilities(unit, kit).len() {
+        0 => 4,
+        count => count.min(6),
+    };
+    let pitch = if count <= 4 {
+        ABILITY_PITCH_FEW
+    } else {
+        ABILITY_PITCH_MANY
+    };
+    let gap = px(pitch - ABILITY);
+    if row.column_gap != gap {
+        row.column_gap = gap;
+    }
+    let reach = px(AGHS_REACH - (pitch - ABILITY));
+    if aghs.width != reach {
+        aghs.width = reach;
+    }
+    for (AbilityCell(slot), mut node) in &mut cells {
+        let display = if usize::from(*slot) < count {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
+    }
 }
 
 /// The innate ability's round mark between the talent tree and the
@@ -809,6 +945,7 @@ fn spawn_ability_cell(kit: &mut Spawner, row: Entity, slot: u8) {
     let cell = kit
         .commands
         .spawn((
+            AbilityCell(slot),
             Node {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
@@ -1384,17 +1521,17 @@ fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
 fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: Place) {
     let commands = &mut *kit.commands;
     // The place keeps its room in the bar while nobody holds it, as Dota's bar is five places a
-    // side whoever plays, and shows dark then.
+    // side whoever plays, and shows its body then: a dark box with a light edge along its top.
     let place = commands
         .spawn((
-            SeatPlace(seat),
             Name::new(format!("hud seat {:?} {}", seat.team, seat.n)),
             Node {
                 width: px(SEAT.0),
-                height: px(SEAT.1 + 2.0 + SEAT_HEALTH),
+                height: px(SEAT_STRIP + SEAT.1 + 2.0 + SEAT_HEALTH),
+                padding: UiRect::top(px(SEAT_STRIP)),
                 ..default()
             },
-            BackgroundColor(EMPTY_PLACE),
+            place_body(),
             Pickable::IGNORE,
             ChildOf(parent),
         ))
@@ -1429,7 +1566,22 @@ fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: Place) {
         ))
         .id();
     spawn_seat_death(kit, card, seat);
+    spawn_seat_level(kit, card, seat);
     let commands = &mut *kit.commands;
+    spawn_seat_health(commands, column, seat);
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(SEAT_STRIP),
+            left: px(0),
+            right: px(0),
+            bottom: px(0),
+            ..default()
+        },
+        place_shadow(),
+        Pickable::IGNORE,
+        ChildOf(place),
+    ));
     commands.spawn((
         SeatColour(seat),
         Node {
@@ -1437,26 +1589,84 @@ fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: Place) {
             top: px(0),
             left: px(0),
             right: px(0),
-            height: px(4),
+            height: px(SEAT_STRIP),
             ..default()
         },
-        BackgroundColor(Color::NONE),
+        ui::art(kit.manifest, kit.server, "hud.top_bar_vignette"),
         Pickable::IGNORE,
-        ChildOf(card),
+        ChildOf(place),
     ));
+    // The dark edge between two places, leaning as Dota's places do: Radiant's lean one way and
+    // Dire's the other.
+    let lean = match seat.team {
+        Team::Radiant => SEAT_SLANT_DEGREES,
+        _ => -SEAT_SLANT_DEGREES,
+    };
     commands.spawn((
-        Readout::SeatLevel(seat),
-        ui::text("", &kit.fonts.bold, 15.0, ui::GOLDEN),
-        ui::shadow(),
+        // Overhangs on purpose: the edge stands on the boundary of two places.
+        ui::Overhangs,
         Node {
             position_type: PositionType::Absolute,
-            right: px(3),
-            bottom: px(1),
+            top: px(0),
+            right: px(-1.5),
+            width: px(3),
+            height: percent(100),
             ..default()
         },
-        ChildOf(card),
+        UiTransform::from_rotation(Rot2::degrees(lean)),
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
+        Pickable::IGNORE,
+        ChildOf(place),
     ));
-    spawn_seat_health(commands, column, seat);
+}
+
+/// A seat's level in a small round badge at the portrait's foot: Dota's ring of the experience's
+/// progress in the scoreboard's measures (`.Reborn DOTAScoreboardPlayer #CircularXPProgress`), a
+/// black disc inside it and the level in the gold of the figure.
+fn spawn_seat_level(kit: &mut Spawner, card: Entity, seat: Place) {
+    let ring = kit
+        .commands
+        .spawn((
+            SeatRing(seat),
+            Name::new(format!("hud seat level {:?} {}", seat.team, seat.n)),
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(2),
+                bottom: px(1),
+                width: px(SEAT_BADGE),
+                height: px(SEAT_BADGE),
+                padding: UiRect::all(px(1.5)),
+                border_radius: BorderRadius::MAX,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            xp_ring(0.0),
+            Pickable::IGNORE,
+            ChildOf(card),
+        ))
+        .id();
+    let disc = kit
+        .commands
+        .spawn((
+            Node {
+                width: percent(100),
+                height: percent(100),
+                border_radius: BorderRadius::MAX,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::BLACK),
+            ChildOf(ring),
+        ))
+        .id();
+    kit.commands.spawn((
+        Readout::SeatLevel(seat),
+        ui::text("", &kit.fonts.bold, SEAT_BADGE * 0.55, LEVEL_GOLD),
+        ui::shadow(),
+        ChildOf(disc),
+    ));
 }
 
 /// What covers a seat's portrait while its hero is dead: the portrait
@@ -2069,12 +2279,20 @@ fn level_up_press(
     }
 }
 
-/// Shows the innate's mark for a hero that has an innate ability.
-fn innate(session: NonSend<Session>, mut mark: Single<&mut Visibility, With<InnateButton>>) {
+/// Shows the innate's mark, and gives it room, for a hero that has an innate ability.
+fn innate(
+    session: NonSend<Session>,
+    mut mark: Single<(&mut Visibility, &mut Node), With<InnateButton>>,
+) {
     let has = subject_hero(&session.0)
         .and_then(bota_core::hero_def)
         .is_some_and(|h| h.innate.is_some());
-    mark.set_if_neq(ui::visible(has));
+    mark.0.set_if_neq(ui::visible(has));
+    // A hero without an innate leaves no room for the mark either.
+    let display = if has { Display::Flex } else { Display::None };
+    if mark.1.display != display {
+        mark.1.display = display;
+    }
 }
 
 /// The face of an ability slot.
@@ -2497,23 +2715,15 @@ fn seats(
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     colours: Res<crate::player_colour::PlayerColours>,
-    mut cards: Query<(&SeatBox, &mut ImageNode, &mut BorderColor)>,
-    mut strips: Query<(&SeatColour, &mut BackgroundColor)>,
+    mut cards: Query<(&SeatBox, &mut ImageNode, &mut BorderColor), Without<SeatColour>>,
+    mut strips: Query<(&SeatColour, &mut ImageNode), Without<SeatBox>>,
+    mut rings: Query<(&SeatRing, &mut BackgroundGradient)>,
     mut columns: Query<(&SeatColumn, &mut Node)>,
-    mut places: Query<(&SeatPlace, &mut BackgroundColor), Without<SeatColour>>,
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
         return;
     };
-    for (SeatPlace(place), mut ground) in &mut places {
-        let held = seat_of(view, *place).is_some();
-        ground.set_if_neq(BackgroundColor(if held {
-            Color::NONE
-        } else {
-            EMPTY_PLACE
-        }));
-    }
     for (SeatColumn(place), mut node) in &mut columns {
         let display = if seat_of(view, *place).is_some() {
             Display::Flex
@@ -2524,9 +2734,17 @@ fn seats(
             node.display = display;
         }
     }
+    // The strip's art is white: a place nobody holds keeps it so, as Dota's, and a held one wears
+    // its player's colour.
     for (seat, mut strip) in &mut strips {
-        let colour = seat_of(view, seat.0).map_or(Color::NONE, |p| colours.of(view, p.slot));
-        strip.set_if_neq(BackgroundColor(colour));
+        let colour = seat_of(view, seat.0).map_or(Color::WHITE, |p| colours.of(view, p.slot));
+        if strip.color != colour {
+            strip.color = colour;
+        }
+    }
+    for (SeatRing(place), mut ring) in &mut rings {
+        let share = seat_of(view, *place).map_or(0.0, |p| xp_share(p.level, p.xp));
+        ring.set_if_neq(xp_ring(share));
     }
     for (seat, mut image, mut border) in &mut cards {
         let Some(p) = seat_of(view, seat.0) else {

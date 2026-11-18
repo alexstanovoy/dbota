@@ -244,11 +244,12 @@ fn pick(
     attribute: Query<(Entity, &DirectlyHovered), With<crate::talents::AttributeRow>>,
     innate: Query<(Entity, &DirectlyHovered), With<crate::hud::InnateButton>>,
     layout: Query<(&ComputedNode, &UiGlobalTransform)>,
-    (mut shown, mut anchor, settings, scan): (
+    (mut shown, mut anchor, settings, scan, glyph): (
         ResMut<Shown>,
         ResMut<ShownAnchor>,
         Res<crate::config::Settings>,
         Query<(Entity, &DirectlyHovered), With<crate::scan::ScanButton>>,
+        Query<(Entity, &DirectlyHovered), With<crate::glyph::GlyphButton>>,
     ),
 ) {
     let core = &session.0;
@@ -277,6 +278,9 @@ fn pick(
     } else if let Some((entity, _)) = scan.iter().find(|(_, i)| i.get()) {
         over = Some(entity);
         crate::scan::tip(&texts, core, &settings).map(note_tip)
+    } else if let Some((entity, _)) = glyph.iter().find(|(_, i)| i.get()) {
+        over = Some(entity);
+        crate::glyph::tip(&texts, core).map(note_tip)
     } else if let Some((entity, _)) = innate.iter().find(|(_, i)| i.get()) {
         over = Some(entity);
         innate_tip(&look, core)

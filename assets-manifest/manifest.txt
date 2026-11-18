@@ -915,6 +915,21 @@ texture hud.scan_off panorama/images/hud/reborn/icon_scan_off_psd.vtex_c hud/ico
 # The top bar's mark over a dead hero's portrait; the buff and debuff ring.
 texture hud.top_bar_dead panorama/images/hud/reborn/top_bar_dead_overlay_png.vtex_c hud/top_bar_dead_overlay_png.png
 texture hud.buff_outline panorama/images/hud/reborn/buff_outline_psd.vtex_c hud/buff_outline_psd.png
+# The top bar's places and clock, the cells of the inventory, the Aghanim's marks beside the abilities
+# and the plate the Glyph and the Scan stand on (Dota's dota_hud_top_bar, dota_hud_inventory,
+# dota_hud_aghs_status_display and hud_reborn layouts).
+texture hud.top_bar_vignette panorama/images/hud/reborn/topbar_playerslot_vignette_psd.vtex_c hud/topbar_playerslot_vignette_psd.png
+texture hud.top_bar_team_bg panorama/images/hud/reborn/top_bar_team_bg_psd.vtex_c hud/top_bar_team_bg_psd.png
+texture hud.timer_bg panorama/images/hud/reborn/bg_timer_psd.vtex_c hud/bg_timer_psd.png
+texture hud.item_well panorama/images/hud/reborn/inventory_item_well_psd.vtex_c hud/inventory_item_well_psd.png
+texture hud.item_bevel panorama/images/hud/reborn/inventory_item_bevel_psd.vtex_c hud/inventory_item_bevel_psd.png
+texture hud.inventory_bg panorama/images/hud/reborn/inventory_bg_psd.vtex_c hud/inventory_bg_psd.png
+texture hud.inventory_bg_bg panorama/images/hud/reborn/inventory_bg_bg_psd.vtex_c hud/inventory_bg_bg_psd.png
+texture hud.aghs_scepter panorama/images/hud/reborn/aghsstatus_scepter_psd.vtex_c hud/aghsstatus_scepter_psd.png
+texture hud.aghs_scepter_on panorama/images/hud/reborn/aghsstatus_scepter_on_psd.vtex_c hud/aghsstatus_scepter_on_psd.png
+texture hud.aghs_shard panorama/images/hud/reborn/aghsstatus_shard_psd.vtex_c hud/aghsstatus_shard_psd.png
+texture hud.aghs_shard_on panorama/images/hud/reborn/aghsstatus_shard_on_psd.vtex_c hud/aghsstatus_shard_on_psd.png
+texture hud.glyph_scan_bg panorama/images/hud/reborn/glyph_scan_bg_psd.vtex_c hud/glyph_scan_bg_psd.png
 # Tooltip art: the bars over an item's active, use and passive sections, and the cost icons.
 texture tip.active panorama/images/hud/item_tooltip_active_psd.vtex_c hud/item_tooltip_active_psd.png
 texture tip.use panorama/images/hud/item_tooltip_use_psd.vtex_c hud/item_tooltip_use_psd.png
@@ -963,6 +978,9 @@ label resource/localization/dota_english.txt DOTA_StatBranch_TooltipTitle
 label resource/localization/dota_english.txt DOTA_LevelUpAttributes
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_attribute_bonus
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_attribute_bonus_Description
+label resource/localization/dota_english.txt DOTA_Glossary_Map_Structures_Glyph
+label resource/localization/dota_english.txt DOTA_Glossary_Map_Structures_Glyph_Desc
+label resource/localization/dota_english.txt DOTA_HUD_GlyphCooldown
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_radar
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_radar_Description
 label resource/localization/dota_english.txt dota_hud_error_cant_radar

@@ -154,7 +154,7 @@ pub struct Checks<'w, 's> {
             &'static Visibility,
         ),
     >,
-    strips: Query<'w, 's, (&'static crate::hud::SeatColour, &'static BackgroundColor)>,
+    strips: Query<'w, 's, (&'static crate::hud::SeatColour, &'static ImageNode)>,
     laid: Query<'w, 's, (&'static Node, &'static Visibility)>,
 }
 
@@ -595,7 +595,11 @@ fn player_colours(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     }
     for (strip, fill) in &c.strips {
         if let Some(p) = crate::hud::seat_of(view, strip.0) {
-            told.push(("top bar", p.slot.0, fill.0 == c.colours.of(view, p.slot)));
+            told.push((
+                "top bar",
+                p.slot.0,
+                fill.color == c.colours.of(view, p.slot),
+            ));
         }
     }
     report(

@@ -395,7 +395,7 @@ fn expected_tooltip(client: &mut Client, id: u16, max_level: u8) -> crate::tip_c
 }
 
 /// The words of the tooltip: its texts and the spans of them, which hold the figures.
-fn tooltip_words(client: &mut Client) -> Vec<String> {
+pub(super) fn tooltip_words(client: &mut Client) -> Vec<String> {
     let world = client.world_mut();
     let spans: Vec<Entity> = world
         .query_filtered::<Entity, Or<(With<Text>, With<TextSpan>)>>()

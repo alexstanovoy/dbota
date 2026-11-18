@@ -44,6 +44,7 @@ mod frog_shield;
 mod fx;
 mod game_audio_end;
 mod gathering;
+mod glyph_scan;
 #[cfg(not(target_arch = "wasm32"))]
 mod ground_effect_pixels;
 mod ground_items;
