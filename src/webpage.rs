@@ -1,6 +1,6 @@
 //! What a browser build tells the page around it (`globalThis.dbota_page`, web/main.js): a
-//! panic, an allocation the browser refused, the first frame, and whether the game keeps the
-//! cursor. A failure then shows on the page as a message saying what to do, not as a canvas that
+//! panic, a start that cannot go on, an allocation the browser refused, the first frame, and
+//! whether the game keeps the cursor. A failure then shows on the page as a message saying what to do, not as a canvas that
 //! stays black; the console has the details as well.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -15,6 +15,8 @@ extern "C" {
     // client.
     #[wasm_bindgen(js_namespace = dbota_page, js_name = panicked, catch)]
     fn page_panicked(report: &str) -> Result<(), JsValue>;
+    #[wasm_bindgen(js_namespace = dbota_page, js_name = failed, catch)]
+    fn page_failed(title: &str, text: &str, detail: &str) -> Result<(), JsValue>;
     #[wasm_bindgen(js_namespace = dbota_page, js_name = refused, catch)]
     fn page_refused(requested: f64, heap: f64) -> Result<(), JsValue>;
     #[wasm_bindgen(js_namespace = dbota_page, js_name = running, catch)]
@@ -35,6 +37,12 @@ pub fn report_panics() {
         console(info);
         let _ = page_panicked(&info.to_string());
     }));
+}
+
+/// A start that cannot go on, shown on the page's failure screen: what, what to do, the details.
+pub fn failed(title: &str, text: &str, detail: &str) {
+    bevy::log::error!("{title}: {detail}");
+    let _ = page_failed(title, text, detail);
 }
 
 /// The first update runs once the renderer is made (Bevy waits for the browser's GPU before

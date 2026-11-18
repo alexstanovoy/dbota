@@ -1,9 +1,15 @@
-// The page: asks for the player's Dota 2 folder, has the worker build the private asset cache
-// from it, then starts the
-// client (dbota.js, the game compiled to wasm).
+// The loader: what has to happen before the game (dbota.js, the client compiled to wasm) can
+// start, and what is left to say once it has stopped. Everything a player meets in between, the
+// first run included (what dbota is, the import of their Dota 2 files, sign-in), is the client's.
+// What stays here, and why it cannot be the client's:
+// - which features the browser lacks (the client cannot even start without them), said on the
+//   page's own screen with what to do instead;
+// - which client to load: Bevy fixes its graphics API when it is compiled, so there is one client
+//   for WebGPU and one for WebGL 2, and the choice is made before either is downloaded;
+// - the download, with its progress, its limits and a busy server's wait (busy.js);
+// - the end of a client that stopped (a panic, no more memory): it can no longer draw, the page
+//   says what happened.
 import "./busy.js";
-import * as cache from "./cache.js";
-import * as grant from "./grant.js";
 import * as replays from "./replays.js";
 import { NATIVE_CLIENT } from "./native.js";
 import "./keys.js";
@@ -11,20 +17,10 @@ import "./voice.js";
 import * as pointer from "./pointer.js";
 
 const $ = (id) => document.getElementById(id);
-const show = (...ids) => {
-  $("booting").hidden = true;
-  for (const id of ["grant", "ready", "progress", "failed", "stale"]) $(id).hidden = !ids.includes(id);
-  // The native client's downloads, once a release names where they are (web/native.js).
-  $("native").hidden = !NATIVE_CLIENT || !ids.some((id) => ["grant", "ready", "stale"].includes(id));
-  $("gate").hidden = false;
-};
-const say = (text) => ($("status").textContent = text);
-// A busy server (busy.js): said where the page shows what it is doing now.
 const busy = globalThis.dbota_busy;
+// A busy server (busy.js): said where the page shows what it is doing now.
 const sayBusy = (wait) => {
-  const line = busy.line(wait);
-  for (const id of ["booting", "starting"]) if (!$(id).hidden) return ($(id).textContent = line);
-  say(line);
+  for (const id of ["booting", "starting"]) if (!$(id).hidden) return ($(id).textContent = busy.line(wait));
 };
 // The longest a busy server may make a stage wait, on top of the stage's own limit.
 const BUSY_MS = busy.MAX_S * 1000;
@@ -32,9 +28,8 @@ const mib = (n) => (n / 2 ** 20).toFixed(0) + " MB";
 
 // Every wait on the browser has a limit, so the page never waits for ever: a stage that does not
 // answer in `ms` ends as an error that names it, and the caller shows what the player can do.
-const STORAGE_MS = 20000;
 const STALL_MS = 30000;
-function within(stage, promise, ms = STORAGE_MS) {
+function within(stage, promise, ms) {
   let timer;
   const late = new Promise((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${stage} did not answer in ${ms / 1000} seconds`)), ms);
@@ -42,13 +37,51 @@ function within(stage, promise, ms = STORAGE_MS) {
   return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
-// ?cache=http plays what a local server holds under /cache (a developer's own export); ?gpu=webgl2 takes the WebGL2 client even where
-// WebGPU works.
+// ?gpu=webgl2 takes the WebGL2 client even where WebGPU works; ?cache=http plays on a copy of the
+// assets served beside the page (a developer's own, see README.md), which the client reads itself.
 const query = new URLSearchParams(location.search);
+const served = query.get("cache") === "http";
 
-// Which client the browser can draw with. Bevy fixes its render paths when it is compiled, so
-// the page carries one client per graphics API: WebGPU where the browser gives an adapter, else
-// WebGL2. `tried` says why neither, for the message.
+// The native client's downloads, once a release names where they are (web/native.js).
+function showNative() {
+  if (!NATIVE_CLIENT) return;
+  for (const link of $("native").querySelectorAll("a[data-os]")) link.href = NATIVE_CLIENT[link.dataset.os];
+  $("native").hidden = false;
+}
+
+// The end of a run that went wrong: the page says what happened and what to do, the console has
+// the details. Only the first is shown: what follows a panic is its echo (boot.js).
+const fail = (title, text, detail) => {
+  globalThis.dbota_boot.fail(title, text, detail);
+  showNative();
+};
+
+// What the browser lacks of what the client needs before it can start: a copy of the player's
+// Dota 2 files lives in the page's private storage (the Origin Private File System), is made from
+// a folder the player picks, by a worker. A served copy needs none of that.
+function lacking() {
+  if (served) return [];
+  const lacks = [];
+  if (!(navigator.storage && navigator.storage.getDirectory)) {
+    lacks.push("Private storage for its copy of your Dota 2 files (the Origin Private File System).");
+  }
+  if (typeof showDirectoryPicker !== "function" && !("webkitdirectory" in HTMLInputElement.prototype)) {
+    lacks.push("A way to choose a folder of your computer (a directory picker or a folder upload).");
+  }
+  if (typeof Worker !== "function") lacks.push("Web workers, which make the copy while the game keeps drawing.");
+  return lacks;
+}
+
+function unsupported(lacks) {
+  console.warn("dbota: this browser lacks " + lacks.join(" "));
+  $("lacks").replaceChildren(...lacks.map((text) => Object.assign(document.createElement("li"), { textContent: text })));
+  $("unsupported").hidden = false;
+  $("gate").hidden = false;
+  showNative();
+}
+
+// Which client the browser can draw with: WebGPU where the browser gives an adapter, else WebGL2.
+// `tried` says why neither, for the message.
 async function graphics() {
   const tried = [];
   if (query.get("gpu") === "webgl2") {
@@ -74,10 +107,6 @@ async function graphics() {
   tried.push("WebGL 2 is unavailable" + (why ? ` (the browser says: ${why})` : ""));
   return { api: null, tried };
 }
-
-// The end of a run that went wrong: the page says what happened and what to do, the console
-// has the details. Only the first is shown: what follows a panic is its echo (boot.js).
-const fail = (title, text, detail) => globalThis.dbota_boot.fail(title, text, detail);
 
 const NO_GPU =
   "In Firefox or LibreWolf, open about:config, set dom.webgpu.enabled to true and reload this page " +
@@ -122,6 +151,9 @@ globalThis.dbota_page = {
         "below (also in the browser's console) help to fix it.",
       report
     );
+  },
+  failed(title, text, detail) {
+    fail(title, text || "Reloading the page usually gets you back; the details below say why it stopped.", detail);
   },
   refused(requested, heap) {
     refusal = { requested, heap };
@@ -173,7 +205,7 @@ function downloaded(url, onBytes, onBusy) {
     seen = Date.now() + wait * 1000;
     onBusy(wait);
   };
-  const response = busy
+  return busy
     .fetch(url, { signal: abort.signal }, waited)
     .then((res) => {
       if (!res.ok) throw new Error(`${url} answered ${res.status}`);
@@ -194,14 +226,17 @@ function downloaded(url, onBytes, onBusy) {
       clearInterval(watch);
       throw stalled ? new Error(`${url} stopped arriving (nothing for ${STALL_MS / 1000} seconds)`) : e;
     });
-  return response;
 }
 
 const sayStarting = (text) => ($("starting").textContent = text);
 
-async function startGame() {
+async function start() {
+  globalThis.dbota_boot.started();
   $("booting").hidden = true;
-  $("gate").hidden = true;
+  const lacks = lacking();
+  const gpu = await graphics();
+  if (!gpu.api) lacks.push("Graphics the page may use: WebGPU or WebGL 2. " + NO_GPU);
+  if (lacks.length) return unsupported(lacks);
   $("starting").hidden = false;
   sayStarting("Starting the game...");
   const slow = setTimeout(() => {
@@ -209,13 +244,7 @@ async function startGame() {
   }, 60000);
   // The client keeps the player's replays in this browser (replays.js); a storage that is
   // missing or does not answer only means it keeps none.
-  await within("The replay storage", replays.publish()).catch((e) => console.warn("dbota: no replay storage:", e));
-  sayStarting("Checking the graphics...");
-  const gpu = await graphics();
-  if (!gpu.api) {
-    clearTimeout(slow);
-    return noGraphics(gpu.tried.join("; "));
-  }
+  await within("The replay storage", replays.publish(), 20000).catch((e) => console.warn("dbota: no replay storage:", e));
   drawing = gpu.api;
   console.info("dbota: drawing with " + gpu.api);
   const wasm = gpu.api === "webgpu" ? "dbota_bg.wasm" : "dbota_webgl2_bg.wasm";
@@ -230,197 +259,23 @@ async function startGame() {
     await init({ module_or_path });
     sayStarting("Starting the game...");
   } catch (e) {
-    // Bevy leaves its event loop by throwing; anything else is a real failure.
-    if (!String(e).includes("control flow")) {
-      clearTimeout(slow);
-      if (e instanceof WebAssembly.RuntimeError) return stopped(e);
-      fail(
-        "The game could not be downloaded or started",
-        "The game's files did not arrive or the browser refused them. Check the connection and reload the page; if it keeps " +
-          "happening, try another browser. The details below (also in the console) say which file.",
-        String((e && e.stack) || e)
-      );
-    }
+    // winit may leave its event loop by throwing: no failure.
+    if (String(e).includes("control flow")) return;
+    clearTimeout(slow);
+    if (e instanceof WebAssembly.RuntimeError) return stopped(e);
+    fail(
+      "The game could not be downloaded or started",
+      "The game's files did not arrive or the browser refused them. Check the connection and reload the page; if it keeps " +
+        "happening, try another browser. The details below (also in the console) say which file.",
+      String((e && e.stack) || e)
+    );
   }
 }
 
-// The worker's own files: one of them turned away by a busy server leaves the worker unmade.
-const WORKER_FILES = ["./import_worker.js", "./busy.js", "./cache.js", "./import/dbota_import.js"];
-
-// Runs the import worker on `message`; resolves with its last message ("done", "checked" or
-// "error"), handing the progress ones to `onMessage`. A worker that could not be made because
-// the server was busy is made again once, after the wait the server asked for.
-function runWorker(message, onMessage, again = true) {
-  const worker = new Worker("./import_worker.js", { type: "module" });
-  return new Promise((resolve) => {
-    let heard = false;
-    worker.onmessage = ({ data }) => {
-      heard = true;
-      if (data.type === "busy") return sayBusy(data.seconds);
-      onMessage?.(data);
-      if (data.type !== "progress") {
-        worker.terminate();
-        resolve(data);
-      }
-    };
-    worker.onerror = async (e) => {
-      worker.terminate();
-      const failed = { type: "error", message: e.message || "the import worker failed" };
-      const wait = again && !heard ? await busy.busyFor(WORKER_FILES) : null;
-      if (wait === null) return resolve(failed);
-      sayBusy(wait);
-      await busy.sleep(wait);
-      resolve(runWorker(message, onMessage, false));
-    };
-    $("cancel").onclick = () => worker.postMessage({ op: "stop" });
-    worker.postMessage(message);
-  });
-}
-
-const modifiedOf = (files) => files.get("pak01_dir.vpk")?.lastModified ?? 0;
-
-// The progress screen and what follows a worker's copy: `stage` heads the count, `failed`
-// starts the line saying why it did not work out.
-async function copyWith(message, stage, failed) {
-  navigator.storage.persist?.().catch(() => {});
-  say("");
-  show("progress");
-  const result = await runWorker(message, (m) => {
-    if (m.type !== "progress") return;
-    $("bar").value = m.total ? m.done / m.total : 0;
-    $("stage").textContent = `${stage}: ${m.done} of ${m.total}`;
-    $("detail").textContent = m.bytes ? `${m.item} (${mib(m.bytes)} written)` : m.item;
-  });
-  if (result.type === "error") {
-    say(failed + result.message);
-    show("grant");
-    return null;
-  }
-  if (result.stopped) {
-    say("Import cancelled.");
-    show("grant");
-    return null;
-  }
-  return result;
-}
-
-async function importFrom(files) {
-  if (!files.has("pak01_dir.vpk")) {
-    say("That folder has no pak01_dir.vpk. Pick the dota 2 beta folder (game/dota inside it holds the packages).");
-    return show("grant");
-  }
-  const result = await copyWith({ op: "import", files: [...files], modified: modifiedOf(files) }, "Making your private copy", "The import failed: ");
-  if (!result) return;
-  const list = $("failures");
-  list.hidden = !result.failures.length;
-  list.replaceChildren(...result.failures.slice(0, 30).map((f) => Object.assign(document.createElement("li"), { textContent: f })));
-  await offerReady(
-    `Imported ${result.files} files. ${result.failures.length ? result.failures.length + " could not be converted and are missing." : ""}`
-  );
-}
-
-// The cache is there: publish it to the client, then ask or start.
-async function offerReady(text) {
-  const state = await cache.readState();
-  if (!state) return show("grant");
-  await within("The browser's private storage", cache.publish(state));
-  $("readyText").textContent = text || `Your imported Dota assets are ready (${state.files.size} files).`;
-  show("ready");
-}
-
-async function pick() {
-  say("");
-  try {
-    const files = grant.canPick() ? await grant.pickFolder() : await grant.pickWithInput($("folder"));
-    if (files.size) return importFrom(files);
-    say("No Dota 2 packages found there. Pick the dota 2 beta folder.");
-  } catch (e) {
-    if (!e || e.name !== "AbortError") say("Could not read the folder: " + (e && e.message ? e.message : e));
-  }
-  show("grant");
-}
-
-// This build's asset fingerprint (the cache version, the importer's revision and the manifest's
-// hash): a copy's stamp starts with the fingerprint of the dbota that made it, as on the desktop.
-async function importerVersion() {
-  return (await cache.importer(sayBusy)).cache_version();
-}
-
-// A copy another dbota made is not played: the page holds at the question until it is made
-// again, in one click where the browser still holds the folder (asked again if need be, which
-// the click allows), else from the folder the player picks.
-function holdStale(stamp, version) {
-  console.info(`dbota: the imported copy is stamped ${stamp}, this build needs assets ${version}: import again`);
-  $("staleWhy").textContent = `They were imported by another dbota and may lack what this one draws (it needs assets ${version}).`;
-  $("reimport").onclick = async () => {
-    const handle = await grant.remembered({ ask: true }).catch(() => null);
-    const files = handle ? await grant.filesOf(handle).catch(() => new Map()) : new Map();
-    return files.has("pak01_dir.vpk") ? importFrom(files) : pick();
-  };
-  show("stale");
-}
-
-// A remembered folder the browser still lets us read: is the copy as new as the install?
-async function checkFresh() {
-  const handle = await grant.remembered().catch(() => null);
-  if (!handle) return;
-  const files = await grant.filesOf(handle).catch(() => new Map());
-  if (!files.has("pak01_dir.vpk")) return;
-  const result = await runWorker({ op: "check", files: [...files], modified: modifiedOf(files) });
-  if (result.type === "checked" && !result.fresh) {
-    say("Dota 2 has changed since the copy was made: delete the copy and import again.");
-  }
-}
-
-async function main() {
-  globalThis.dbota_boot.started();
-  $("play").onclick = startGame;
-  $("reload").onclick = () => location.reload();
-  $("otherApi").onclick = () => {
-    const url = new URL(location.href);
-    url.searchParams.set("gpu", "webgl2");
-    location.assign(url);
-  };
-  $("pick").onclick = pick;
-  if (NATIVE_CLIENT) {
-    for (const link of $("native").querySelectorAll("a[data-os]")) link.href = NATIVE_CLIENT[link.dataset.os];
-  }
-  $("remove").onclick = async () => {
-    await cache.remove();
-    await grant.forget().catch(() => {});
-    delete globalThis.dbota_cache;
-    say("The imported copy is deleted.");
-    show("grant");
-  };
-  if (query.get("cache") === "http") {
-    await within("The served cache", cache.publishServed(sayBusy), 2 * STORAGE_MS + BUSY_MS);
-    return startGame();
-  }
-  if (!(await cache.supported())) {
-    say("This browser has no private storage for the assets dbota draws from, so it cannot play here. Use a browser with the Origin Private File System (a current Chrome, Edge, Firefox or Safari).");
-    return show("grant");
-  }
-  let state;
-  let version;
-  try {
-    state = await within("The browser's private storage", cache.readState(sayBusy).catch(() => null), STORAGE_MS + BUSY_MS);
-    version = await within("The tool that reads your Dota files", importerVersion(), STALL_MS * 2 + 2 * BUSY_MS);
-  } catch (e) {
-    console.warn("dbota:", e);
-    say(`${e.message}. Importing your Dota files is not possible now: reload the page, or try another browser.`);
-    return show("grant");
-  }
-  $("version").textContent = `assets ${version}`;
-  if (state && !state.stamp.startsWith(version + "/")) return holdStale(state.stamp, version);
-  if (state) {
-    await offerReady();
-    checkFresh();
-  } else {
-    show("grant");
-  }
-}
-
-main().catch((e) => {
-  say("Something went wrong: " + e);
-  show("grant");
-});
+$("reload").onclick = () => location.reload();
+$("otherApi").onclick = () => {
+  const url = new URL(location.href);
+  url.searchParams.set("gpu", "webgl2");
+  location.assign(url);
+};
+start().catch((e) => fail("The page could not start the game", "Reload the page; the details below say why.", String(e)));

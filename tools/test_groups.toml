@@ -20,8 +20,8 @@ baselines = "tools/known_baselines.txt"
 
 # Tests the gate runs through its own steps, with the step.
 [[outside]]
-path = "web/test/test_cache_index.py"
-step = "browser (tools/browser_check.sh builds the page first)"
+path = "web/test/first_run.py"
+step = "browser (tools/browser_check.sh builds the pages first)"
 
 [[outside]]
 path = "web/test/test_voice_worker.py"
@@ -138,6 +138,7 @@ paths = [
     "src/webcache.rs",
     "src/cursor.rs",
     "src/firstrun.rs",
+    "src/firstrun/**",
     "src/desktop.rs",
     "src/demo.rs",
     "src/e2e/demo.rs",

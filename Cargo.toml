@@ -22,6 +22,7 @@ js-sys = { version = "0.3", default-features = false, features = ["std", "unsafe
 wasm-bindgen = { version = "0.2", default-features = false, features = ["std"] }
 web-sys = { version = "0.3", default-features = false, features = ["std"] }
 digest = { version = "0.11", default-features = false, features = ["mac"] }
+wasm-bindgen-futures = { version = "0.4", default-features = false, features = ["std"] }
 fontique = { version = "=0.11.0", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["default", "std", "sink"] }
 rand = { version = "0.10", default-features = false, features = ["default"] }
@@ -112,8 +113,36 @@ windows = { version = "0.62", default-features = false, features = [
 base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 js-sys.workspace = true
 wasm-bindgen.workspace = true
-wasm-bindgen-futures = "0.4"
-web-sys = { workspace = true, features = ["Document", "Element", "Location", "Response", "Storage", "Window", "XmlHttpRequest"] }
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "Blob",
+    "Document",
+    "Element",
+    "File",
+    "FileList",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemRemoveOptions",
+    "Headers",
+    "HtmlElement",
+    "HtmlInputElement",
+    "Location",
+    "MessageEvent",
+    "Navigator",
+    "Node",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "Response",
+    "Storage",
+    "StorageManager",
+    "UrlSearchParams",
+    "Window",
+    "Worker",
+    "WorkerOptions",
+    "WorkerType",
+    "XmlHttpRequest",
+    "console",
+] }
 bota_radovid = { path = "../bota/crates/bota_radovid", default-features = false, features = ["web"] }
 # The Web Audio output of the sound device (see `audio_output`).
 rodio = { version = "=0.22.2", default-features = false, features = ["playback", "hound", "mp3", "wasm-bindgen"] }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The browser checks of the merge gate: builds the web page in the variants the checks need and runs every check of
-# web/test/smoke.py in one Playwright run (headless Chromium, Firefox for the boot check).
+# web/test/smoke.py in one Playwright run (headless Chromium, Firefox for the boot check), and the first run's
+# (web/test/first_run.py: the import of a Dota 2 install in the client).
 #
 #   tools/browser_check.sh
 #
@@ -72,7 +73,6 @@ if [ -n "${DBOTA_GATE_WEB_PAGE:-}" ]; then
 else
     OUT=$pages/plain web/build.sh
 fi
-DBOTA_INDEX_PAGE="$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_cache_index.py -v
 DBOTA_INDEX_PAGE="$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_voice_worker.py -v
 APIS=webgl2 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --speech-check --face-trace" OUT=$pages/speech web/build.sh
 in_private_environment python3 web/test/smoke.py --only-wire --speech-page "$pages/speech"
@@ -87,11 +87,12 @@ DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings vide
 PROFILE=web DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/web web/build.sh
 
 "$here/tools/headless.sh" python3 web/test/idle.py "$pages/plain"
-in_private_environment python3 web/test/smoke.py --import-page "$pages/replay" --reference-cache "$DBOTA_ASSETS" --start-page "$pages/plain" \
-    --served-page "$pages/plain" --launch-page "$pages/plain" --sound-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
+in_private_environment python3 web/test/first_run.py --page "$pages/plain" --replay-page "$pages/replay" --reference-cache "$DBOTA_ASSETS"
+in_private_environment python3 web/test/smoke.py \
+    --launch-page "$pages/plain" --sound-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
     --fonts-page "$pages/plain" \
     --replay-page "$pages/replay" --scene-page "$pages/web" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
     --fullscreen-page "$pages/video" \
     --replays-page "$pages/plain" --server "$server" --radovid "$radovid_bin"
 # The real mouse: a headful Chromium on an X server (Xwayland) in a private compositor, moved through XTEST.
-DBOTA_HEADLESS_XWAYLAND=1 "$here/tools/headless.sh" python3 web/test/smoke.py --only-wire --cursor-input-page "$pages/replay"
+DBOTA_HEADLESS_XWAYLAND=1 "$here/tools/headless.sh" python3 web/test/smoke.py --cursor-input-page "$pages/replay"

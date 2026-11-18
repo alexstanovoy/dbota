@@ -12,19 +12,7 @@ use dbota_import::cache_dir::{
 use dbota_import::import::{Flow, IDS, MANIFEST, plan, plan_id, stamped_here};
 use heatel::locate::Install;
 
-/// What the cache at a path lacks for this build.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Need {
-    /// No finished import is there.
-    Import,
-    /// An import another build made is (its files may lack what the client now asks for), or
-    /// one of this build's stamp whose files are of a layout older than this build reads
-    /// ([`layouts_current`](dbota_import::import::layouts_current)).
-    Reimport,
-    /// The cache is this build's, and the player asked to make it again (the settings' RE-IMPORT
-    /// GAME FILES): until a new one is whole, the one in place stays.
-    Requested,
-}
+pub use crate::firstrun::Need;
 
 /// Whether the cache at `cache` needs an import before dbota draws Dota's art and sound: it
 /// draws nothing without one.

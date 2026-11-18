@@ -1,20 +1,167 @@
-//! The importer in a browser: a Web Worker builds an [`Install`] from the files the user picked
-//! (read lazily with `File.slice`, never whole), runs the import item by item and gets each
-//! item's converted files back to write into its cache (the Origin Private File System). Nothing leaves
-//! the page: there is no network code in here.
+//! The importer in a browser, as a Web Worker (`web/import_worker.js` loads this module and calls
+//! [`run`]). The client posts the folder the player picked; the worker reads the install's files
+//! from it by slices (`File.slice`, never whole), converts them item by item and writes each
+//! item's files into a new copy in the page's private storage (the Origin Private File System,
+//! through synchronous access handles, which only a worker has), then names that copy the current
+//! one (`dbota_import::browser`). Nothing leaves the page: there is no network code in here.
+//!
+//! Messages in:  `{op: "import", list: FileList | null, folder: FileSystemDirectoryHandle | null,
+//!               keep: bool}` (`keep`: the current copy stays until the new one is whole; else it
+//!               goes first), and `{op: "stop"}`.
+//! Messages out: `{type: "ready"}` once it listens; `{type: "found", name, files}`;
+//!               `{type: "progress", done, total, item, bytes}` before each item;
+//!               `{type: "done", stopped, files, failures: [line]}`;
+//!               `{type: "error", kind, message}` (`kind`: "not-dota", "room", "busy" (another
+//!               tab's import runs) or "failed").
 
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::future::Future;
 use std::rc::Rc;
 
 use heatel::{Slice, SliceSource, Source};
-use js_sys::{Array, Uint8Array};
+use js_sys::{Array, Function, Object, Promise, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
-use web_sys::{File, FileReaderSync};
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{
+    DedicatedWorkerGlobalScope, File, FileList, FileReaderSync, FileSystemDirectoryHandle,
+    FileSystemFileHandle, FileSystemGetDirectoryOptions, FileSystemGetFileOptions,
+    FileSystemReadWriteOptions, FileSystemRemoveOptions, FileSystemSyncAccessHandle, MessageEvent,
+    StorageEstimate,
+};
 
+use dbota_import::browser::{self, CURRENT, IMPORT_LOCK, LEVELS, MAX_PICKED, PACKAGE, ROOT};
 use dbota_import::import::{self, IDS, Importer, MANIFEST, Plan, Sink};
 use dbota_import::{source, voice};
 
-/// Most files an install may hold: Dota's has ~700 packages; a folder of more is not one.
-const MAX_PACKAGES: usize = 4096;
+/// The storage an import asks to have free before it starts: the most an import writes, as the
+/// desktop asks of its drive (a whole install's copy is about 1.1 GB). A write the browser refuses
+/// all the same ends the import unfinished.
+const ROOM: f64 = dbota_import::index::MAX_TOTAL as f64;
+
+/// The longest the worker works before it lets a message in (a stop), in milliseconds.
+const SLICE_MS: f64 = 50.0;
+
+thread_local! {
+    /// Set by a stop message; the import under way ends before its next item.
+    static STOPPING: Cell<bool> = const { Cell::new(false) };
+    /// Whether an import is under way: one at a time.
+    static WORKING: Cell<bool> = const { Cell::new(false) };
+}
+
+fn scope() -> DedicatedWorkerGlobalScope {
+    js_sys::global().unchecked_into()
+}
+
+/// Sends the page a message of `kind` with `fields`.
+fn post(kind: &str, fields: &[(&str, JsValue)]) {
+    let message = Object::new();
+    let _ = Reflect::set(&message, &"type".into(), &kind.into());
+    for (name, value) in fields {
+        let _ = Reflect::set(&message, &(*name).into(), value);
+    }
+    let _ = scope().post_message(&message);
+}
+
+/// Starts listening to the client: its import and stop messages.
+#[wasm_bindgen]
+pub fn run() {
+    let heard = Closure::<dyn FnMut(MessageEvent)>::new(|event: MessageEvent| {
+        let data = event.data();
+        let op = Reflect::get(&data, &"op".into())
+            .ok()
+            .and_then(|o| o.as_string());
+        match op.as_deref() {
+            Some("stop") => STOPPING.set(true),
+            Some("import") if !WORKING.replace(true) => {
+                STOPPING.set(false);
+                wasm_bindgen_futures::spawn_local(async move {
+                    let ended = locked(import_from(data)).await.unwrap_or_else(|| {
+                        Err(Failure {
+                            kind: "busy",
+                            message: String::new(),
+                        })
+                    });
+                    if let Err(Failure { kind, message }) = ended {
+                        post(
+                            "error",
+                            &[("kind", kind.into()), ("message", message.into())],
+                        );
+                    }
+                    WORKING.set(false);
+                });
+            }
+            _ => {}
+        }
+    });
+    scope().set_onmessage(Some(heard.as_ref().unchecked_ref()));
+    // The worker lives as long as the page keeps it: so does its listener.
+    heard.forget();
+    post("ready", &[]);
+}
+
+/// Runs `work` holding [`IMPORT_LOCK`]; nothing when another tab's import holds it. A browser
+/// without Web Locks runs it all the same.
+async fn locked<T: 'static>(work: impl Future<Output = T> + 'static) -> Option<T> {
+    let locks = Reflect::get(&scope().navigator(), &"locks".into())
+        .ok()
+        .filter(|locks| locks.is_object());
+    let request = locks.as_ref().and_then(|locks| {
+        Reflect::get(locks, &"request".into())
+            .ok()
+            .and_then(|r| r.dyn_into::<Function>().ok())
+    });
+    let (Some(locks), Some(request)) = (locks, request) else {
+        return Some(work.await);
+    };
+    let result = Rc::new(RefCell::new(None));
+    let kept = result.clone();
+    let granted = Closure::once_into_js(move |lock: JsValue| -> JsValue {
+        if lock.is_null() {
+            return JsValue::UNDEFINED;
+        }
+        wasm_bindgen_futures::future_to_promise(async move {
+            *kept.borrow_mut() = Some(work.await);
+            Ok(JsValue::UNDEFINED)
+        })
+        .into()
+    });
+    let options = Object::new();
+    let _ = Reflect::set(&options, &"ifAvailable".into(), &true.into());
+    let held = request.call3(&locks, &IMPORT_LOCK.into(), &options, &granted);
+    if let Ok(held) = held.and_then(|p| p.dyn_into::<Promise>()) {
+        let _ = JsFuture::from(held).await;
+    }
+    result.borrow_mut().take()
+}
+
+/// Why an import did not finish: what kind of trouble (the client words it), and the details.
+struct Failure {
+    kind: &'static str,
+    message: String,
+}
+
+impl Failure {
+    fn failed(message: impl Into<String>) -> Failure {
+        Failure {
+            kind: "failed",
+            message: message.into(),
+        }
+    }
+}
+
+/// A browser call's error as text.
+fn said(error: JsValue) -> String {
+    error
+        .dyn_ref::<js_sys::Error>()
+        .map(|e| String::from(e.message()))
+        .or_else(|| error.as_string())
+        .unwrap_or_else(|| format!("{error:?}"))
+}
+
+async fn wait(promise: Promise) -> Result<JsValue, String> {
+    JsFuture::from(promise).await.map_err(said)
+}
 
 /// A picked file, read by slices through the synchronous reader of a worker (one reader serves
 /// every file).
@@ -29,7 +176,7 @@ impl Slice for Picked {
     }
 
     fn read_at(&self, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
-        let to_io = |e: JsValue| std::io::Error::other(format!("{e:?}"));
+        let to_io = |e: JsValue| std::io::Error::other(said(e));
         let slice = self
             .file
             .slice_with_f64_and_f64(offset as f64, (offset + len as u64) as f64)
@@ -44,76 +191,138 @@ impl Slice for Picked {
     }
 }
 
-/// The package files of an install, by path relative to its `game/dota` folder.
-#[wasm_bindgen]
-pub struct Install {
-    files: SliceSource<Picked>,
-    reader: Option<Rc<FileReaderSync>>,
-    count: usize,
+/// The install's files the importer reads, by path relative to its `game/dota` folder, and the
+/// name of the folder the player picked.
+struct Install {
+    name: String,
+    files: Vec<(String, File)>,
 }
 
-#[wasm_bindgen]
-impl Install {
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Install {
-        Install {
-            files: SliceSource::default(),
-            reader: None,
-            count: 0,
+/// The files of a folder picked whole (`<input webkitdirectory>`).
+fn from_list(list: &FileList) -> Install {
+    let all: Vec<File> = (0..list.length()).filter_map(|at| list.item(at)).collect();
+    let paths: Vec<String> = all
+        .iter()
+        .map(|file| {
+            let path = Reflect::get(file, &"webkitRelativePath".into())
+                .ok()
+                .and_then(|p| p.as_string())
+                .unwrap_or_default();
+            if path.is_empty() { file.name() } else { path }
+        })
+        .collect();
+    let name = paths
+        .first()
+        .and_then(|path| path.split('/').next())
+        .unwrap_or_default()
+        .to_owned();
+    let files = browser::picked_files(paths.iter().map(String::as_str))
+        .into_iter()
+        .map(|(at, relative)| (relative, all[at].clone()))
+        .collect();
+    Install { name, files }
+}
+
+/// The handle of `name` in `dir`, if it is a folder there.
+async fn folder_in(
+    dir: &FileSystemDirectoryHandle,
+    name: &str,
+) -> Option<FileSystemDirectoryHandle> {
+    wait(dir.get_directory_handle(name))
+        .await
+        .ok()
+        .map(JsCast::unchecked_into)
+}
+
+/// The entries of a folder: `(name, handle)`, at most `limit`.
+async fn entries(
+    dir: &FileSystemDirectoryHandle,
+    limit: usize,
+) -> Result<Vec<(String, JsValue)>, String> {
+    let iterator = dir.entries();
+    let mut found = Vec::new();
+    while found.len() < limit {
+        let next = wait(iterator.next().map_err(said)?).await?;
+        if Reflect::get(&next, &"done".into()).is_ok_and(|done| done.is_truthy()) {
+            break;
+        }
+        let pair: Array = Reflect::get(&next, &"value".into())
+            .map_err(said)?
+            .unchecked_into();
+        if let Some(name) = pair.get(0).as_string() {
+            found.push((name, pair.get(1)));
         }
     }
+    Ok(found)
+}
 
-    /// Adds a file; false when it is not one the importer reads (`*.vpk` at the top or in
-    /// `maps/`, the typefaces of `panorama/fonts/`) or the install has too many.
-    pub fn add(&mut self, path: String, file: File) -> Result<bool, JsError> {
-        if !source::picked(&path) || self.count >= MAX_PACKAGES {
-            return Ok(false);
-        }
-        let reader = shared_reader(&mut self.reader)?;
-        self.files.insert(path, Picked { file, reader });
-        self.count += 1;
-        Ok(true)
-    }
-
-    /// Whether the install has the package directory the importer starts from.
-    pub fn has_pak(&self) -> bool {
-        Source::size(&self.files, "pak01_dir.vpk").is_ok()
-    }
-
-    /// What says the cache made from this install is still current: the size and modification
-    /// time of the package directory (Dota's updater rewrites it with every content change),
-    /// with the build's fingerprint. Empty without the directory.
-    pub fn stamp(&self, modified: f64) -> String {
-        match Source::size(&self.files, "pak01_dir.vpk") {
-            Ok(size) => format!("{}/{size}/{modified}", cache_version()),
-            Err(_) => String::new(),
+/// The files the importer reads below `dir` (its `game/dota`), by path from it: the packages at
+/// the top and in `maps/`, the typefaces of `panorama/fonts/`.
+async fn files_below(dir: &FileSystemDirectoryHandle) -> Result<Vec<(String, File)>, String> {
+    let mut files = Vec::new();
+    let mut folders = vec![(String::new(), dir.clone())];
+    for sub in ["maps", "panorama"] {
+        if let Some(found) = folder_in(dir, sub).await {
+            folders.push((format!("{sub}/"), found));
         }
     }
-
-    pub fn len(&self) -> usize {
-        self.count
+    if let Some(panorama) = folders
+        .iter()
+        .find(|(path, _)| path == "panorama/")
+        .map(|(_, d)| d.clone())
+        && let Some(fonts) = folder_in(&panorama, "fonts").await
+    {
+        folders.push(("panorama/fonts/".to_owned(), fonts));
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
+    for (prefix, folder) in folders {
+        for (name, handle) in entries(&folder, MAX_PICKED * 4).await? {
+            let path = format!("{prefix}{name}");
+            if files.len() < MAX_PICKED
+                && source::picked(&path)
+                && handle.is_instance_of::<FileSystemFileHandle>()
+            {
+                let handle: FileSystemFileHandle = handle.unchecked_into();
+                let file: File = wait(handle.get_file()).await?.unchecked_into();
+                files.push((path, file));
+            }
+        }
     }
+    Ok(files)
 }
 
-impl Default for Install {
-    fn default() -> Self {
-        Self::new()
+/// The files of a folder picked with the browser's directory picker: its `game/dota` at one of
+/// the levels a player picks ([`LEVELS`]).
+async fn from_folder(picked: &FileSystemDirectoryHandle) -> Result<Install, String> {
+    let name = picked.name();
+    for level in LEVELS {
+        let mut dir = Some(picked.clone());
+        for step in level {
+            dir = match dir {
+                Some(d) => folder_in(&d, step).await,
+                None => None,
+            };
+        }
+        let Some(dir) = dir else { continue };
+        if wait(dir.get_file_handle(PACKAGE)).await.is_ok() {
+            let files = files_below(&dir).await?;
+            return Ok(Install { name, files });
+        }
     }
+    Ok(Install {
+        name,
+        files: Vec::new(),
+    })
 }
 
-fn shared_reader(reader: &mut Option<Rc<FileReaderSync>>) -> Result<Rc<FileReaderSync>, JsError> {
-    if reader.is_none() {
-        let made = FileReaderSync::new().map_err(|e| JsError::new(&format!("{e:?}")))?;
-        *reader = Some(Rc::new(made));
-    }
-    Ok(reader.clone().expect("the reader was made above"))
+/// The bytes of storage this page may still use, when the browser says.
+async fn room() -> Option<f64> {
+    let storage = scope().navigator().storage();
+    let estimate: StorageEstimate = wait(storage.estimate().ok()?).await.ok()?.unchecked_into();
+    Some(estimate.get_quota()? - estimate.get_usage().unwrap_or(0.0))
 }
 
-/// Files an item made, waiting for the worker to write them.
+/// Files an item made, waiting to be written: the storage's files are made asynchronously, so
+/// they are written after the item, not as the importer hands them over.
 #[derive(Default)]
 struct Collected(Vec<(String, Vec<u8>)>);
 
@@ -122,162 +331,332 @@ impl Sink for Collected {
         self.0.push((path.to_owned(), data.to_vec()));
         Ok(())
     }
-}
 
-#[wasm_bindgen]
-impl Install {
-    /// Starts importing the manifest's assets out of this install; fails when the package
-    /// directory is missing or is not one.
-    pub fn start(self) -> Result<Job, JsError> {
-        let plan = Plan::parse(MANIFEST, IDS).map_err(|errors| {
-            JsError::new(
-                &errors
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            )
-        })?;
-        let importer = Importer::new(self.files, plan).map_err(|e| JsError::new(&e.to_string()))?;
-        Ok(Job(importer))
+    /// Kept as it is, not copied: at most one item's files are in memory at once.
+    fn write_owned(&mut self, path: &str, data: Vec<u8>) -> heatel::Result<()> {
+        self.0.push((path.to_owned(), data));
+        Ok(())
     }
 }
 
-/// An import under way: call [`step`](Job::step) until it returns nothing, writing the files
-/// each returns, then [`finish`](Job::finish).
-#[wasm_bindgen]
-pub struct Job(Importer<SliceSource<Picked>>);
+/// A copy's folder, with the handles of its sub-folders kept once made.
+struct Copy {
+    root: FileSystemDirectoryHandle,
+    folders: HashMap<String, FileSystemDirectoryHandle>,
+}
 
-#[wasm_bindgen]
-impl Job {
-    pub fn total(&self) -> usize {
-        self.0.total()
-    }
-
-    pub fn done(&self) -> usize {
-        self.0.done()
-    }
-
-    pub fn bytes(&self) -> f64 {
-        self.0.bytes_written() as f64
-    }
-
-    /// The name of the item the next step makes.
-    pub fn upcoming(&self) -> Option<String> {
-        self.0.upcoming().map(str::to_owned)
-    }
-
-    /// Makes the next item: an array of `[path, bytes]` pairs (empty when it failed), or
-    /// nothing when every item is made.
-    pub fn step(&mut self) -> Option<Array> {
-        let mut made = Collected::default();
-        if !self.0.step(&mut made) {
-            return None;
+impl Copy {
+    /// The handle of the folder of `path`, made as needed.
+    async fn folder_of(&mut self, path: &str) -> Result<FileSystemDirectoryHandle, String> {
+        let Some((parent, _)) = path.rsplit_once('/') else {
+            return Ok(self.root.clone());
+        };
+        if let Some(found) = self.folders.get(parent) {
+            return Ok(found.clone());
         }
-        Some(
-            made.0
+        let mut dir = self.root.clone();
+        let options = FileSystemGetDirectoryOptions::new();
+        options.set_create(true);
+        for part in parent.split('/') {
+            dir = wait(dir.get_directory_handle_with_options(part, &options))
+                .await?
+                .unchecked_into();
+        }
+        self.folders.insert(parent.to_owned(), dir.clone());
+        Ok(dir)
+    }
+
+    /// Writes `bytes` as the copy's file at `path`; any failure is the import's end.
+    async fn write(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        // The importer writes only such paths; this checks again before the storage is touched.
+        if !import::safe_path(path) {
+            return Err(format!("{path:?} is not a path a copy may hold"));
+        }
+        let dir = self.folder_of(path).await?;
+        let name = path.rsplit('/').next().unwrap_or(path);
+        write_file(&dir, name, bytes)
+            .await
+            .map_err(|why| format!("{path}: {why}"))
+    }
+}
+
+/// Writes `bytes` as the file `name` of `dir`, whole, through a synchronous access handle.
+async fn write_file(
+    dir: &FileSystemDirectoryHandle,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let options = FileSystemGetFileOptions::new();
+    options.set_create(true);
+    let handle: FileSystemFileHandle = wait(dir.get_file_handle_with_options(name, &options))
+        .await?
+        .unchecked_into();
+    let sync: FileSystemSyncAccessHandle = wait(handle.create_sync_access_handle())
+        .await?
+        .unchecked_into();
+    let written = (|| {
+        sync.truncate_with_f64(0.0).map_err(said)?;
+        let at = FileSystemReadWriteOptions::new();
+        at.set_at(0.0);
+        let written = sync
+            .write_with_u8_array_and_options(bytes, &at)
+            .map_err(said)?;
+        if written as usize != bytes.len() {
+            return Err(format!("{written} of {} bytes written", bytes.len()));
+        }
+        sync.flush().map_err(said)
+    })();
+    sync.close();
+    written
+}
+
+/// Removes `name` from `dir`, with all it holds; a name not there is no error.
+async fn remove(dir: &FileSystemDirectoryHandle, name: &str) -> Result<(), String> {
+    let options = FileSystemRemoveOptions::new();
+    options.set_recursive(true);
+    match JsFuture::from(dir.remove_entry_with_options(name, &options)).await {
+        Ok(_) => Ok(()),
+        Err(e)
+            if Reflect::get(&e, &"name".into())
+                .ok()
+                .and_then(|n| n.as_string())
+                .as_deref()
+                == Some("NotFoundError") =>
+        {
+            Ok(())
+        }
+        Err(e) => Err(said(e)),
+    }
+}
+
+/// Removes everything in the copies' folder but `keep` (a copy's folder and the file naming it).
+async fn sweep(root: &FileSystemDirectoryHandle, keep: &[&str]) -> Result<(), String> {
+    for (name, _) in entries(root, 4096).await? {
+        if !keep.contains(&name.as_str()) {
+            remove(root, &name).await?;
+        }
+    }
+    Ok(())
+}
+
+/// The copy [`CURRENT`] names, if it names one.
+async fn current_copy(root: &FileSystemDirectoryHandle) -> Option<String> {
+    let handle: FileSystemFileHandle = wait(root.get_file_handle(CURRENT))
+        .await
+        .ok()?
+        .unchecked_into();
+    let file: File = wait(handle.get_file()).await.ok()?.unchecked_into();
+    if file.size() > browser::MAX_CURRENT as f64 {
+        return None;
+    }
+    let text = wait(file.text()).await.ok()?.as_string()?;
+    browser::current_copy(&text).map(str::to_owned)
+}
+
+/// Lets a message in (a stop) once [`SLICE_MS`] of work has passed since the last time.
+async fn breathe(since: &mut f64) {
+    let now = js_sys::Date::now();
+    if now - *since < SLICE_MS {
+        return;
+    }
+    let tick = Promise::new(&mut |resolve, _| {
+        let _ = scope().set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 0);
+    });
+    let _ = JsFuture::from(tick).await;
+    *since = js_sys::Date::now();
+}
+
+/// The import the client asked for: the install found in what it posted, read and written as a
+/// new copy, which becomes the current one only once whole.
+async fn import_from(data: JsValue) -> Result<(), Failure> {
+    let list = Reflect::get(&data, &"list".into())
+        .ok()
+        .and_then(|l| l.dyn_into::<FileList>().ok());
+    let folder = Reflect::get(&data, &"folder".into())
+        .ok()
+        .and_then(|f| f.dyn_into::<FileSystemDirectoryHandle>().ok());
+    let keep = Reflect::get(&data, &"keep".into()).is_ok_and(|k| k.is_truthy());
+    let install = match (list, folder) {
+        (Some(list), _) => from_list(&list),
+        (None, Some(folder)) => from_folder(&folder).await.map_err(Failure::failed)?,
+        (None, None) => return Err(Failure::failed("no folder was given")),
+    };
+    let Some(package) = install.files.iter().find(|(path, _)| path == PACKAGE) else {
+        return Err(Failure {
+            kind: "not-dota",
+            message: install.name,
+        });
+    };
+    let stamp = format!(
+        "{}/{}/{}",
+        import::fingerprint(),
+        package.1.size() as u64,
+        package.1.last_modified()
+    );
+    post(
+        "found",
+        &[
+            ("name", install.name.clone().into()),
+            ("files", install.files.len().into()),
+        ],
+    );
+    let storage = scope().navigator().storage();
+    let opfs: FileSystemDirectoryHandle = wait(storage.get_directory())
+        .await
+        .map_err(Failure::failed)?
+        .unchecked_into();
+    let options = FileSystemGetDirectoryOptions::new();
+    options.set_create(true);
+    let root: FileSystemDirectoryHandle =
+        wait(opfs.get_directory_handle_with_options(ROOT, &options))
+            .await
+            .map_err(Failure::failed)?
+            .unchecked_into();
+    // Whatever is not the copy kept goes first: a copy of another build, what a closed tab left.
+    let kept = if keep {
+        current_copy(&root).await
+    } else {
+        None
+    };
+    let keep_names: Vec<&str> = kept
+        .iter()
+        .map(String::as_str)
+        .chain(kept.as_ref().map(|_| CURRENT))
+        .collect();
+    sweep(&root, &keep_names).await.map_err(Failure::failed)?;
+    if let Some(free) = room().await
+        && free < ROOM
+    {
+        return Err(Failure {
+            kind: "room",
+            message: format!("{:.0}", free / 1e6),
+        });
+    }
+    let name = browser::copy_name(js_sys::Date::now() as u64);
+    let copy_root: FileSystemDirectoryHandle =
+        wait(root.get_directory_handle_with_options(&name, &options))
+            .await
+            .map_err(Failure::failed)?
+            .unchecked_into();
+    let mut copy = Copy {
+        root: copy_root,
+        folders: HashMap::new(),
+    };
+    let made = convert(install.files, &mut copy, &stamp).await;
+    let ended = match made {
+        Ok(Some(report)) => {
+            // The copy is whole: it is named the current one, and the one before goes.
+            let named = write_file(&root, CURRENT, format!("{name}\n").as_bytes()).await;
+            let swept = match named {
+                Ok(()) => sweep(&root, &[&name, CURRENT]).await,
+                Err(why) => Err(why),
+            };
+            swept.map(|()| Some(report))
+        }
+        other => other,
+    };
+    match ended {
+        Ok(Some(report)) => {
+            for (item, why) in &report.warnings {
+                web_sys::console::warn_1(&format!("Asset import: {item}: {why}").into());
+            }
+            let failures: Array = report
+                .failed
                 .iter()
-                .map(|(path, data)| {
-                    Array::of2(&JsValue::from_str(path), &Uint8Array::from(&data[..]))
-                })
-                .collect(),
-        )
-    }
-
-    /// Ends the import and gives its report.
-    pub fn finish(self) -> Report {
-        Report(self.0.finish())
+                .map(|(item, why)| JsValue::from(format!("{item}: {why}")))
+                .collect();
+            post(
+                "done",
+                &[
+                    ("stopped", false.into()),
+                    ("files", report.files.len().into()),
+                    ("failures", failures.into()),
+                ],
+            );
+            Ok(())
+        }
+        Ok(None) => {
+            remove(&root, &name).await.map_err(Failure::failed)?;
+            post(
+                "done",
+                &[
+                    ("stopped", true.into()),
+                    ("files", 0.into()),
+                    ("failures", Array::new().into()),
+                ],
+            );
+            Ok(())
+        }
+        Err(why) => {
+            // Nothing of it is a copy (no index, no stamp, not named): its space goes.
+            let _ = remove(&root, &name).await;
+            Err(Failure::failed(why))
+        }
     }
 }
 
-/// The result of an import.
-#[wasm_bindgen]
-pub struct Report(import::Report);
-
-#[wasm_bindgen]
-impl Report {
-    /// The index file's text.
-    pub fn index(&self) -> String {
-        self.0.index()
+/// Converts the install's `files` into `copy`, its index and stamp last; the report, or nothing
+/// when the client stopped it.
+async fn convert(
+    files: Vec<(String, File)>,
+    copy: &mut Copy,
+    stamp: &str,
+) -> Result<Option<import::Report>, String> {
+    let reader = Rc::new(FileReaderSync::new().map_err(said)?);
+    let mut source = SliceSource::default();
+    for (path, file) in files {
+        source.insert(
+            path,
+            Picked {
+                file,
+                reader: reader.clone(),
+            },
+        );
     }
-
-    /// Why the install cut the import short (it asked for more than an import reads), when it
-    /// did: nothing of such an import may be kept as a cache.
-    pub fn cut(&self) -> Option<String> {
-        self.0.cut.clone()
+    if Source::size(&source, PACKAGE).is_err() {
+        return Err(format!("{PACKAGE} is not in the chosen folder"));
     }
-
-    /// One line per item that failed: `logical: why`.
-    pub fn failures(&self) -> Vec<String> {
-        self.0
-            .failed
+    let plan = Plan::parse(MANIFEST, IDS).map_err(|errors| {
+        errors
             .iter()
-            .map(|(item, why)| format!("{item}: {why}"))
-            .collect()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+    let mut importer = Importer::new(source, plan).map_err(|e| e.to_string())?;
+    let mut since = js_sys::Date::now();
+    loop {
+        post(
+            "progress",
+            &[
+                ("done", importer.done().into()),
+                ("total", importer.total().into()),
+                ("item", importer.upcoming().unwrap_or_default().into()),
+                ("bytes", (importer.bytes_written() as f64).into()),
+            ],
+        );
+        breathe(&mut since).await;
+        if STOPPING.get() {
+            return Ok(None);
+        }
+        let mut made = Collected::default();
+        if !importer.step(&mut made) {
+            break;
+        }
+        // A file that cannot be written ends the import: the copy stays unfinished (no index, no
+        // stamp, not named), never one whose index lists files that are not there.
+        for (path, bytes) in made.0 {
+            copy.write(&path, &bytes).await?;
+        }
     }
-
-    /// One line per asset converted with a usable fallback: `logical: why`.
-    pub fn warnings(&self) -> Vec<String> {
-        self.0
-            .warnings
-            .iter()
-            .map(|(item, why)| format!("{item}: {why}"))
-            .collect()
+    let report = importer.finish();
+    // An install that asked for more than an import reads finishes no copy.
+    if let Some(cut) = &report.cut {
+        return Err(cut.clone());
     }
-
-    pub fn files(&self) -> usize {
-        self.0.files.len()
-    }
-}
-
-/// The asset fingerprint of this build ([`import::fingerprint`]): what a cache it may use starts
-/// its stamp with, checked before any install is picked.
-#[wasm_bindgen]
-pub fn cache_version() -> String {
-    import::fingerprint()
-}
-
-/// The same index parser the native client reads its cache with.
-#[wasm_bindgen]
-pub struct CacheIndex(dbota_import::index::CacheIndex);
-
-#[wasm_bindgen]
-impl CacheIndex {
-    #[wasm_bindgen(constructor)]
-    pub fn new(bytes: Uint8Array) -> Result<CacheIndex, JsError> {
-        let error = |why: dbota_import::pack::PackError| JsError::new(&why.to_string());
-        dbota_import::index::CacheIndex::check_length(u64::from(bytes.length())).map_err(error)?;
-        dbota_import::index::CacheIndex::parse(&bytes.to_vec())
-            .map(CacheIndex)
-            .map_err(error)
-    }
-
-    pub fn files(&self) -> Array {
-        self.0
-            .files()
-            .iter()
-            .map(|file| {
-                Array::of3(
-                    &file.path.clone().into(),
-                    &JsValue::from_f64(file.size as f64),
-                    &file.small.into(),
-                )
-            })
-            .collect()
-    }
-}
-
-#[wasm_bindgen]
-pub fn cache_metadata_limits() -> Array {
-    Array::of2(
-        &JsValue::from_f64(import::MAX_STAMP as f64),
-        &JsValue::from_f64(dbota_import::index::MAX_INDEX as f64),
-    )
-}
-
-#[wasm_bindgen]
-pub fn cache_index_header() -> String {
-    dbota_import::index::CacheIndex::header()
+    copy.write(import::INDEX, report.index().as_bytes()).await?;
+    copy.write(import::STAMP, stamp.as_bytes()).await?;
+    Ok(Some(report))
 }
 
 /// The most bytes of a hero's voice pack: what the voice worker reads at most.

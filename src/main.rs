@@ -50,7 +50,6 @@ mod error_msg;
 mod face;
 mod faces;
 mod feed;
-#[cfg(not(target_arch = "wasm32"))]
 mod firstrun;
 mod fog;
 mod fortified;
@@ -536,62 +535,124 @@ pub fn since_start() -> f32 {
 fn main() -> AppExit {
     STARTED.get_or_init(bevy::platform::time::Instant::now);
     #[cfg(not(target_arch = "wasm32"))]
-    let args = match native_startup() {
+    let mut args = match native_startup() {
         Ok(args) => args,
         Err(exit) => return exit,
     };
-    // A browser build with `web-replay` takes its arguments from
-    // DBOTA_WEB_ARGS when it was built: a page has no command line.
-    #[cfg(all(target_arch = "wasm32", feature = "web-replay"))]
-    let args = Args::parse_from(
-        std::iter::once("dbota").chain(
-            option_env!("DBOTA_WEB_ARGS")
-                .unwrap_or("")
-                .split_whitespace(),
-        ),
-    );
-    #[cfg(all(target_arch = "wasm32", not(feature = "web-replay")))]
-    let args = Args::parse();
-    let mut args = args;
+    #[cfg(target_arch = "wasm32")]
+    let mut args = arguments();
     args.read_environment = true;
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(command) = &args.command {
-        return run_command(command, &args.cache_dir);
-    }
-    // Before Bevy's plugins make the pool with default stacks (see `io_pool`).
-    #[cfg(not(target_arch = "wasm32"))]
-    io_pool::make_default();
-    // Before the first thread starts (see `ui::font_cx`).
-    #[cfg(not(target_arch = "wasm32"))]
-    let font_cx = ui::font_cx();
-    // Without a cache of this build the run is held at the screen that makes one: no game
-    // starts, not even one the command line names (see `firstrun`). A run nobody watches
-    // has no screen to show.
-    #[cfg(not(target_arch = "wasm32"))]
-    let held = firstrun::held(&args);
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(need) = held
-        && args.unattended()
     {
-        eprintln!("dbota: {}", import::refusal(need, &args.cache_dir));
-        return AppExit::from_code(2);
+        if let Some(command) = &args.command {
+            return run_command(command, &args.cache_dir);
+        }
+        // Before Bevy's plugins make the pool with default stacks (see `io_pool`).
+        io_pool::make_default();
+        // Before the first thread starts (see `ui::font_cx`).
+        let font_cx = ui::font_cx();
+        // Without a cache of this build the run is held at the screen that makes one: no game
+        // starts, not even one the command line names (see `firstrun`). A run nobody watches
+        // has no screen to show.
+        let held = firstrun::held(&args);
+        if let Some(need) = held {
+            eprintln!("dbota: {}", import::refusal(need, &args.cache_dir));
+            if args.unattended() {
+                return AppExit::from_code(2);
+            }
+        }
+        if held.is_none()
+            && let Err(why) =
+                import::note_cache_use(import::managed_cache_root().as_deref(), &args.cache_dir)
+        {
+            fail(&format!("The cache could not be opened for use: {why}\nCheck that its folder is writable, or select a writable cache folder and start dbota again."));
+            return AppExit::from_code(2);
+        }
+        let held = held.map(|need| firstrun::Held { need, note: None });
+        let exit = start(args, held, font_cx);
+        if let Some(args) = RESTART.get() {
+            let why = desktop::restart(args);
+            fail(&format!("The files were imported but dbota could not reopen: {why}\nOpen dbota again from its installation folder."));
+            return AppExit::error();
+        }
+        exit
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(need) = held {
-        eprintln!("dbota: {}", import::refusal(need, &args.cache_dir));
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    if held.is_none()
-        && let Err(why) =
-            import::note_cache_use(import::managed_cache_root().as_deref(), &args.cache_dir)
-    {
-        fail(&format!(
-            "The cache could not be opened for use: {why}\nCheck that its folder is writable, or select a writable cache folder and start dbota again."
-        ));
-        return AppExit::from_code(2);
-    }
+    // In a browser the copy of the assets is found first, in the browser's storage, which only
+    // answers later (see `webcache`); the app is built once it has.
     #[cfg(target_arch = "wasm32")]
-    let held: Option<()> = None;
+    {
+        wasm_bindgen_futures::spawn_local(async move {
+            let held = match webcache::open().await {
+                webcache::Opened::Ready => {
+                    firstrun::browser::requested().then_some(firstrun::Held {
+                        need: firstrun::Need::Requested,
+                        note: None,
+                    })
+                }
+                webcache::Opened::Needs(need, note) => Some(firstrun::Held { need, note }),
+                webcache::Opened::Refused(why) => {
+                    webpage::failed(
+                        "The served copy of the assets cannot be read",
+                        "The page was asked (?cache=http) to play on a copy served beside it, and \
+                         that copy's index was refused.",
+                        &why,
+                    );
+                    return;
+                }
+            };
+            start(args, held);
+        });
+        AppExit::Success
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_startup() -> Result<Args, AppExit> {
+    desktop::attach_console();
+    desktop::report_panics();
+    Args::try_parse().map_err(|why| {
+        if why.use_stderr() {
+            fail(&format!("The launch options could not be read: {why}\nRemove the unsupported options and start dbota again."));
+            AppExit::from_code(u8::try_from(why.exit_code()).unwrap_or(2))
+        } else {
+            let _ = why.print();
+            AppExit::Success
+        }
+    })
+}
+
+
+/// The run's arguments: the command line's; in a browser, which has none, those a `web-replay`
+/// build was made with (DBOTA_WEB_ARGS) and those a script of the page itself sets in
+/// `globalThis.dbota_args` before the client loads (the browser tests' steps), which a link
+/// cannot.
+#[cfg(target_arch = "wasm32")]
+fn arguments() -> Args {
+    #[cfg(all(target_arch = "wasm32", feature = "web-replay"))]
+    let built = option_env!("DBOTA_WEB_ARGS").unwrap_or("");
+    #[cfg(not(all(target_arch = "wasm32", feature = "web-replay")))]
+    let built = "";
+    let page: Vec<String> = js_sys::Reflect::get(&js_sys::global(), &"dbota_args".into())
+        .ok()
+        .filter(js_sys::Array::is_array)
+        .map(|given| {
+            js_sys::Array::from(&given)
+                .iter()
+                .take(64)
+                .filter_map(|arg| arg.as_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let given = built.split_whitespace().map(str::to_owned).chain(page);
+    Args::parse_from(std::iter::once("dbota".to_owned()).chain(given))
+}
+
+/// Builds the app and runs it: at the first-run screen when `held` says why.
+fn start(
+    args: Args,
+    held: Option<firstrun::Held>,
+    #[cfg(not(target_arch = "wasm32"))] font_cx: bevy::text::FontCx,
+) -> AppExit {
     let menu_first = args.wants_menu() || held.is_some();
     let session = if menu_first {
         main_menu::idle()
@@ -650,6 +711,10 @@ fn main() -> AppExit {
     });
     #[cfg(not(target_arch = "wasm32"))]
     app.insert_resource(font_cx);
+    let is_held = held.is_some();
+    if let Some(held) = held {
+        app.insert_resource(held);
+    }
     client_resources(&mut app, &args, &settings, settings_path, &store, session);
     app.add_plugins(default_plugins(&args, &settings));
     app.add_plugins(pacing::plugin);
@@ -658,9 +723,7 @@ fn main() -> AppExit {
         .wake_on_network();
     client_plugins(&mut app, args.read_environment);
     // Held at the asset screen, there is no menu either: nothing but that screen to use.
-    if held.is_none()
-        && let Err(err) = menu(&mut app, &args, store, menu_first)
-    {
+    if !is_held && let Err(err) = menu(&mut app, &args, store, menu_first) {
         fail(&err.to_string());
         return AppExit::error();
     }
@@ -687,38 +750,16 @@ fn main() -> AppExit {
     let exit = app.run();
     // The window, the GPU and the sound device are let go before dbota starts again.
     drop(app);
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(args) = RESTART.get() {
-        let why = desktop::restart(args);
-        fail(&format!(
-            "The files were imported but dbota could not reopen: {why}\nOpen dbota again from its installation folder."
-        ));
-        return AppExit::error();
-    }
     exit
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn native_startup() -> Result<Args, AppExit> {
-    desktop::attach_console();
-    desktop::report_panics();
-    Args::try_parse().map_err(|why| {
-        if why.use_stderr() {
-            fail(&format!("The launch options could not be read: {why}\nRemove the unsupported options and start dbota again."));
-            AppExit::from_code(u8::try_from(why.exit_code()).unwrap_or(2))
-        } else {
-            let _ = why.print();
-            AppExit::Success
-        }
-    })
-}
-
-/// Why the client cannot go on, told where the player sees it (see `desktop::tell_failure`).
+/// Why the client cannot go on, told where the player sees it (see `desktop::tell_failure`; in
+/// a browser the page's failure screen).
 fn fail(why: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     desktop::tell_failure("dbota could not start", why);
     #[cfg(target_arch = "wasm32")]
-    eprintln!("dbota: {why}");
+    webpage::failed("dbota could not start", "", why);
 }
 
 /// What the client's plugins read, inserted before Bevy's: the run's arguments and settings, the
@@ -853,7 +894,6 @@ fn client_plugins(app: &mut App, read_environment: bool) {
     if read_environment {
         app.add_plugins(drill::plugin);
     }
-    #[cfg(not(target_arch = "wasm32"))]
     app.add_plugins(firstrun::plugin);
 }
 

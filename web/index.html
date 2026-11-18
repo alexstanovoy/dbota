@@ -11,36 +11,13 @@
 <main id="gate" hidden>
   <h1>dbota</h1>
   <p id="lead">dbota is the client of bota, an open-source simulator of Dota 2 matches: play against bots and people
-  with Dota 2's look, the map, heroes, buildings, trees, icons and sounds taken from your own Dota 2 install.</p>
-  <section id="grant" hidden>
-    <p class="hint"><strong>dbota needs your own Dota 2 install</strong> (free on Steam). Its folder: in Steam, right-click
-    Dota 2 → Manage → Browse local files (the "dota 2 beta" folder).</p>
-    <p class="hint"><strong>Your Dota 2 files never leave your computer.</strong> The page reads them inside this tab
-    and keeps a converted private copy in this browser's own storage.</p>
-    <div class="row">
-      <button id="pick" type="button">Use Dota 2 folder</button>
-    </div>
-    <input id="folder" type="file" webkitdirectory multiple hidden>
-  </section>
-  <section id="ready" hidden>
-    <p id="readyText"></p>
-    <div class="row">
-      <button id="play" type="button">Play</button>
-      <button id="remove" type="button" class="quiet">Delete and import again</button>
-    </div>
-  </section>
-  <section id="stale" hidden>
-    <h2>The assets are out of date for this version: re-import them from your Dota 2 folder</h2>
-    <p id="staleWhy"></p>
-    <div class="row">
-      <button id="reimport" type="button">Re-import from the Dota 2 folder</button>
-    </div>
-  </section>
-  <section id="progress" hidden>
-    <p id="stage">Reading your Dota 2 files...</p>
-    <progress id="bar" max="1" value="0"></progress>
-    <p class="hint" id="detail"></p>
-    <div class="row"><button id="cancel" type="button" class="quiet">Cancel</button></div>
+  with Dota 2's look, drawn from your own Dota 2 install.</p>
+  <section id="unsupported" hidden>
+    <h2>This browser cannot run dbota</h2>
+    <p>It lacks what dbota needs here:</p>
+    <ul id="lacks"></ul>
+    <p>A current Chrome, Edge or Firefox on a computer has all of it. dbota also runs as a program of its own on
+    Windows, Linux and macOS, which needs none of it.</p>
   </section>
   <section id="failed" hidden>
     <h2 id="failTitle"></h2>
@@ -51,8 +28,6 @@
       <button id="otherApi" type="button" class="quiet" hidden>Draw with WebGL 2 instead</button>
     </div>
   </section>
-  <p id="status" role="status"></p>
-  <ul id="failures" hidden></ul>
   <footer id="native" hidden>
     <span>Native client</span>
       <!-- windows icon: Font Awesome Free 6.7.2 (brands/windows), Copyright 2024 Fonticons, Inc., https://fontawesome.com, licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); see THIRD-PARTY-NOTICES.md -->
@@ -63,7 +38,6 @@
       <a data-os="macos" rel="noopener noreferrer" target="_blank"><svg viewBox="0 0 384 512" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>macOS</a>
     <small id="credit"><a href="THIRD-PARTY-NOTICES.md" rel="noopener noreferrer" target="_blank">Icons: Font Awesome, CC BY 4.0</a></small>
   </footer>
-  <p class="hint" id="version"></p>
 </main>
 <script src="boot.js"></script>
 <script src="busy.js"></script>

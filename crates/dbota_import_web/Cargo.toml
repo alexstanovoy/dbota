@@ -16,4 +16,24 @@ dbota_import.workspace = true
 heatel.workspace = true
 js-sys.workspace = true
 wasm-bindgen.workspace = true
-web-sys = { workspace = true, features = ["Blob", "File", "FileReaderSync"] }
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "Blob",
+    "DedicatedWorkerGlobalScope",
+    "File",
+    "FileList",
+    "FileReaderSync",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemHandle",
+    "FileSystemReadWriteOptions",
+    "FileSystemRemoveOptions",
+    "FileSystemSyncAccessHandle",
+    "MessageEvent",
+    "StorageEstimate",
+    "StorageManager",
+    "WorkerNavigator",
+    "console",
+] }

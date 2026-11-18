@@ -1,19 +1,9 @@
 #!/usr/bin/env python3
-"""Smoke test of the page in a headless Chromium (Playwright): picks a Dota 2 folder, has the
-worker import it into the browser's private storage, starts the client on it, reloads to see
-the cache is kept, and deletes it. Also checks nothing but the page's own files is requested.
+"""Checks of the page in a headless Chromium (Playwright), each on a build named by its flag. The first run
+(the import of a Dota 2 install in the client, its screens and refusals) is web/test/first_run.py's.
 
-    python3 -m pip install --target temp/pwlib playwright && PYTHONPATH=temp/pwlib python3 -m playwright install chromium
-    WASM_OPT=0 web/build.sh                       # builds web/out
-    PYTHONPATH=temp/pwlib python3 web/test/smoke.py [--install "<dota 2 beta dir>"] [--no-game]
-
-The folder given to the page is a farm of symlinks to the install's package files, so the test
-shows the "pick a folder, read only what is needed" path without copying anything. Needs the
-Dota 2 install (DBOTA_DOTA_PATH or the usual Steam places); the game run needs WebGL2/WebGPU
-(SwiftShader does). Without an install the test fails (`--only-wire` leaves that part out).
-
-Five more checks need no install, only a native import of this build (`dbota import`, DBOTA_ASSETS
-names it) that the pages play on through `?cache=http`, served under /cache beside the page:
+The pages that need no import play on a native import of this build (`dbota import`, DBOTA_ASSETS names it)
+through `?cache=http`, served under /cache beside the page:
 
     DBOTA_WEB_REPLAY=$PWD/chat.brp DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" \
         PROFILE=release OUT=temp/web-replay web/build.sh
@@ -24,18 +14,11 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
         --replays-page temp/web-live --server temp/bota-target/release/bota_server --radovid RADOVID \
         --startup-page temp/web-live
 
-* `--start-page` (any build): the start window in both states: without a copy exactly "Use Dota 2 folder" (red) and
-  the words that Dota 2 is needed and where its folder is; with one "Play" (red) and "Delete and import again" (grey),
-  whose delete empties only the page's own cache and returns to the first state; in both, no native client links
-  while `native.js` names no release.
-* `--served-page` (any build): with `?cache=http` the page fetches the served cache's index.txt and
-  publishes it to the client; a missing or invalid index ends startup with an error.
 * `--launch-page` (any build): the WebGL2 client starts and draws its first frames with no panic; a panic fails
   at once with its message.
 * `--startup-page` (any build): the page loads the WebGPU client, or the WebGL2 one with
-  `?gpu=webgl2`, and each draws; a browser without graphics, a renderer that cannot be made (the
-  page then offers the WebGL2 client, which runs) and a client out of memory each end with a
-  message on the page.
+  `?gpu=webgl2`, and each draws; a renderer that cannot be made (the page then offers the WebGL2 client, which
+  runs) and a client out of memory each end with a message on the page.
 * `--replay-page`: the page plays a Zstandard-packed replay built into it (read through to the
   seek tick, as the packed file is decoded record by record) and the client says it knows the
   match and heard the chat lines, with no read error.
@@ -58,12 +41,12 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
   The game's cursor goes as far as the mouse moves, and a click lands where the cursor is drawn: the dashboard
   button opens the settings and the client reports the cursor at the place the page holds.
 * `--boot-page` (any build): the page never spins for ever: a part that does not load, code the
-  browser cannot run, a page that never arrives, a storage that hangs or is missing, a game download
-  that stalls or is refused each end on a screen that says the stage, while a slow download that keeps
-  moving is waited for and the game starts (Chromium and Firefox).
+  browser cannot run, a page that never arrives, a game download that stalls or is refused each end on a
+  screen that says the stage, while a slow download that keeps moving is waited for and the game starts
+  (Chromium and Firefox).
 * `--busy-page` (any build): a server answering 503 with Retry-After (busy) is told on the page and
-  tried once more after the wait: the page's own scripts (Chromium and Firefox), the served cache's
-  index and the game's download; a download refused twice ends on the failure screen.
+  tried once more after the wait: the page's own scripts (Chromium and Firefox), the game's download and the
+  import worker's module; a download refused twice ends on the failure screen.
 * `--fullscreen-page`: a replay build made with `DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video"`;
   the display mode and F11 put the canvas fullscreen and leaving it turns the setting back.
 """
@@ -72,9 +55,7 @@ import base64
 import ctypes
 import ctypes.util
 import functools
-import hashlib
 import http.server
-import json
 import os
 import pathlib
 import re
@@ -90,36 +71,6 @@ from render_errors import RENDERER_ERROR
 
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parent / "out"
-STEAM = [
-    "~/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/dota 2 beta",
-    "~/.steam/steam/steamapps/common/dota 2 beta",
-    "~/.local/share/Steam/steamapps/common/dota 2 beta",
-]
-
-
-def find_install(given):
-    for c in [given, os.environ.get("DBOTA_DOTA_PATH"), *STEAM]:
-        if c and (pathlib.Path(c).expanduser() / "game/dota/pak01_dir.vpk").is_file():
-            return pathlib.Path(c).expanduser()
-    return None
-
-
-def farm(install, root):
-    """`root/dota 2 beta/game/dota/*.vpk` as hard links (Chromium's folder upload skips symlinks;
-    nothing is copied), plus a decoy file the page must ignore."""
-    dota = root / "dota 2 beta/game/dota"
-    (dota / "maps").mkdir(parents=True, exist_ok=True)
-    src = install / "game/dota"
-    for vpk in src.glob("*.vpk"):
-        link = dota / vpk.name
-        if not link.exists():
-            os.link(vpk, link)
-    for vpk in (src / "maps").glob("*.vpk"):
-        link = dota / "maps" / vpk.name
-        if not link.exists():
-            os.link(vpk, link)
-    (dota / "gameinfo.gi").write_text("not a package")
-    return root / "dota 2 beta"
 
 
 # The asset cache the pages that need no import play on (`?cache=http`): a native import of this
@@ -163,261 +114,6 @@ def serve(directory=OUT, handler_class=Quiet):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
-
-
-GRANT_LOGIC = """async () => {
-  const grant = await import('./grant.js');
-  const fake = (path) => ({ webkitRelativePath: path, name: path.split('/').pop() });
-  const keys = (m) => [...m.keys()].sort().join(',');
-  const out = {};
-  // The fallback picker's list: every file below the folder; only packages are kept, relative
-  // to the folder holding pak01_dir.vpk closest to the top.
-  out.list = keys(grant.filesFromList([
-    fake('dota 2 beta/game/dota/pak01_dir.vpk'), fake('dota 2 beta/game/dota/pak01_000.vpk'),
-    fake('dota 2 beta/game/dota/maps/dota.vpk'), fake('dota 2 beta/game/dota/maps/deep/x.vpk'),
-    fake('dota 2 beta/game/dota/addons/pak01_dir.vpk'), fake('dota 2 beta/game/dota/cfg.txt'),
-    fake('dota 2 beta/game/bin/pak01_001.vpk'), fake('dota 2 beta/game/dota/../x.vpk'),
-    // The interface's typefaces, and what lies beside them.
-    fake('dota 2 beta/game/dota/panorama/fonts/reaver-bold.otf'),
-    fake('dota 2 beta/game/dota/panorama/fonts/thai.uifont'),
-    fake('dota 2 beta/game/dota/panorama/fonts/deep/x.otf'),
-    fake('dota 2 beta/game/dota/panorama/x.otf'),
-  ]));
-  out.none = keys(grant.filesFromList([fake('dota 2 beta/readme.txt')]));
-  out.direct = keys(grant.filesFromList([fake('dota/pak01_dir.vpk'), fake('dota/pak01_002.vpk')]));
-  // The directory picker: a folder tree in private storage stands in for the player's folder.
-  const root = await navigator.storage.getDirectory();
-  const base = await root.getDirectoryHandle('grant-test', { create: true });
-  const dota = await (await (await base.getDirectoryHandle('dota 2 beta', { create: true }))
-    .getDirectoryHandle('game', { create: true })).getDirectoryHandle('dota', { create: true });
-  const put = async (dir, name) => (await dir.getFileHandle(name, { create: true }));
-  for (const name of ['pak01_dir.vpk', 'pak01_000.vpk', 'notes.txt']) await put(dota, name);
-  await put(await dota.getDirectoryHandle('maps', { create: true }), 'dota.vpk');
-  const panorama = await dota.getDirectoryHandle('panorama', { create: true });
-  const fonts = await panorama.getDirectoryHandle('fonts', { create: true });
-  for (const name of ['radiance-bold.otf', 'thai.uifont']) await put(fonts, name);
-  await put(panorama, 'x.otf');
-  await put(await fonts.getDirectoryHandle('deep', { create: true }), 'y.otf');
-  out.fromRoot = keys(await grant.filesOf(await base.getDirectoryHandle('dota 2 beta')));
-  out.fromGame = keys(await grant.filesOf(await (await base.getDirectoryHandle('dota 2 beta')).getDirectoryHandle('game')));
-  out.fromDota = keys(await grant.filesOf(dota));
-  out.wrong = keys(await grant.filesOf(base));
-  await root.removeEntry('grant-test', { recursive: true });
-  return out;
-}"""
-
-
-def check_grant_logic(page):
-    got = page.evaluate(GRANT_LOGIC)
-    packages = "maps/dota.vpk,pak01_000.vpk,pak01_dir.vpk,panorama/fonts/radiance-bold.otf"
-    want = {
-        "list": "maps/dota.vpk,pak01_000.vpk,pak01_dir.vpk,panorama/fonts/reaver-bold.otf",
-        "none": "",
-        "direct": "pak01_002.vpk,pak01_dir.vpk",
-        "fromRoot": packages,
-        "fromGame": packages,
-        "fromDota": packages,
-        "wrong": "",
-    }
-    assert got == want, f"folder grant logic: {got}"
-    print("folder grant logic ok")
-
-
-ICONS_SUMS = """async (paths) => {
-  const c = await import('./cache.js');
-  const hex = (b) => [...new Uint8Array(b)].map((v) => v.toString(16).padStart(2, '0')).join('');
-  const out = {};
-  for (const p of paths) out[p] = hex(await crypto.subtle.digest('SHA-256', await c.readCache(p)));
-  return out;
-}"""
-
-
-def check_icons_as_native(page, reference):
-    """The importer is the same code in the browser's wasm (32-bit) and on the desktop, and must
-    make the same files: a block decoder that kept 32 of a BC3 block's 48 alpha index bits in a
-    `usize` drew every icon jagged and dashed in the browser only. Every icon the browser made is
-    compared, byte for byte, with the one a desktop `dbota import` made (`--reference-cache`, or
-    DBOTA_ASSETS); without one the check fails."""
-    reference = reference or os.environ.get("DBOTA_ASSETS")
-    root = pathlib.Path(reference).expanduser() if reference else None
-    if not root or not (root / "index.txt").is_file():
-        sys.exit("the icons are compared with a desktop import: --reference-cache DIR or DBOTA_ASSETS must name one")
-    paths = sorted(str(p.relative_to(root)) for p in (root / "icons").rglob("*.png"))
-    assert paths, f"no icons in {root}"
-    got = page.evaluate(ICONS_SUMS, paths)
-    wrong = [p for p in paths if got[p] != hashlib.sha256((root / p).read_bytes()).hexdigest()]
-    assert not wrong, f"{len(wrong)} of {len(paths)} icons differ from the desktop's import, e.g. {wrong[:5]}"
-    print(f"icons: all {len(paths)} the same as the desktop's import")
-def play_scene(page, report, settle):
-    """Plays on the copy in private storage: the client reads the map and the scene is drawn."""
-    page.click("#play")
-    try:
-        page.wait_for_function(
-            "() => globalThis.dbota_cache && globalThis.dbota_cache.reads && globalThis.dbota_cache.reads.count > 20",
-            timeout=180000,
-        )
-        # The map: its glTF, its geometry and its textures.
-        page.wait_for_function(
-            """() => { const s = globalThis.dbota_cache.reads.seen;
-               return s.has('map/mid/mid.gltf') && s.has('map/mid/mid.bin')
-                 && [...s].some((p) => p.startsWith('map/mid/') && p.endsWith('.ktx2')); }""",
-            timeout=300000,
-        )
-    except Exception:
-        print("status:", page.inner_text("#status"), file=sys.stderr)
-        report()
-        page.screenshot(path=str(HERE.parent.parent / "temp/smoke-fail.png"))
-        raise
-    reads = page.evaluate("() => globalThis.dbota_cache.reads")
-    seen = page.evaluate("() => globalThis.dbota_cache.reads.seen.size")
-    print("the client read", reads["count"], "times,", seen, "cache files, last:", reads["last"][-3:])
-    assert any(p.endswith((".png", ".ktx2", ".mp3", ".wav")) for p in reads["last"]), reads
-    # The map's chunks are merged and uploaded frame by frame after they are read.
-    page.wait_for_timeout(settle * 1000)
-    # A software GPU draws the whole map slowly: a frame may take minutes.
-    page.screenshot(path=str(HERE.parent.parent / "temp/smoke.png"), timeout=600000)
-
-
-def import_smoke(args, install):
-    folder = farm(install, HERE.parent.parent / "temp/smoke-install")
-    server = serve(args.import_page or OUT)
-    base = f"http://127.0.0.1:{server.server_address[1]}/"
-    requests, console, failures = [], [], []
-
-    def report():
-        print("console:", *[c[:300] for c in [c for c in console if "CommandQueue" not in c and not c.startswith("log.")][-25:]], sep="\n  ", file=sys.stderr)
-        print("errors:", failures, file=sys.stderr)
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(args=BROWSER_ARGS)
-        page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
-        page.on("request", lambda r: requests.append((r.method, r.url, r.post_data)))
-        page.on("console", lambda m: console.append(m.text))
-        page.on("pageerror", lambda e: failures.append(f"page error: {e}"))
-        # The fallback picker (`<input webkitdirectory>`) is the path every browser has.
-        page.add_init_script("delete window.showDirectoryPicker")
-
-        page.goto(base)
-        try:
-            page.wait_for_selector("#grant:not([hidden])", timeout=90000)
-        except Exception:
-            report()
-            page.screenshot(path=str(HERE.parent.parent / "temp/smoke-grant.png"))
-            raise
-        assert page.is_hidden("#standins") and "stand-in" not in page.inner_text("main"), "no way to play without assets is offered"
-        assert "never leave your computer" in page.inner_text("#grant"), "the privacy promise is on the page"
-
-        check_grant_logic(page)
-
-        # Cancelling an import leaves nothing behind and the question comes back.
-        with page.expect_file_chooser() as chooser:
-            page.click("#pick")
-        chooser.value.set_files(str(folder))
-        page.wait_for_selector("#progress:not([hidden])", timeout=120000)
-        page.wait_for_function("() => document.getElementById('bar').value > 0", timeout=120000)
-        page.click("#cancel")
-        page.wait_for_selector("#grant:not([hidden])", timeout=60000)
-        assert "cancelled" in page.inner_text("#status"), page.inner_text("#status")
-        assert page.evaluate("async () => (await (await import('./cache.js')).readState()) === null")
-        print("cancel leaves no copy")
-
-        # A write the browser refuses ends the import: the copy is unfinished (no index, no
-        # stamp), the page says so, and the question comes back. The worker is served with its
-        # 300th write failing.
-        def failing_worker(route):
-            body = route.fetch().text()
-            body = body.replace(
-                "async function writeFile(path, bytes) {",
-                'let writes = 0;\nasync function writeFile(path, bytes) {\n'
-                '  if (++writes === 300) throw new Error("injected: the write failed");',
-                1,
-            )
-            assert "injected" in body, "the worker's writeFile changed"
-            route.fulfill(body=body, content_type="text/javascript")
-
-        page.route("**/import_worker.js", failing_worker)
-        with page.expect_file_chooser() as chooser:
-            page.click("#pick")
-        chooser.value.set_files(str(folder))
-        page.wait_for_selector("#grant:not([hidden])", timeout=300000)
-        assert "injected" in page.inner_text("#status"), page.inner_text("#status")
-        assert page.evaluate("async () => (await (await import('./cache.js')).readState()) === null")
-        assert page.evaluate("() => globalThis.dbota_cache === undefined")
-        page.unroute("**/import_worker.js")
-        print("a failed write ends the import, unfinished")
-
-        started = time.time()
-        with page.expect_file_chooser() as chooser:
-            page.click("#pick")
-        chooser.value.set_files(str(folder))
-        try:
-            page.wait_for_selector("#progress:not([hidden]), #ready:not([hidden])", timeout=120000)
-            page.wait_for_selector("#ready:not([hidden])", timeout=300000)
-        except Exception:
-            print("status:", page.inner_text("#status"), file=sys.stderr)
-            report()
-            raise
-        print(f"ready after {time.time() - started:.0f} s:", page.inner_text("#readyText"))
-        state = page.evaluate(
-            """async () => { const c = await import('./cache.js'); const s = await c.readState();
-               return s && {stamp: s.stamp, files: s.files.size, small: s.small.length,
-                            head: await c.readCache('models/hero/nevermore_head/nevermore_head.glb').then(b => b && b.length)}; }"""
-        )
-        print("cache:", state)
-        assert state and state["files"] > 800 and state["head"] and state["head"] > 1000, state
-
-        check_icons_as_native(page, args.reference_cache)
-
-        page.reload()
-        page.wait_for_selector("#ready:not([hidden])", timeout=20000)
-        print("after reload: ready without picking again")
-
-        # A copy another dbota made (its stamp of another asset fingerprint) is not played: the
-        # page holds at the question, publishes nothing to the client, and makes it again.
-        page.evaluate(
-            """async () => { const c = await import('./cache.js');
-               const h = await (await c.dir([], false)).getFileHandle('stamp.txt');
-               const w = await h.createWritable(); await w.write('v1/rev1/0000000000000000/1/2'); await w.close(); }"""
-        )
-        page.reload()
-        page.wait_for_selector("#stale:not([hidden])", timeout=20000)
-        assert page.is_hidden("#ready") and page.is_hidden("#play"), "no Play on a stale copy"
-        assert page.evaluate("() => globalThis.dbota_cache === undefined"), "a stale copy is not published"
-        with page.expect_file_chooser() as chooser:
-            page.click("#reimport")
-        chooser.value.set_files(str(folder))
-        page.wait_for_selector("#ready:not([hidden])", timeout=300000)
-        print("a stale copy holds the page and is imported again:", page.inner_text("#readyText"))
-
-        if not args.no_game:
-            play_scene(page, report, args.settle)
-
-        bad = [(m, u) for m, u, d in requests if not u.startswith(base) and not u.startswith("blob:") and not u.startswith("data:")]
-        posts = [(m, u) for m, u, d in requests if m != "GET" or d]
-        assert not bad, f"requests outside the page's own origin: {bad}"
-        assert not posts, f"the page sent data: {posts}"
-        errs = [c for c in console if "panicked" in c or "RuntimeError" in c]
-        assert not errs, errs
-        # The models' and the map's textures are block-compressed KTX2 files: drawn as they are
-        # where the GPU samples BC, else decoded as they load; either way none fails.
-        decoded = any("samples no BC textures" in c for c in console)
-        print("textures:", "decoded on load (no BC on this GPU)" if decoded else "block-compressed on the GPU")
-        ktx2 = [c for c in console if ".ktx2" in c and ("rror" in c or "ailed" in c)]
-        assert not ktx2, ktx2[:5]
-
-        if not args.keep:
-            page.goto(base)
-            page.wait_for_selector("#ready:not([hidden])", timeout=20000)
-            page.click("#remove")
-            page.wait_for_selector("#grant:not([hidden])", timeout=20000)
-            gone = page.evaluate("async () => { const c = await import('./cache.js'); return (await c.readState()) === null; }")
-            assert gone, "the copy is deleted"
-            print("deleted")
-        browser.close()
-    server.shutdown()
-    if failures:
-        sys.exit("\n".join(failures))
-    print("smoke test passed:", len(requests), "requests, all to", base)
 
 
 def browser_arguments():
@@ -988,56 +684,6 @@ NO_WEBGPU_CANVAS = """
   };"""
 
 
-def check_served_cache(directory):
-    """A served cache publishes its validated index; a missing index grants no assets."""
-    class Served(Quiet):
-        text = None
-
-        def do_GET(self):
-            if self.path == "/cache/index.txt":
-                if self.text is None:
-                    self.send_error(404)
-                else:
-                    body = self.text.encode()
-                    self.send_response(200)
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                return
-            super().do_GET()
-
-    with sync_playwright() as p:
-        server = serve(directory, Served)
-        base = f"http://127.0.0.1:{server.server_address[1]}/"
-        browser = p.chromium.launch(args=BROWSER_ARGS)
-        try:
-            page = browser.new_page()
-            # A static page of this origin, without starting the game or requiring its assets.
-            page.goto(base + "cache.js")
-            header = page.evaluate("""async () => {
-                const module = await import('./import/dbota_import.js');
-                await module.default(); return module.cache_index_header();
-            }""")
-            Served.text = header + "\nfile 100 icons/items/blink.png\nfile 90 icons/abilities/nevermore_requiem.png\nfile 5 text/labels.json small\n"
-            got = page.evaluate("""async () => {
-                await (await import('./cache.js')).publishServed();
-                return [...globalThis.dbota_cache.files];
-            }""")
-            assert got == [["icons/items/blink.png", 100], ["icons/abilities/nevermore_requiem.png", 90], ["text/labels.json", 5]], got
-            Served.text = None
-            got = page.evaluate("""async () => {
-                try { await (await import('./cache.js')).publishServed(); return 'accepted'; }
-                catch (e) { return String(e); }
-            }""")
-            assert "HTTP 404" in got, got
-            assert page.evaluate("globalThis.dbota_cache === undefined")
-            print("a served cache publishes only a validated index; a missing index grants no assets")
-        finally:
-            browser.close()
-            server.shutdown()
-            server.server_close()
-
-
 FONTS = ("bota-sans-bold.ttf", "bota-sans-regular.ttf", "bota-sans-cjk.otf")
 
 
@@ -1068,7 +714,8 @@ def assert_launch_labels_hidden(page):
 
 def check_startup_page(directory):
     """The page picks the client the browser can draw with, and a start that fails says so on the
-    page: no graphics, a renderer that cannot be made (offering the WebGL2 client), no memory."""
+    page: no graphics (the page's screen of what the browser lacks), a renderer that cannot be made
+    (offering the WebGL2 client), no memory."""
     def run(query, init=None, args=()):
         with sync_playwright() as p:
             server, base, browser, page, console, problems = opened(p, directory, args)
@@ -1092,7 +739,8 @@ def check_startup_page(directory):
             assert not problems, problems
             print(f"{api}: the client runs")
     for page, console, problems in run("?cache=http", NO_GRAPHICS):
-        failed(page, "does not let the page use the graphics card")
+        page.wait_for_selector("#unsupported", state="visible", timeout=600000)
+        assert "WebGPU or WebGL 2" in page.inner_text("#lacks"), page.inner_text("#lacks")
         assert not any("drawing with" in c for c in console), "no client is loaded without graphics"
         print("no graphics: said on the page")
     for page, console, problems in run("?cache=http", NO_WEBGPU_CANVAS):
@@ -1293,21 +941,16 @@ def check_speech_page(directory):
 
 
 def check_boot_page(directory):
-    """The page never spins for ever: each way the start can go wrong ends on the failure screen or the
-    asset screen, saying which stage failed. A part of the page that does not load, a page that never
-    arrives, code the browser cannot run, a browser storage that does not answer or is missing, a game
-    download that stalls or is refused. Chromium for all, Firefox (where one is installed) for the
-    stages that need no graphics."""
+    """The page never spins for ever: each way the start can go wrong ends on the failure screen, saying
+    which stage failed. A part of the page that does not load, a page that never arrives, code the browser
+    cannot run, a game download that stalls or is refused. Chromium for all, Firefox for the stages that
+    need no graphics. (A storage that does not answer or is missing: web/test/first_run.py.)"""
     def screen(page, selector, title=None, timeout=180000):
         page.wait_for_selector(selector, state="visible", timeout=timeout)
         if title:
             got = page.inner_text("#failTitle")
             assert title in got, got
         assert page.is_hidden("#booting") and page.is_hidden("#starting"), "no spinner is left over the screen"
-
-    hang = "() => new Promise(() => {})"
-    no_storage = "Object.defineProperty(navigator, 'storage', {value: undefined});"
-    hung_storage = f"navigator.storage.getDirectory = {hang};"
 
     def case(engine, name, query, init=None, routes=(), then=None):
         with sync_playwright() as p:
@@ -1342,14 +985,6 @@ def check_boot_page(directory):
              routes=[("**/main.js", never)],
              then=lambda page: screen(page, "#failed", "did not start"))
 
-        def asks_for_the_folder(page, said):
-            screen(page, "#grant")
-            assert said in page.inner_text("#status"), page.inner_text("#status")
-
-        case(engine, "a storage that does not answer leaves the asset screen", "", init=hung_storage,
-             then=lambda page: asks_for_the_folder(page, "did not answer"))
-        case(engine, "a browser without storage leaves the asset screen", "", init=no_storage,
-             then=lambda page: asks_for_the_folder(page, "no private storage"))
     case("chromium", "a download that stalls ends on the failure screen", "?cache=http",
          routes=[("**/dbota_bg.wasm", never)],
          then=lambda page: (screen(page, "#failed", "could not be downloaded"), assert_in(page.text_content("#failDetail"), "dbota_bg.wasm")))
@@ -1405,7 +1040,7 @@ def check_busy_page(directory):
     """A busy server answers 503 with a Retry-After of seconds (as radovid does when the pages it is
     sending hold their share of its connections). The page says it is busy and when it tries
     again, waits that long and tries once more: a part of the page itself (loaded again whole),
-    the served cache's index and the game's download each get through on the second try, and a
+    the game's download and the import worker's module each get through on the second try, and a
     download turned away twice ends on the failure screen naming the 503. Retry-After is read as
     seconds or a date, within 1 to 60 s, 5 s when it is missing or no number."""
 
@@ -1414,8 +1049,6 @@ def check_busy_page(directory):
         refuse = {}
         asked = {}
         index = None
-        # Bytes of an index past its bound sent instead, when set.
-        oversized = 0
 
         def do_GET(self):
             path = self.path.split("?")[0]
@@ -1428,15 +1061,6 @@ def check_busy_page(directory):
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
-            if path == "/cache/index.txt" and Busy.oversized:
-                # Past the index's bound, with no length said: only reading it shows that.
-                self.send_response(200)
-                self.end_headers()
-                try:
-                    self.wfile.write(b"x" * Busy.oversized)
-                except OSError:
-                    pass
-                return
             if path == "/cache/index.txt":
                 body = Busy.index.encode()
                 self.send_response(200)
@@ -1446,26 +1070,10 @@ def check_busy_page(directory):
                 return
             super().do_GET()
 
-    # The index of a served cache as this build writes it (its header is the importer's).
-    with sync_playwright() as p:
-        server = serve(directory, Busy)
-        browser = p.chromium.launch(args=BROWSER_ARGS)
-        try:
-            page = browser.new_page()
-            page.goto(f"http://127.0.0.1:{server.server_address[1]}/cache.js")
-            header = page.evaluate("""async () => {
-                const module = await import('./import/dbota_import.js');
-                await module.default(); return module.cache_index_header();
-            }""")
-            Busy.index = header + "\nfile 5 text/labels.json small\n"
-            index_limit = page.evaluate("""async () => {
-                const module = await import('./import/dbota_import.js');
-                return module.cache_metadata_limits()[1];
-            }""")
-        finally:
-            browser.close()
-            server.shutdown()
-            server.server_close()
+    # The index of a served copy as this build writes it (its header is the importer's revision).
+    source = (HERE.parent.parent / "crates/dbota_import/src/import.rs").read_text()
+    revision = re.search(r"pub const IMPORT_REV: u32 = (\d+)", source).group(1)
+    Busy.index = f"dbota-cache 1 rev {revision}\nfile 5 text/labels.json small\n"
 
     def case(name, query, refuse, then, engine="chromium"):
         Busy.refuse, Busy.asked = refuse, {}
@@ -1473,6 +1081,8 @@ def check_busy_page(directory):
             server = serve(directory, Busy)
             browser = launch_engine(p, engine)
             page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
+            page.console = []
+            page.on("console", lambda m: page.console.append(m.text))
             page.add_init_script(said_log)
             page.goto(f"http://127.0.0.1:{server.server_address[1]}/{query}", wait_until="commit")
             then(page)
@@ -1485,7 +1095,7 @@ def check_busy_page(directory):
     said_log = """(() => {
       const said = JSON.parse(sessionStorage.getItem("said") || "[]");
       new MutationObserver(() => {
-        for (const id of ["booting", "starting", "status"]) {
+        for (const id of ["booting", "starting"]) {
           const text = document.getElementById(id)?.textContent;
           if (text && !said.includes(text)) {
             said.push(text);
@@ -1514,21 +1124,12 @@ def check_busy_page(directory):
         says(page, "busy: trying again in ")
         said = page.evaluate("() => JSON.parse(sessionStorage.getItem('said') || '[]')")
         assert any(f"trying again in {n} s" in line for line in said for n in (2, 5)), said
-        page.wait_for_selector("#grant", state="visible", timeout=120000)
+        wait_console(page, page.console, r"first run: ready", 600, "the client's first-run screen")
         assert page.is_hidden("#failed"), page.inner_text("#failDetail")
 
     for engine in ("chromium", "firefox"):
         case("a part of the page turned away is loaded again after the wait", "",
              {"/main.js": (2, "2")}, page_again, engine)
-
-    def index_again(page):
-        page.wait_for_function("() => globalThis.dbota_cache && globalThis.dbota_cache.mode === 'http'", timeout=60000)
-        got = page.evaluate("() => { const f = globalThis.dbota_cache.files; return f ? [...f.entries()] : null; }")
-        assert got == [["text/labels.json", 5]], got
-        assert Busy.asked["/cache/index.txt"] == 2, Busy.asked
-
-    case("the served cache's index is fetched again after the wait", "?cache=http",
-         {"/cache/index.txt": (1, "1")}, index_again)
 
     def download_again(page):
         says(page, "busy: trying again in 1 s")
@@ -1551,25 +1152,9 @@ def check_busy_page(directory):
     case("a download turned away twice is a failure", "?cache=http",
          {"/dbota_bg.wasm": (2, "1")}, refused_twice)
 
-    def retried_index_bounded(page):
-        # The index asked for again after the wait is read within the same bound as any.
-        got = page.evaluate("""async () => {
-          try { await (await import('./cache.js')).publishServed(); return 'accepted'; }
-          catch (e) { return String(e); }
-        }""")
-        assert f"exceeds {index_limit} bytes" in got, got
-        assert page.evaluate("globalThis.dbota_cache === undefined")
-        assert Busy.asked["/cache/index.txt"] == 2, Busy.asked
-
-    Busy.oversized = index_limit + 1
-    case("an index fetched again after the wait is read within the index's bound", "cache.js",
-         {"/cache/index.txt": (1, "1")}, retried_index_bounded)
-    Busy.oversized = 0
-
     def worker_wasm_again(page):
-        # The import worker on its own (from a page of the origin that starts nothing), told to
-        # check an install of no files: its importer's wasm comes on the second try, the page is
-        # told of the wait, and the check then says what is missing.
+        # The import worker on its own (from a page of the origin that starts nothing): its importer's
+        # wasm comes on the second try, the page is told of the wait, and the worker then listens.
         got = page.evaluate("""() => new Promise((done) => {
           const worker = new Worker("./import_worker.js", { type: "module" });
           const heard = [];
@@ -1578,13 +1163,11 @@ def check_busy_page(directory):
             if (data.type !== "busy") { worker.terminate(); done(heard); }
           };
           worker.onerror = (e) => { worker.terminate(); done([...heard, { type: "worker error", message: e.message }]); };
-          worker.postMessage({ op: "check", files: [], modified: 0 });
         })""")
-        assert got[0] == {"type": "busy", "seconds": 1}, got
-        assert got[1]["type"] == "error" and "pak01_dir.vpk" in got[1]["message"], got
+        assert got == [{"type": "busy", "seconds": 1}, {"type": "ready"}], got
         assert Busy.asked["/import/dbota_import_bg.wasm"] == 2, Busy.asked
 
-    case("the import worker's wasm is fetched again after the wait", "cache.js",
+    case("the import worker's wasm is fetched again after the wait", "busy.js",
          {"/import/dbota_import_bg.wasm": (1, "1")}, worker_wasm_again)
 
     def waits(page):
@@ -1963,141 +1546,12 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
         service.terminate()
         service.wait(timeout=20)
     print("replays: kept in OPFS from a match through radovid, listed and played")
-START_PRIMARY = "rgb(170, 34, 34)"
-START_SECONDARY = "rgba(0, 0, 0, 0)"
-
-START_WITH_COPY = """async (header) => {
-  const cache = await import('./cache.js');
-  const version = (await cache.importer()).cache_version();
-  const root = await navigator.storage.getDirectory();
-  const put = async (dir, name, text) => {
-    const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
-    await w.write(text); await w.close();
-  };
-  const copy = await root.getDirectoryHandle('dbota', { create: true });
-  await put(copy, 'stamp.txt', version + '/1/2');
-  await put(copy, 'index.txt', header + 'file 3 hud/a.png\\n');
-  await put(await copy.getDirectoryHandle('hud', { create: true }), 'a.png', 'png');
-  // What is not the copy: the player's replays and another page's folder.
-  await put(await root.getDirectoryHandle('dbota-replays', { create: true }), 'kept.brp', 'replay');
-  await put(await root.getDirectoryHandle('foreign', { create: true }), 'kept.txt', 'foreign');
-}"""
-
-START_STORAGE = """async () => {
-  const cache = await import('./cache.js');
-  const root = await navigator.storage.getDirectory();
-  const names = [];
-  for await (const [name] of root.entries()) names.push(name);
-  const read = async (dir, name) => (await (await (await root.getDirectoryHandle(dir)).getFileHandle(name)).getFile()).text();
-  return { names: names.sort(), state: await cache.readState(), replay: await read('dbota-replays', 'kept.brp'),
-           foreign: await read('foreign', 'kept.txt') };
-}"""
-
-
-def start_buttons(page):
-    """(text, background colour) of every button the start window shows."""
-    shown = page.evaluate(
-        """() => [...document.querySelectorAll('#gate button')].filter((b) => b.offsetParent !== null)
-             .map((b) => [b.textContent.trim(), getComputedStyle(b).backgroundColor])"""
-    )
-    return [tuple(button) for button in shown]
-
-
-def check_native_links(page):
-    """No download links while web/native.js names no release (web/build.sh writes them from
-    DBOTA_NATIVE_DOWNLOADS): a page never points a player at an address that is not one."""
-    got = page.evaluate(
-        """async () => {
-          const { NATIVE_CLIENT } = await import('./native.js');
-          const footer = document.getElementById('native');
-          return { visible: footer.offsetParent !== null, constants: NATIVE_CLIENT };
-        }"""
-    )
-    assert got["constants"] is None, got
-    assert not got["visible"], "download links are shown though no release names them"
-
-
-def check_start_page(directory):
-    """The start window: the import button without a copy, "Play" and "Delete and import again" with one,
-    the delete leaving only the page's own copy behind it, and the native client's links in both."""
-    with sync_playwright() as p:
-        server, base, browser, page, console, problems = opened(p, directory)
-        page.goto(base)
-        page.wait_for_selector("#grant:not([hidden])", timeout=60000)
-        assert start_buttons(page) == [("Use Dota 2 folder", START_PRIMARY)], start_buttons(page)
-        grant = page.inner_text("#grant")
-        assert "needs your own Dota 2 install" in grant and "Browse local files" in grant, grant
-        check_native_links(page)
-        print("no copy: one button, what is needed and where its folder is, no download links")
-        check_directory_picker(page)
-
-        source = (HERE.parent.parent / "crates/dbota_import/src/import.rs").read_text()
-        revision = re.search(r"pub const IMPORT_REV: u32 = (\d+)", source).group(1)
-        page.evaluate(START_WITH_COPY, f"dbota-cache 1 rev {revision}\n")
-        page.reload()
-        page.wait_for_selector("#ready:not([hidden])", timeout=60000)
-        assert page.is_hidden("#grant")
-        assert start_buttons(page) == [("Play", START_PRIMARY), ("Delete and import again", START_SECONDARY)], start_buttons(page)
-        check_native_links(page)
-        print("a copy: Play and Delete and import again, no download links")
-
-        page.click("#remove")
-        page.wait_for_selector("#grant:not([hidden])", timeout=20000)
-        assert start_buttons(page) == [("Use Dota 2 folder", START_PRIMARY)], start_buttons(page)
-        check_native_links(page)
-        after = page.evaluate(START_STORAGE)
-        assert after["state"] is None, "the copy is deleted"
-        assert after["names"] == ["dbota-replays", "foreign"], f"only the page's copy is removed: {after['names']}"
-        assert (after["replay"], after["foreign"]) == ("replay", "foreign")
-        page.reload()
-        page.wait_for_selector("#grant:not([hidden])", timeout=60000)
-        assert [t for t, _ in start_buttons(page)] == ["Use Dota 2 folder"], "still no copy after a reload"
-        assert not problems, problems
-        print("delete: back to no copy, replays and others' storage untouched")
-        browser.close()
-    server.shutdown()
-    print("start window test passed")
-
-
-def check_directory_picker(page):
-    """Where the browser has `showDirectoryPicker` (Chromium) the folder button uses it: a stub
-    hands the page a folder in private storage without Dota's packages, which is walked and
-    refused with what to pick instead."""
-    page.evaluate(
-        """async () => {
-          const root = await navigator.storage.getDirectory();
-          const top = await root.getDirectoryHandle('picked-folder', { create: true });
-          const w = await (await (await top.getDirectoryHandle('hud', { create: true }))
-            .getFileHandle('a.png', { create: true })).createWritable();
-          await w.write('x'); await w.close();
-          window.showDirectoryPicker = async () => top;
-        }"""
-    )
-    page.click("#pick")
-    page.wait_for_function(
-        "() => document.getElementById('status').textContent.includes('No Dota 2 packages found there')",
-        timeout=60000,
-    )
-    page.evaluate(
-        "async () => (await navigator.storage.getDirectory()).removeEntry('picked-folder', { recursive: true })"
-    )
-    print("the directory picker's folder is walked and refused with what to pick:", page.inner_text("#status"))
-
-
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--install")
-    ap.add_argument("--import-page", type=pathlib.Path, help="a build for the import test (default web/out)")
-    ap.add_argument("--no-game", action="store_true")
-    ap.add_argument("--reference-cache", help="a cache a desktop `dbota import` made, to compare the browser's icons with")
-    ap.add_argument("--keep", action="store_true", help="leave the imported copy in place")
-    ap.add_argument("--settle", type=int, default=5, help="seconds the client draws before the screenshot")
     ap.add_argument("--replay-page", type=pathlib.Path, help="a build with a packed replay built in")
     ap.add_argument("--scene-page", type=pathlib.Path, help="a replay build: forest and heroes drawn on both graphics APIs")
     ap.add_argument("--fullscreen-page", type=pathlib.Path, help="a replay build opened on the Video settings")
     ap.add_argument("--server", help="a bota_server built with the websocket feature, for --replays-page")
-    ap.add_argument("--start-page", type=pathlib.Path, help="any build: the start window's two states and the native client links")
-    ap.add_argument("--served-page", type=pathlib.Path, help="any build: ?cache=http publishes the served cache's index")
     ap.add_argument("--fonts-page", type=pathlib.Path, help="any build: the page holds its interface fonts")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
     ap.add_argument("--launch-page", type=pathlib.Path, help="any build: the client starts and draws without a panic")
@@ -2113,17 +1567,7 @@ def main():
     ap.add_argument("--replays-page", type=pathlib.Path, help="a build without a replay: a match through radovid is kept in OPFS")
     ap.add_argument("--radovid", help="the radovid binary, for --replays-page (with --server)")
     ap.add_argument("--shots", action="store_true", help="--replays-page saves a screenshot of every step to temp/smoke-replays")
-    ap.add_argument("--only-wire", action="store_true", help="skip the import test even where an install is found")
     args = ap.parse_args()
-    install = None if args.only_wire else find_install(args.install)
-    if install:
-        import_smoke(args, install)
-    elif not args.only_wire:
-        sys.exit("the import test needs a Dota 2 install (DBOTA_DOTA_PATH or --install); --only-wire leaves it out")
-    if args.start_page:
-        check_start_page(args.start_page)
-    if args.served_page:
-        check_served_cache(args.served_page)
     if args.sound_page:
         check_sound_page(args.sound_page)
     if args.ui_art_page:

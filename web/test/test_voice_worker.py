@@ -1,8 +1,8 @@
 """The voice worker reads a served hero's voice pack within the pack's own bound: a pack served
 larger than that (or without end) is given up at the bound, not read whole into the worker's memory.
 
-Build dbota_import_web and run wasm-bindgen into DBOTA_INDEX_PAGE/import, and copy web/cache.js,
-web/busy.js and web/voice_worker.js beside it. No game or install is needed.
+Build dbota_import_web and run wasm-bindgen into DBOTA_INDEX_PAGE/import, and copy web/bounded.js and
+web/voice_worker.js beside it (web/build.sh does). No game or install is needed.
 """
 import functools
 import http.server
@@ -49,7 +49,7 @@ class VoiceWorkerTests(unittest.TestCase):
         cls.playwright = sync_playwright().start()
         cls.browser = cls.playwright.chromium.launch(args=["--no-sandbox", "--mute-audio"])
         cls.page = cls.browser.new_page()
-        cls.page.goto(f"http://127.0.0.1:{cls.server.server_port}/cache.js")
+        cls.page.goto(f"http://127.0.0.1:{cls.server.server_port}/bounded.js")
 
     @classmethod
     def tearDownClass(cls):
@@ -102,7 +102,7 @@ class VoiceWorkerTests(unittest.TestCase):
             const worker = new Worker('./voice_worker.js', {type: 'module'});
             worker.onmessage = ({data}) => { worker.terminate(); resolve(data); };
             worker.onerror = (e) => resolve({error: 'the worker failed: ' + e.message});
-            worker.postMessage({hero: 'pudge', path: 'sounds/voice/pudge.bin', url: 'endless.bin', mode: 'http'});
+            worker.postMessage({hero: 'pudge', path: 'sounds/voice/pudge.bin', url: 'endless.bin', folder: null});
           });
           return {limit, error: answer.error || null, records: !!answer.records};
         }""")
@@ -116,7 +116,7 @@ class VoiceWorkerTests(unittest.TestCase):
           const module = await import('./import/dbota_import.js');
           await module.default();
           const limit = module.voice_pack_limit();
-          const { responseBytes } = await import('./cache.js');
+          const { responseBytes } = await import('./bounded.js');
           let taken = 0;
           let cancelled = false;
           const body = new ReadableStream(

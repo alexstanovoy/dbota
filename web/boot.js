@@ -1,8 +1,8 @@
 // The page's first script, a classic one so that it runs where the page's modules cannot (a browser
 // too old for them, a module that did not load, a syntax error in one): the page is never blank
 // and never spins for ever. It shows "Loading" at once and the failure screen when the page's code
-// has not started within WATCHDOG_MS, saying which stage it was. Later stages (storage, the
-// graphics, the download of the game) have their own limits in main.js and end here too:
+// has not started within WATCHDOG_MS, saying which stage it was. Later stages (the graphics, the
+// download of the game, a client that stops) have their own limits in main.js and end here too:
 // `dbota_boot.fail` is the page's one failure screen.
 (function () {
   "use strict";
@@ -36,9 +36,7 @@
     if (ended) return;
     ended = true;
     retried(false);
-    ["grant", "ready", "progress", "stale"].forEach(function (id) {
-      $(id).hidden = true;
-    });
+    $("unsupported").hidden = true;
     $("booting").hidden = true;
     $("starting").hidden = true;
     $("failTitle").textContent = title;

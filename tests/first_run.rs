@@ -218,7 +218,7 @@ fn a_first_run_finds_dota_imports_it_and_goes_on_to_sign_in() {
     );
     let script = format!(
         "await:text:Welcome to dbota;await:text:free on Steam;await:text:never leave your computer;\
-         await:text:Dota 2 found: {};shot:first-run-found.png;click:import from dota 2;\
+         await:text:DOTA 2 FOUND;await:text:{};shot:first-run-found.png;click:import from dota 2;\
          {TO_SIGN_IN};click:settings;click:options;click:re-import game files;\
          await:text:Re-import the game files;shot:first-run-reimport.png;click:back to dbota;\
          await:button:sign in;{QUIT_MENU}",
@@ -244,7 +244,7 @@ fn cancelling_an_import_leaves_no_copy_and_the_screen_draws_while_it_works() {
         .arg("--import-hold")
         .arg(scratch.root.join("never-lifted"));
     let script = "await:button:import from dota 2;click:import from dota 2;\
-                  await:text:Making your private copy;frames:120;shot:first-run-importing.png;\
+                  await:text:MAKING YOUR PRIVATE COPY;frames:120;shot:first-run-importing.png;\
                   click:cancel;await:text:Import cancelled.;await:button:import from dota 2;\
                   click:quit dbota";
     played("cancel", client, script);
@@ -396,7 +396,7 @@ fn the_screen_names_the_log_file_that_lists_the_assets_that_did_not_convert() {
         &scratch.root.join("games"),
     );
     let script = format!(
-        "await:text:Dota 2 found: {};click:import from dota 2;await:button:continue;\
+        "await:text:DOTA 2 FOUND;await:text:{};click:import from dota 2;await:button:continue;\
          await:text:{} names them;click:continue;await:button:sign in;{QUIT_MENU}",
         dota.display(),
         log.display()
@@ -457,7 +457,7 @@ fn without_dota_in_steam_the_player_picks_its_folder() {
          shot:first-run-not-found.png;await:nobutton:import from dota 2;\
          click:choose the dota 2 folder;await:text:holds no Dota 2;\
          shot:first-run-not-dota.png;click:choose the dota 2 folder;\
-         await:text:Dota 2 found: {};click:import from dota 2;{TO_SIGN_IN};{QUIT_MENU}",
+         await:text:DOTA 2 FOUND;await:text:{};click:import from dota 2;{TO_SIGN_IN};{QUIT_MENU}",
         elsewhere.display()
     );
     played("chooser", client, &script);
@@ -577,7 +577,7 @@ fn without_a_folder_dialog_the_path_is_typed() {
     client.arg("--no-dialog");
     let script = format!(
         "click:choose the dota 2 folder;await:button:use this path;text:{};\
-         shot:first-run-typed.png;key:Enter;await:text:Dota 2 found: {};click:quit dbota",
+         shot:first-run-typed.png;key:Enter;await:text:DOTA 2 FOUND;await:text:{};click:quit dbota",
         elsewhere.display(),
         elsewhere.display()
     );

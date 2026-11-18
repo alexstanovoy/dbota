@@ -1116,13 +1116,11 @@ fn census_line(kit: &mut Kit, root: Entity) {
         flex_basis: px(0),
         ..default()
     });
-    #[cfg(not(target_arch = "wasm32"))]
     reimport_button(kit, root);
 }
 
 /// The button that makes the copy of the Dota 2 files again: dbota starts again at its import
 /// screen (`firstrun`).
-#[cfg(not(target_arch = "wasm32"))]
 fn reimport_button(kit: &mut Kit, root: Entity) {
     let button = kit
         .commands

@@ -213,7 +213,7 @@ impl Script {
 
     fn finish_step(&mut self) {
         let (line, _) = self.steps.get(self.at).expect("the running script step");
-        println!("script: {line}");
+        say(&format!("script: {line}"));
         self.at += 1;
         self.began = None;
         self.began_frame = None;
@@ -350,6 +350,15 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
         .collect()
 }
 
+/// Prints a line of the script's progress where its test reads it: the standard output, in a
+/// browser the console.
+fn say(line: &str) {
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("{line}");
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&line.into());
+}
+
 pub fn plugin(app: &mut App) {
     let Some(text) = app.world().resource::<crate::Args>().script.clone() else {
         return;
@@ -357,7 +366,10 @@ pub fn plugin(app: &mut App) {
     let steps = match parse(&text) {
         Ok(steps) => steps,
         Err(why) => {
+            #[cfg(not(target_arch = "wasm32"))]
             eprintln!("dbota: --script: {why}");
+            #[cfg(target_arch = "wasm32")]
+            say(&format!("dbota: --script: {why}"));
             std::process::exit(2);
         }
     };
@@ -648,7 +660,7 @@ fn play(
             false
         }
         Step::Click(name) if disabled.iter().any(|n| n.as_str() == name) => {
-            println!("script: {line} is disabled");
+            say(&format!("script: {line} is disabled"));
             exit.write(AppExit::from_code(2));
             true
         }
@@ -670,7 +682,7 @@ fn play(
                 &scene.light.daylight,
                 &scene.drawn,
             ) {
-                println!("script: {line} does not hold");
+                say(&format!("script: {line} does not hold"));
                 exit.write(AppExit::from_code(2));
             }
             true
@@ -718,7 +730,7 @@ fn play(
     if done {
         script.finish_step();
     } else if now - began > PATIENCE {
-        println!("script: timed out at {line}");
+        say(&format!("script: timed out at {line}"));
         exit.write(AppExit::from_code(2));
     }
 }

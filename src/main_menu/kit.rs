@@ -48,7 +48,7 @@ pub struct Shade {
 }
 
 impl Shade {
-    fn of(tone: Tone) -> Shade {
+    pub(crate) fn of(tone: Tone) -> Shade {
         let (rest, edge) = match tone {
             Tone::Primary => (
                 theme::GO,
@@ -67,6 +67,11 @@ impl Shade {
             edge,
             horizontal: false,
         }
+    }
+
+    /// Its ground at rest, top to bottom.
+    pub(crate) fn rest(&self) -> (Color, Color) {
+        self.rest
     }
 
     fn row(rest: (Color, Color), edge: BorderColor) -> Self {

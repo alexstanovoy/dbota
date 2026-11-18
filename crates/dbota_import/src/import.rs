@@ -123,38 +123,44 @@ const LAYOUTS: [(&str, &str); 1] = [(PORTRAITS_FILE, crate::text::PORTRAITS_LAYO
 /// the cache lacks is not current either. One the index does not list was never written (its
 /// import reported why).
 pub fn layouts_current(cache: &std::path::Path) -> bool {
-    LAYOUTS
-        .iter()
-        .all(|&(file, layout)| layout_current(cache, file, layout))
+    use std::io::Read;
+    let head = |file: &str, limit: usize| {
+        let opened = std::fs::File::open(cache.join(file)).ok()?;
+        let mut first = Vec::new();
+        // A file that cannot be read is no layout's.
+        let read = opened.take(limit as u64).read_to_end(&mut first);
+        Some(if read.is_ok() { first } else { Vec::new() })
+    };
+    let listed = |file: &str| {
+        let mut index = String::new();
+        std::fs::File::open(cache.join(INDEX))
+            .and_then(|f| f.take(MAX_INDEX).read_to_string(&mut index))
+            .is_ok_and(|_| {
+                index
+                    .lines()
+                    .any(|l| l.split_whitespace().nth(2) == Some(file))
+            })
+    };
+    layouts_current_with(head, listed)
 }
 
-/// Whether the cache's `file` starts with the line `layout`, or is not there and not listed.
-fn layout_current(cache: &std::path::Path, file: &str, layout: &str) -> bool {
-    use std::io::Read;
-    let mut first = Vec::new();
-    match std::fs::File::open(cache.join(file)) {
-        Ok(opened) => {
-            let limit = layout.len() as u64 + 1;
-            if opened.take(limit).read_to_end(&mut first).is_err() {
-                return false;
+/// [`layouts_current`] of a cache read through `head` (at most `limit` first bytes of a file,
+/// nothing when it is not there) and `listed` (whether its index lists a file): a browser's copy.
+pub fn layouts_current_with(
+    mut head: impl FnMut(&str, usize) -> Option<Vec<u8>>,
+    listed: impl Fn(&str) -> bool,
+) -> bool {
+    LAYOUTS
+        .iter()
+        .all(|&(file, layout)| match head(file, layout.len() + 1) {
+            Some(first) => {
+                let line = std::str::from_utf8(&first)
+                    .ok()
+                    .and_then(|t| t.lines().next());
+                line == Some(layout)
             }
-            let line = std::str::from_utf8(&first)
-                .ok()
-                .and_then(|t| t.lines().next());
-            line == Some(layout)
-        }
-        Err(_) => {
-            let mut index = String::new();
-            let listed = std::fs::File::open(cache.join(INDEX))
-                .and_then(|f| f.take(MAX_INDEX).read_to_string(&mut index))
-                .is_ok_and(|_| {
-                    index
-                        .lines()
-                        .any(|l| l.split_whitespace().nth(2) == Some(file))
-                });
-            !listed
-        }
-    }
+            None => !listed(file),
+        })
 }
 
 /// Names what an import of this plan makes (FNV-1a 64 of the plan's typed items): part of a
@@ -696,6 +702,13 @@ impl Plan {
 pub trait Sink {
     /// Stores `data` at the cache path `path` (relative, `/`-separated, already checked).
     fn write(&mut self, path: &str, data: &[u8]) -> Result<()>;
+
+    /// Stores `data`, the importer's own, which the sink may keep instead of copying it (a
+    /// browser's worker writes an item's files after the item, and the map's geometry alone is a
+    /// fifth of a gigabyte).
+    fn write_owned(&mut self, path: &str, data: Vec<u8>) -> Result<()> {
+        self.write(path, &data)
+    }
 }
 
 /// Whether to go on after a progress report.
@@ -1028,7 +1041,7 @@ fn icons(src: &impl Source, pak: &Vpk, abilities: bool, out: &mut Out<'_>) -> Re
         };
         let png = Texture::parse(&bytes).and_then(|t| t.first_frame_png());
         match png {
-            Ok(png) => out.put(&format!("{to}/{name}.png"), &png)?,
+            Ok(png) => out.put_owned(&format!("{to}/{name}.png"), png)?,
             Err(err) => out.report.failed.push((path, err.to_string())),
         }
     }
@@ -1116,16 +1129,34 @@ struct Out<'a> {
 
 impl Out<'_> {
     fn put(&mut self, path: &str, data: &[u8]) -> Result<()> {
+        self.check(path, data.len())?;
+        self.sink.write(path, data)?;
+        self.wrote(path, data.len());
+        Ok(())
+    }
+
+    /// [`Out::put`] of data the importer made and no longer needs: the sink may keep it.
+    fn put_owned(&mut self, path: &str, data: Vec<u8>) -> Result<()> {
+        let len = data.len();
+        self.check(path, len)?;
+        self.sink.write_owned(path, data)?;
+        self.wrote(path, len);
+        Ok(())
+    }
+
+    fn check(&self, path: &str, len: usize) -> Result<()> {
         if !safe_path(path) {
             return Err(malformed("import", format!("unsafe output path {path:?}")));
         }
-        if self.written.saturating_add(data.len() as u64) > WRITE_LIMIT {
+        if self.written.saturating_add(len as u64) > WRITE_LIMIT {
             return Err(malformed("import", "the output would exceed its limit"));
         }
-        self.sink.write(path, data)?;
-        *self.written += data.len() as u64;
-        self.report.files.insert(path.to_owned(), data.len() as u64);
         Ok(())
+    }
+
+    fn wrote(&mut self, path: &str, len: usize) {
+        *self.written += len as u64;
+        self.report.files.insert(path.to_owned(), len as u64);
     }
 }
 
@@ -1283,10 +1314,10 @@ fn make(
                         detail: format!("{path} is not a PNG"),
                     });
                 }
-                return out.put(dest, &bytes);
+                return out.put_owned(dest, bytes);
             }
             let texture = Texture::parse(&read_any(src, pak, path)?)?;
-            out.put(dest, &texture.first_frame_png()?)
+            out.put_owned(dest, texture.first_frame_png()?)
         }
         Item::Particle {
             src: path,
@@ -1757,7 +1788,7 @@ fn particle_texture(
             pack: None,
             role: Role::Colour,
         };
-        out.put(&file, &exported.to_ktx2(&texture)?)?;
+        out.put_owned(&file, exported.to_ktx2(&texture)?)?;
     }
     Ok(ParticleTexture {
         vtex: vtex.to_owned(),
@@ -2043,7 +2074,7 @@ fn background(src: &impl Source, pak: &Vpk, vmat: &str, out: &mut Out<'_>) -> Re
         .find_map(|(name, vtex)| (name == "g_tColor").then_some(vtex))
         .ok_or_else(|| malformed("portraits", "a background material has no image"))?;
     let texture = Texture::parse(&read_from(src, &[pak], &format!("{vtex}_c"))?)?;
-    out.put(&background_png(vmat), &texture.first_frame_png()?)
+    out.put_owned(&background_png(vmat), texture.first_frame_png()?)
 }
 
 /// The index of map package `vpk` among `maps`, opened on first use.
@@ -2075,8 +2106,8 @@ fn world(
     let (dir, file) = job.dest.rsplit_once('/').unwrap_or(("", job.dest));
     let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
     let bin = format!("{stem}.bin");
-    let exported = export_cache_world(src, packages, job.path, job.band, &bin, &ktx2_name)?;
-    out.put(&join(dir, &bin), &exported.bin)?;
+    let mut exported = export_cache_world(src, packages, job.path, job.band, &bin, &ktx2_name)?;
+    out.put_owned(&join(dir, &bin), std::mem::take(&mut exported.bin))?;
     let mut queue = |path: String, what: Later| {
         out.pending.push_back(Pending {
             logical: job.logical.to_owned(),
@@ -2123,7 +2154,7 @@ fn later(src: &impl Source, packages: &[&Vpk], job: &Pending, out: &mut Out<'_>)
             sound.file().into_owned()
         }
     };
-    out.put(&job.path, &data)
+    out.put_owned(&job.path, data)
 }
 
 /// The image file of texture `vtex` (`materials/x_color_psd_1.vtex` is `x_color_psd_1.png`).
@@ -2300,10 +2331,10 @@ fn model(
             continue;
         }
         let image = image(src, packages, texture, &mut decoded)?;
-        out.put(&file, &image)?;
+        out.put_owned(&file, image)?;
     }
     // The model last: its presence says its images are there.
-    out.put(dest, &exported.glb)
+    out.put_owned(dest, exported.glb)
 }
 
 /// The model of a tree at `vmdl`, written to `dest`: every mesh but the model viewer's

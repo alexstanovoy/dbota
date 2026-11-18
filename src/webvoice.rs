@@ -30,10 +30,13 @@ fn call(name: &str, args: &Array) -> Result<JsValue, String> {
 /// The answer kept for a request the page could not take.
 static REFUSED: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
 
-/// Asks the page's worker for `hero`'s pack at `rel` in the cache (`url` where a served cache
-/// has it).
+/// Asks the page's worker for `hero`'s pack at `rel` in the copy of the assets (`url` where a
+/// served copy has it; the folder of the copy in private storage where it is there).
 pub fn request(hero: &str, rel: &str, url: &str) {
-    let args = Array::of3(&hero.into(), &rel.into(), &url.into());
+    let folder = crate::webcache::private_folder().map_or(JsValue::NULL, |parts| {
+        Array::of2(&parts[0].as_str().into(), &parts[1].as_str().into()).into()
+    });
+    let args = Array::of4(&hero.into(), &rel.into(), &url.into(), &folder);
     if let Err(why) = call("request", &args) {
         *REFUSED
             .lock()

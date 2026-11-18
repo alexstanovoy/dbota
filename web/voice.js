@@ -15,10 +15,10 @@ function end() {
   current = null;
 }
 
-function request(hero, path, url) {
+// `folder`: the copy's folder in private storage (src/webcache.rs), null for a served copy.
+function request(hero, path, url, folder) {
   end();
   answered.clear();
-  const mode = globalThis.dbota_cache ? globalThis.dbota_cache.mode : null;
   const worker = new Worker(new URL("./voice_worker.js", import.meta.url), { type: "module" });
   const answer = (data) => {
     if (!current || current.worker !== worker) return;
@@ -29,7 +29,7 @@ function request(hero, path, url) {
   current = { worker, timer };
   worker.onmessage = ({ data }) => answer(data);
   worker.onerror = (e) => answer({ hero, error: e.message || "the voice worker failed" });
-  worker.postMessage({ hero, path, url, mode });
+  worker.postMessage({ hero, path, url, folder });
 }
 
 function take(hero) {
