@@ -74,7 +74,7 @@ const SLOTS_ROOM: f32 = 65.4;
 /// The room the panel leaves at the right: Dota's frame is wider there than it is at the left, and
 /// the panel stands that much to the left of the screen's middle.
 const PANEL_RIGHT: f32 = ui::BAR_MARGIN;
-/// How far the level ring reaches out of the panel's left edge.
+/// How far the level ring reaches out of the panel's left edge, over the dock beside it.
 const LEVEL_RING_OUT: f32 = 7.0;
 const SLOTS_RIGHT: f32 = 9.6;
 /// Where the round slots column starts under the panel's top edge, so that the neutral slot is level
@@ -445,7 +445,11 @@ fn spawn_docks(mut commands: Commands) {
             ChildOf(root),
         ))
         .id();
-    let dock = |commands: &mut Commands, column: i16, justify: JustifySelf, extent: Extent| {
+    let dock = |commands: &mut Commands,
+                column: i16,
+                justify: JustifySelf,
+                extent: Extent,
+                padding: UiRect| {
         commands
             .spawn((
                 extent,
@@ -454,6 +458,7 @@ fn spawn_docks(mut commands: Commands) {
                     grid_row: GridPlacement::start(1),
                     justify_self: justify,
                     flex_direction: FlexDirection::Row,
+                    padding,
                     ..default()
                 },
                 Pickable::IGNORE,
@@ -461,8 +466,22 @@ fn spawn_docks(mut commands: Commands) {
             ))
             .id()
     };
-    let left = dock(&mut commands, 1, JustifySelf::Start, Extent::Left);
-    let right = dock(&mut commands, 3, JustifySelf::End, Extent::Right);
+    // The left dock keeps the room that the hero panel's level ring takes out of the panel's left
+    // edge: the panel's column starts where the dock's does, however tight the window.
+    let left = dock(
+        &mut commands,
+        1,
+        JustifySelf::Start,
+        Extent::Left,
+        UiRect::right(px(LEVEL_RING_OUT)),
+    );
+    let right = dock(
+        &mut commands,
+        3,
+        JustifySelf::End,
+        Extent::Right,
+        UiRect::ZERO,
+    );
     let minimap = commands
         .spawn((Node::default(), Pickable::IGNORE, ChildOf(left)))
         .id();
