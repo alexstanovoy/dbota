@@ -18,7 +18,7 @@ use crate::face::{Controls, Expression, Lipsync, Phonemes, Rig};
 use crate::manifest::Manifest;
 
 /// What faces move by, out of the cache.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub struct Faces {
     phonemes: Phonemes,
     /// Idle expressions by the logical name of their model.
@@ -110,6 +110,18 @@ impl Speech {
     pub fn stop(&mut self) {
         self.0 = None;
     }
+
+    /// Ends the line once its face is still at `now`: past its lip sync's end on its clock, unless
+    /// held.
+    pub fn finish(&mut self, now: f32) {
+        let done = self
+            .0
+            .as_ref()
+            .is_some_and(|line| line.held.is_none() && now - line.anchor > line.face.lipsync.end());
+        if done {
+            self.0 = None;
+        }
+    }
 }
 
 pub fn plugin(app: &mut App) {
@@ -156,13 +168,12 @@ fn follow(
         Some(Err(_)) => line.player = None,
         None => {}
     }
-    if line.held.is_none() && now - line.anchor > line.face.lipsync.end() {
-        speech.0 = None;
-    }
+    speech.finish(now);
 }
 
 /// A face on the portrait's stage: each of its meshes' morph weights and rig, the controllers'
 /// ranges, its idle expression and when that began.
+#[derive(Clone)]
 pub struct Face {
     meshes: Vec<(Entity, Arc<Rig>)>,
     ranges: HashMap<u32, (f32, f32)>,
@@ -233,14 +244,28 @@ impl Face {
         })
     }
 
-    /// Moves the face as it is at `now`, saying `line` (and how far into it) if any.
-    pub fn pose(
-        &self,
-        now: f32,
-        line: Option<(&LineFace, f32)>,
-        faces: &Faces,
-        weights: &mut Query<&mut MorphWeights>,
-    ) {
+    /// The same face on other entities holding its meshes' morph weights, one for each of
+    /// [`Face::rigs`] in order: a test poses a copy of the portrait's face apart from the client.
+    #[cfg(test)]
+    pub fn on_nodes(&self, nodes: &[Entity]) -> Self {
+        assert_eq!(nodes.len(), self.meshes.len(), "a node for each mesh");
+        let meshes = nodes.iter().zip(&self.meshes);
+        Self {
+            meshes: meshes
+                .map(|(&node, (_, rig))| (node, rig.clone()))
+                .collect(),
+            ..self.clone()
+        }
+    }
+
+    /// Each of its meshes: the entity holding its morph weights, and its rig.
+    pub fn rigs(&self) -> impl Iterator<Item = (Entity, &Rig)> + '_ {
+        self.meshes.iter().map(|(node, rig)| (*node, rig.as_ref()))
+    }
+
+    /// The controllers of the face as it is at `now`, saying `line` (and how far into it) if
+    /// any: its idle expression, the line added over it.
+    pub fn controls(&self, now: f32, line: Option<(&LineFace, f32)>, faces: &Faces) -> Controls {
         let mut controls = Controls::new();
         if let Some(scene) = &self.expression {
             scene.apply(self.frozen.unwrap_or(now - self.began), &mut controls);
@@ -249,8 +274,20 @@ impl Face {
             line.lipsync
                 .apply(t, &faces.phonemes, &self.ranges, &mut controls);
         }
-        for (node, rig) in &self.meshes {
-            if let Ok(mut w) = weights.get_mut(*node) {
+        controls
+    }
+
+    /// Moves the face as it is at `now`, saying `line` (and how far into it) if any.
+    pub fn pose(
+        &self,
+        now: f32,
+        line: Option<(&LineFace, f32)>,
+        faces: &Faces,
+        weights: &mut Query<&mut MorphWeights>,
+    ) {
+        let controls = self.controls(now, line, faces);
+        for (node, rig) in self.rigs() {
+            if let Ok(mut w) = weights.get_mut(node) {
                 let mut out = w.weights().to_vec();
                 rig.weights(&controls, &mut out);
                 if out != w.weights() {
