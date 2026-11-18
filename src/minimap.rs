@@ -25,7 +25,7 @@ use crate::session::Session;
 pub(crate) mod outline;
 
 /// World units of the map along each axis.
-const MAP_SIZE: f32 = bota_core::rules::MAP_SIZE as f32;
+pub(crate) const MAP_SIZE: f32 = bota_core::rules::MAP_SIZE as f32;
 /// Interface pixels of the minimap's side, its frame included: the reference game's minimap stands at the
 /// screen's corner, a square of a quarter of the window's height.
 pub const SIDE: f32 = 308.0;
@@ -370,6 +370,7 @@ fn spawn(
         .collect();
     let view = commands
         .spawn((
+            Name::new("hud minimap view"),
             outline::bundle(false, &mut outlines),
             Pickable::IGNORE,
             ChildOf(frame),
@@ -632,28 +633,52 @@ fn marks(
     .map(|p| {
         camera
             .viewport_to_world(cam_gt, p)
-            .ok()
-            .and_then(|ray| crate::camera::ray_to_ground(ray, &ground))
-            .map(|g| on_map(g.x, -g.z))
-            .unwrap_or_default()
+            .map_or(Vec2::ZERO, |ray| ray_on_map(ray, &ground))
     });
+    let frame = camera_frame(corners);
+    if let Ok((mut node, _, _)) = nodes.get_mut(minimap.view) {
+        node.set_if_neq(Node {
+            left: px(frame.min.x),
+            top: px(frame.min.y),
+            width: px(frame.width()),
+            height: px(frame.height()),
+            ..node.clone()
+        });
+    }
+}
+
+/// Where a ray from the camera falls on the minimap: where it meets the ground, else, for a ray
+/// that looks past the horizon, where it runs off the map in the direction it looks, so that the
+/// camera's frame spreads to the map's edge there, as the reference game's does, instead of
+/// folding to a corner of the minimap.
+fn ray_on_map(ray: Ray3d, ground: &Ground) -> Vec2 {
+    if let Some(ground) = crate::camera::ray_to_ground(ray, ground) {
+        return on_map(ground.x, -ground.z);
+    }
+    let heading = Vec2::new(ray.direction.x, -ray.direction.z).normalize_or_zero();
+    let origin = Vec2::new(ray.origin.x, -ray.origin.z);
+    let far = origin + heading * 2.0 * MAP_SIZE;
+    on_map(far.x, far.y)
+}
+
+/// The least a frame is across, in interface pixels: a camera looking past the map's edge is still
+/// a mark to find.
+const LEAST_FRAME: f32 = 2.0;
+
+/// The box of the camera's frame on the minimap, in interface pixels from its inner top left
+/// corner, for the minimap places of the window's four corners: what the camera sees of the map,
+/// not what lies past its rim (Dota's minimap crops it, and so does this), and wholly within the
+/// minimap, so that it never reaches over the border.
+fn camera_frame(corners: [Vec2; 4]) -> Rect {
     let (min, max) = corners.iter().fold(
         (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
         |(lo, hi), c| (lo.min(*c), hi.max(*c)),
     );
-    // The frame shows what the camera sees of the map, not what lies past its rim: Dota's minimap
-    // crops it, and so does this.
     let rim = Vec2::splat(SIDE - 6.0);
     let (min, max) = (min.clamp(Vec2::ZERO, rim), max.clamp(Vec2::ZERO, rim));
-    if let Ok((mut node, _, _)) = nodes.get_mut(minimap.view) {
-        node.set_if_neq(Node {
-            left: px(min.x),
-            top: px(min.y),
-            width: px((max.x - min.x).max(2.0)),
-            height: px((max.y - min.y).max(2.0)),
-            ..node.clone()
-        });
-    }
+    let size = (max - min).max(Vec2::splat(LEAST_FRAME));
+    let min = min.min(rim - size);
+    Rect::from_corners(min, min + size)
 }
 
 /// How the minimap marks a unit that is not a hero or an objective: Dota's icon

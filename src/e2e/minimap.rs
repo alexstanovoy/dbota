@@ -1061,3 +1061,81 @@ fn lighting_an_empty_last_seen_spot_removes_the_roshan_icon() {
         "an actually lit empty spot is forgotten without a death"
     );
 }
+
+/// The camera's frame on the minimap as drawn: left, top, right and bottom, in interface pixels from
+/// the minimap's inner top left corner.
+fn camera_frame(client: &mut Client) -> Rect {
+    let world = client.world_mut();
+    let (node, _) = world
+        .query::<(&Node, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "hud minimap view")
+        .expect("the camera's frame on the minimap");
+    let px = |val: Val| match val {
+        Val::Px(px) => px,
+        other => panic!("the frame is placed in pixels, not {other:?}"),
+    };
+    let (left, top) = (px(node.left), px(node.top));
+    Rect::new(left, top, left + px(node.width), top + px(node.height))
+}
+
+/// A client in a match with the camera free and put at a point of the map (bota's coordinates).
+fn camera_at(settings: &[&str], at: Vec3) -> (Server, Client) {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, settings);
+    super::hud_layout::on_screen(&mut client);
+    client.core_mut().pinned = None;
+    let world = client.world_mut();
+    world
+        .query::<&mut crate::camera::RtsCamera>()
+        .single_mut(world)
+        .expect("the game's camera")
+        .focus = at;
+    client.frames(5);
+    (server, client)
+}
+
+/// The minimap's inside, which the camera's frame stays within.
+const INSIDE: f32 = crate::minimap::SIDE - 6.0;
+
+/// A camera beyond the map's far corner has the frame on the corner, inside the minimap and not
+/// over its border.
+#[test]
+fn the_cameras_frame_stays_inside_the_minimap_when_the_camera_looks_past_its_edge() {
+    let beyond = Vec3::new(
+        1.6 * crate::minimap::MAP_SIZE,
+        0.0,
+        0.6 * crate::minimap::MAP_SIZE,
+    );
+    let (_server, mut client) = camera_at(&[], beyond);
+    let frame = camera_frame(&mut client);
+    assert!(
+        frame.min.cmpge(Vec2::ZERO).all() && frame.max.cmple(Vec2::splat(INSIDE)).all(),
+        "the camera's frame {frame:?} is not inside the minimap's {INSIDE} pixels"
+    );
+}
+
+/// A camera so shallow that the top corners of the window look past the horizon has the frame run
+/// to the map's far edge in the way they look, as the reference game's does, and not fold to the
+/// minimap's top left corner.
+#[test]
+fn the_cameras_frame_runs_to_the_maps_edge_where_a_corner_looks_past_the_horizon() {
+    let middle = Vec3::new(
+        0.5 * crate::minimap::MAP_SIZE,
+        0.0,
+        -0.5 * crate::minimap::MAP_SIZE,
+    );
+    let (_server, mut client) = camera_at(
+        &["--set", "camera_pitch=10", "--set", "camera_fov=60"],
+        middle,
+    );
+    let frame = camera_frame(&mut client);
+    assert_eq!(
+        frame.min.y, 0.0,
+        "the frame runs to the north edge: {frame:?}"
+    );
+    assert!(
+        frame.min.x <= 0.0 && frame.max.x >= INSIDE,
+        "the frame spans the map's width, as the view widens towards the horizon: {frame:?}"
+    );
+}
