@@ -3924,7 +3924,7 @@ fn replay_cards_retain_the_recorded_bot_version_as_an_identity() {
 impl Service {
     /// Seed real rating transactions; the client then reads these rows over the service protocol.
     pub(crate) fn rated_bot_versions(&self) {
-        use bota_radovid::proto::{AccountKind, EndReason, Outcome};
+        use bota_radovid::proto::{AccountKind, Outcome};
         use radovid::db::{Db, Finish, NewSeat};
         self.runtime.block_on(async {
             let db = Db::open(&self._dir.0.join("radovid.db")).unwrap();
@@ -3967,17 +3967,18 @@ impl Service {
                     .create_match(ruleset.clone(), true, seats.clone())
                     .await
                     .unwrap();
-                db.finish_match(Finish {
-                    match_id,
-                    ruleset: ruleset.clone(),
-                    rate: true,
-                    outcome: Outcome::Winner { team: 0 },
-                    reason: EndReason::Decided,
-                    duration_ms: 1000,
-                    report: Vec::new(),
-                    seats,
-                    finished_at: radovid::db::now_ms(),
-                })
+                // The test reads the drawn names of the versions, never their ratings: the plain
+                // algorithm keeps it independent of the service's bot share.
+                db.finish_match(
+                    Finish::rated(
+                        match_id,
+                        ruleset.clone(),
+                        Outcome::Winner { team: 0 },
+                        seats,
+                        radovid::db::now_ms(),
+                    )
+                    .with_bot_share(radovid::rating::RatingShare::FULL),
+                )
                 .await
                 .unwrap();
             }
