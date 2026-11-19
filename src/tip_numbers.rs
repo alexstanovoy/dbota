@@ -454,7 +454,6 @@ fn requiem_value(def: &AbilityDef, key: &str) -> Option<Levels> {
         }
         "requiem_duration_per_soul" => one(secs(rules::REQUIEM_TICKS_PER_LINE)),
         "requiem_reduction_ms" => negated(&rules::REQUIEM_SLOW_PCT),
-        "requiem_reduction_mres" => negated(&rules::REQUIEM_MAGIC_BREAK_PCT),
         "requiem_radius" => one(def.range),
         "requiem_line_width_start" => one(rules::REQUIEM_LINE_WIDTH_START),
         "requiem_line_width_end" => one(rules::REQUIEM_LINE_WIDTH_END),
