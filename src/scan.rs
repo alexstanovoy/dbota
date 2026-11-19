@@ -13,7 +13,9 @@ use bevy::{
     ui_widgets::Button,
 };
 use bota_client_core::{App as Core, ScanSide};
+use bota_core::ScanLedger;
 use bota_core::rules::{SCAN_MAX_CHARGES, SCAN_RADIUS, SCAN_RECHARGE_TICKS};
+use bota_proto::Team;
 
 use crate::camera::CursorGround;
 use crate::hud::Docks;
@@ -21,11 +23,10 @@ use crate::manifest::Manifest;
 use crate::map::Ground;
 use crate::minimap::MinimapFrame;
 use crate::session::{MatchKnown, Session};
-use crate::ui::{self, Fonts, dota};
+use crate::ui::{self, Fonts, dota, team_buttons};
 
-/// The frame the button sits in.
-#[derive(Component)]
-struct ScanFrame;
+#[derive(Resource)]
+struct SpectatorScan(team_buttons::TeamFaces);
 
 /// The button; the hover popup reads it.
 #[derive(Component)]
@@ -70,7 +71,7 @@ pub fn plugin(app: &mut App) {
 pub(crate) fn updates() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
     (
         sample,
-        (show, minimap_rings).run_if(|k: Res<MatchKnown>| k.0),
+        (show, show_teams, minimap_rings).run_if(|k: Res<MatchKnown>| k.0),
     )
         .chain()
 }
@@ -85,14 +86,13 @@ fn spawn(
     // On the plate, in the upper of its two wells (`#RadarButton`).
     let frame = commands
         .spawn((
-            ScanFrame,
+            Name::new("hud scan"),
             Node {
                 position_type: PositionType::Absolute,
                 left: dota(crate::glyph::PLATE_LEFT),
                 bottom: dota(crate::glyph::SCAN_BOTTOM),
                 ..default()
             },
-            Visibility::Hidden,
         ))
         .id();
     commands
@@ -101,7 +101,7 @@ fn spawn(
     let button = commands
         .spawn((
             ScanButton,
-            Name::new("hud scan"),
+            Name::new("hud scan player"),
             Button,
             Hovered::default(),
             bevy::picking::hover::DirectlyHovered::default(),
@@ -114,6 +114,7 @@ fn spawn(
                 ..default()
             },
             BackgroundColor(ui::PANEL_DEEP),
+            Visibility::Hidden,
             ChildOf(frame),
         ))
         .id();
@@ -140,17 +141,32 @@ fn spawn(
         Pickable::IGNORE,
         ChildOf(button),
     ));
-    let (badge, count) = ui::spawn_charge_badge(&mut commands, &fonts, button, false);
+    let (badge, count) = ui::spawn_charge_badge(&mut commands, &fonts, button);
     commands
         .entity(badge)
-        .insert((ScanBadge, Visibility::Hidden));
+        .insert((ScanBadge, Name::new("hud scan charges"), Visibility::Hidden));
     commands.entity(count).insert(ScanCount);
+    let teams = team_buttons::TeamFaces::spawn(
+        &mut commands,
+        frame,
+        team_buttons::Ability::Scan,
+        [load("hud.scan_radiant"), load("hud.scan_dire")],
+        load("hud.scan_off"),
+    );
+    commands.insert_resource(SpectatorScan(teams));
 }
 
 /// The side whose Scan the HUD shows, and the game-clock tick the wait is counted from.
 fn shown(core: &Core) -> Option<(ScanSide, u32)> {
     let tick = core.view()?.game_tick();
-    Some((core.scan()?, tick))
+    let scan = if core.my_slot.is_none()
+        && let Some(team) = core.view()?.viewer
+    {
+        core.scan_of(team)
+    } else {
+        core.scan()
+    };
+    Some((scan?, tick))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -160,7 +176,10 @@ struct ScanFrameKey {
 }
 
 #[derive(Default, Resource)]
-struct DisplayedScan(Option<(ScanSide, u32)>);
+struct DisplayedScan {
+    selected: Option<(ScanSide, u32)>,
+    teams: Option<([ScanLedger; 2], u32)>,
+}
 
 /// Scan facts can arrive after their snapshot. Read once when either part changes so the
 /// button, minimap and world draw all use the same sample.
@@ -177,8 +196,21 @@ fn sample(
     };
     if read.replace(key) != Some(key) {
         let scan = shown(core);
-        if displayed.0 != scan {
-            displayed.0 = scan;
+        let teams = core
+            .view()
+            .filter(|_| team_buttons::all_teams(core))
+            .and_then(|view| {
+                let ledger = |team| core.scan_of(team).map(|side| side.ledger);
+                Some((
+                    [ledger(Team::Radiant)?, ledger(Team::Dire)?],
+                    view.game_tick(),
+                ))
+            });
+        if displayed.selected != scan || displayed.teams != teams {
+            *displayed = DisplayedScan {
+                selected: scan,
+                teams,
+            };
         }
     }
 }
@@ -196,15 +228,19 @@ fn show(
     session: NonSend<Session>,
     displayed: Res<DisplayedScan>,
     mut drawn: Local<Option<ScanButtonState>>,
-    mut frame: Single<&mut Visibility, (With<ScanFrame>, Without<ScanBadge>)>,
+    mut frame: Single<&mut Visibility, (With<ScanButton>, Without<ScanBadge>)>,
     mut icon: Single<(&ScanIcon, &mut ImageNode), Without<ScanSweep>>,
     mut sweep: Single<&mut BackgroundGradient, With<ScanSweep>>,
-    mut badge: Single<&mut Visibility, (With<ScanBadge>, Without<ScanFrame>)>,
+    mut badge: Single<&mut Visibility, (With<ScanBadge>, Without<ScanButton>)>,
     mut count: Single<&mut Text, With<ScanCount>>,
     mut button: Single<&mut BackgroundColor, (With<ScanButton>, Without<ScanSweep>)>,
 ) {
     let core = &session.0;
-    let Some((side, now)) = &displayed.0 else {
+    let Some((side, now)) = displayed
+        .selected
+        .as_ref()
+        .filter(|_| !team_buttons::all_teams(core))
+    else {
         *drawn = None;
         frame.set_if_neq(Visibility::Hidden);
         return;
@@ -259,6 +295,22 @@ fn show(
     button.set_if_neq(BackgroundColor(plate));
 }
 
+fn show_teams(
+    displayed: Res<DisplayedScan>,
+    mut faces: ResMut<SpectatorScan>,
+    mut paint: team_buttons::Paint,
+) {
+    let states = displayed.teams.map(|(ledgers, now)| {
+        ledgers.map(|ledger| {
+            let left = ledger
+                .next_in(now)
+                .map_or(0.0, |wait| wait as f32 / SCAN_RECHARGE_TICKS as f32);
+            team_buttons::FaceState::new(ledger.charges == 0, left)
+        })
+    });
+    faces.0.paint(states, &mut paint);
+}
+
 /// A click on the button takes the Scan up for aiming, or lays the aim down again.
 fn click(
     event: On<PointerPress>,
@@ -297,7 +349,7 @@ fn draw(
     {
         ring(&mut gizmos, &ground, at, radius, PREVIEW_COLOUR);
     }
-    let Some((side, _)) = &displayed.0 else {
+    let Some((side, _)) = &displayed.selected else {
         return;
     };
     for radar in &side.radars {
@@ -353,7 +405,7 @@ fn minimap_rings(
         return;
     }
     let mut radars = displayed
-        .0
+        .selected
         .as_ref()
         .into_iter()
         .flat_map(|(side, _)| &side.radars);
@@ -393,26 +445,51 @@ pub fn tip(
         .copied()
         .flatten()
         .map_or_else(String::new, |chord| chord.name());
-    let title = texts
-        .label("DOTA_Tooltip_ability_radar", &[("scan_hotkey", key)])
-        .unwrap_or_else(|| "Scan".to_string());
-    let about = texts
-        .label("DOTA_Tooltip_ability_radar_Description", &[])
-        .unwrap_or_else(|| {
-            format!(
-                "Scans a targeted {SCAN_RADIUS} AoE for {} seconds. Indicates whether there are enemy heroes in that area during the {} seconds.",
-                bota_core::rules::SCAN_DURATION_TICKS / bota_core::rules::TICKS_PER_SECOND,
-                bota_core::rules::SCAN_DURATION_TICKS / bota_core::rules::TICKS_PER_SECOND,
+    tip_of(texts, side.ledger, now, core.tick_rate(), key, None)
+}
+
+pub(crate) fn team_tip(texts: &crate::dota_text::Texts, core: &Core, team: Team) -> Option<String> {
+    let now = core.view()?.game_tick();
+    tip_of(
+        texts,
+        core.scan_of(team)?.ledger,
+        now,
+        core.tick_rate(),
+        String::new(),
+        Some(team),
+    )
+}
+
+fn tip_of(
+    texts: &crate::dota_text::Texts,
+    ledger: ScanLedger,
+    now: u32,
+    rate: u16,
+    key: String,
+    team: Option<Team>,
+) -> Option<String> {
+    let mut title = texts.label("DOTA_Tooltip_ability_radar", &[("scan_hotkey", key)])?;
+    let lines = [
+        team.and_then(team_buttons::team_label)
+            .and_then(|key| texts.label(key, &[])),
+        texts.label("DOTA_Tooltip_ability_radar_Description", &[]),
+        texts.label(
+            "DOTA_HUD_RadarCharges",
+            &[("charges_available", ledger.charges.to_string())],
+        ),
+        ledger.next_in(now).and_then(|wait| {
+            texts.label(
+                "DOTA_HUD_RadarCooldown",
+                &[(
+                    "cooldown_time",
+                    wait.div_ceil(u32::from(rate.max(1))).to_string(),
+                )],
             )
-        });
-    let rate = u32::from(core.tick_rate().max(1));
-    let mut lines = format!(
-        "{title}\n{about}\nCooldown: {}\nCharges Available: {}",
-        SCAN_RECHARGE_TICKS / rate,
-        side.ledger.charges
-    );
-    if let Some(ticks) = side.ledger.next_in(now) {
-        lines.push_str(&format!("\nNext charge in: {}", ticks.div_ceil(rate)));
+        }),
+    ];
+    for line in lines.into_iter().flatten() {
+        title.push('\n');
+        title.push_str(&line);
     }
-    Some(lines)
+    Some(title)
 }

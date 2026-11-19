@@ -684,6 +684,7 @@ paths = [
     "src/roshan_status.rs",
     "src/hud.rs",
     "src/ui.rs",
+    "src/ui/team_buttons.rs",
     "src/bars.rs",
     "src/bolt.rs",
     "src/channel_bar.rs",

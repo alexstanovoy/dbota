@@ -1,5 +1,6 @@
 //! The Glyph of Fortification sits in the lower well beside the minimap.
-//! Its badge counts the charges and a sweep tracks the wait to use it.
+//! A player sees a charge badge and cooldown. Spectators of both sides see each
+//! side’s cooldown sweep in its own half.
 //! A click or the Glyph key activates it.
 
 use std::f32::consts::TAU;
@@ -9,17 +10,16 @@ use bevy::{
     picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
     ui_widgets::Button,
 };
-use bota_core::rules::{GLYPH_MAX_CHARGES, GLYPH_RECHARGE_TICKS, Schedule};
+use bota_core::rules;
 use bota_proto::{GlyphView, PlayerId, Team};
 
 use crate::hud::Docks;
 use crate::manifest::Manifest;
 use crate::session::{MatchKnown, Session};
-use crate::ui::{self, Fonts, dota};
+use crate::ui::{self, Fonts, dota, team_buttons};
 
-/// The frame the button sits in.
-#[derive(Component)]
-struct GlyphFrame;
+#[derive(Resource)]
+struct SpectatorGlyph(team_buttons::TeamFaces);
 
 /// The button.
 #[derive(Component)]
@@ -38,7 +38,6 @@ pub(crate) struct GlyphSweep;
 
 #[derive(Component)]
 struct GlyphBadge {
-    left: bool,
     label: Entity,
     drawn: Option<u8>,
 }
@@ -61,7 +60,7 @@ pub fn plugin(app: &mut App) {
 }
 
 pub(crate) fn updates() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
-    (show, show_charges).run_if(|k: Res<MatchKnown>| k.0)
+    (show, show_charges, show_teams).run_if(|k: Res<MatchKnown>| k.0)
 }
 
 fn spawn(
@@ -75,21 +74,20 @@ fn spawn(
     // plate's left and foot).
     let frame = commands
         .spawn((
-            GlyphFrame,
+            Name::new("hud glyph"),
             Node {
                 position_type: PositionType::Absolute,
                 left: dota(PLATE_LEFT),
                 bottom: dota(GLYPH_BOTTOM),
                 ..default()
             },
-            Visibility::Hidden,
             ChildOf(docks.minimap_buttons),
         ))
         .id();
     let button = commands
         .spawn((
             GlyphButton,
-            Name::new("hud glyph"),
+            Name::new("hud glyph player"),
             Button,
             Hovered::default(),
             bevy::picking::hover::DirectlyHovered::default(),
@@ -102,6 +100,7 @@ fn spawn(
                 ..default()
             },
             BackgroundColor(ui::PANEL_DEEP),
+            Visibility::Hidden,
             ChildOf(frame),
         ))
         .id();
@@ -130,71 +129,74 @@ fn spawn(
     ));
     commands.spawn((
         GlyphSeconds,
+        Name::new("hud glyph seconds"),
         ui::text("", &fonts.bold, 16.0, ui::INK),
         ui::shadow(),
-        // Leave room below the three-digit recharge timer for the charge badge.
-        Node {
-            margin: UiRect::bottom(dota(14.0)),
-            ..default()
-        },
         Pickable::IGNORE,
         ChildOf(button),
     ));
-    for (left, name) in [
-        (false, "hud glyph charges"),
-        (true, "hud glyph radiant charges"),
-    ] {
-        let (badge, label) = ui::spawn_charge_badge(&mut commands, &fonts, button, left);
-        commands.entity(badge).insert((
-            Name::new(name),
-            GlyphBadge {
-                left,
-                label,
-                drawn: None,
-            },
-            Visibility::Hidden,
-        ));
-    }
+    let (badge, label) = ui::spawn_charge_badge(&mut commands, &fonts, button);
+    commands.entity(badge).insert((
+        Name::new("hud glyph charges"),
+        GlyphBadge { label, drawn: None },
+        Visibility::Hidden,
+    ));
+    let teams = team_buttons::TeamFaces::spawn(
+        &mut commands,
+        frame,
+        team_buttons::Ability::Glyph,
+        [load("hud.glyph_radiant"), load("hud.glyph_dire")],
+        load("hud.glyph_off"),
+    );
+    commands.insert_resource(SpectatorGlyph(teams));
 }
 
 fn show_charges(
     session: NonSend<Session>,
-    mut badges: Query<(&mut GlyphBadge, &mut Visibility)>,
-    mut labels: Query<(&mut Text, &mut TextColor)>,
+    mut badge: Single<(&mut GlyphBadge, &mut Visibility)>,
+    mut labels: Query<&mut Text>,
 ) {
     let core = &session.0;
-    // The lower corners follow the left-to-right order of the spectator HUD.
-    let both = core
-        .view()
-        .filter(|view| core.my_slot.is_none() && view.viewer.is_none())
-        .and_then(|view| {
-            let charges = |team| view.glyphs.iter().find(|glyph| glyph.team == team)?.charges;
-            charges(Team::Radiant).zip(charges(Team::Dire))
-        });
-    for (mut badge, mut visibility) in &mut badges {
-        let (charges, color) = match (both, badge.left) {
-            (Some((radiant, _)), true) => (Some(radiant), ui::HP_FRIEND),
-            (Some((_, dire)), false) => (Some(dire), ui::HP_FOE),
-            (None, true) => (None, ui::INK),
-            (None, false) => (
-                displayed_glyph(core).and_then(|glyph| glyph.charges),
-                ui::INK,
-            ),
-        };
-        visibility.set_if_neq(ui::visible(charges.is_some()));
-        if let Some(charges) = charges
-            && let Ok((mut text, mut text_color)) = labels.get_mut(badge.label)
-        {
-            if badge.drawn != Some(charges) {
-                badge.drawn = Some(charges);
-                text.0 = charges.to_string();
-            }
-            text_color.set_if_neq(TextColor(color));
-        }
+    let charges = displayed_glyph(core)
+        .and_then(|glyph| glyph.charges)
+        .filter(|charges| *charges > 0);
+    let (badge, visibility) = &mut *badge;
+    visibility.set_if_neq(ui::visible(charges.is_some()));
+    if let Some(charges) = charges
+        && badge.drawn != Some(charges)
+        && let Ok(mut label) = labels.get_mut(badge.label)
+    {
+        badge.drawn = Some(charges);
+        label.0 = charges.to_string();
     }
 }
 
+fn show_teams(
+    session: NonSend<Session>,
+    mut faces: ResMut<SpectatorGlyph>,
+    mut paint: team_buttons::Paint,
+) {
+    let core = &session.0;
+    let states = core
+        .view()
+        .filter(|_| team_buttons::all_teams(core))
+        .and_then(|view| {
+            let schedule = rules::Schedule::of(core.pregame_ticks());
+            let state = |team| {
+                let glyph = view.glyphs.iter().find(|glyph| glyph.team == team)?;
+                let wait = glyph.ready_after?;
+                let left = sweep_left(wait, schedule.glyph_wait(view.game_tick(), glyph.charges?));
+                Some(team_buttons::FaceState::new(wait > 0, left))
+            };
+            Some([state(Team::Radiant)?, state(Team::Dire)?])
+        });
+    faces.0.paint(states, &mut paint);
+}
+
 fn displayed_glyph(core: &bota_client_core::App) -> Option<GlyphView> {
+    if team_buttons::all_teams(core) {
+        return None;
+    }
     let view = core.view()?;
     if core.my_slot.is_none()
         && let Some(team) = view.viewer
@@ -247,10 +249,12 @@ impl Recharge {
                 && last.tick <= now.tick
         });
         self.origin = match previous {
-            Some(last) if now.charges == 1 && matches!(last.charges, 0 | GLYPH_MAX_CHARGES) => {
+            Some(last)
+                if now.charges == 1 && matches!(last.charges, 0 | rules::GLYPH_MAX_CHARGES) =>
+            {
                 Some(now.tick)
             }
-            Some(_) if now.charges < GLYPH_MAX_CHARGES => self.origin,
+            Some(_) if now.charges < rules::GLYPH_MAX_CHARGES => self.origin,
             _ => None,
         };
         self.origin
@@ -263,10 +267,10 @@ fn show(
     session: NonSend<Session>,
     game: Res<crate::main_menu::GameEpoch>,
     mut shown: Local<Shown>,
-    mut frame: Single<&mut Visibility, With<GlyphFrame>>,
+    mut frame: Single<&mut Visibility, With<GlyphButton>>,
     mut icon: Single<(&GlyphIcon, &mut ImageNode), Without<GlyphSweep>>,
     mut sweep: Single<&mut BackgroundGradient, With<GlyphSweep>>,
-    mut seconds: Single<&mut Text, With<GlyphSeconds>>,
+    mut seconds: Single<(&mut Text, &mut Node), With<GlyphSeconds>>,
 ) {
     let core = &session.0;
     let rate = u32::from(core.tick_rate()).max(1);
@@ -311,17 +315,13 @@ fn show(
         image.image = art;
         image.color = art_color;
     }
-    // Dark over what is still to wait, clear over what has passed. While a use is locked out it
-    // runs over the lock's wait (since 7.42: the first charge's from the clock's start, a later
-    // charge's six minutes, or the seven seconds between two uses); with a charge missing and the
-    // Glyph usable, lighter, over the six minutes the charge takes.
     let (left, alpha) = if waiting {
-        let wait = Schedule::of(core.pregame_ticks()).glyph_wait(clock, charges);
+        let wait = rules::Schedule::of(core.pregame_ticks()).glyph_wait(clock, charges);
         (sweep_left(ready_in, wait), 0.68)
     } else if let Some(from) = origin {
-        let left = GLYPH_RECHARGE_TICKS.saturating_sub(view.tick.saturating_sub(from));
+        let left = rules::GLYPH_RECHARGE_TICKS.saturating_sub(view.tick.saturating_sub(from));
         (
-            sweep_left(left, GLYPH_RECHARGE_TICKS),
+            sweep_left(left, rules::GLYPH_RECHARGE_TICKS),
             if left > 0 { 0.45 } else { 0.0 },
         )
     } else {
@@ -338,9 +338,18 @@ fn show(
         );
     }
     let secs = if waiting { ready_in.div_ceil(rate) } else { 0 };
+    let (text, node) = &mut *seconds;
+    let bottom = if waiting && charges > 0 {
+        dota(20.0)
+    } else {
+        px(0)
+    };
+    if node.margin.bottom != bottom {
+        node.margin.bottom = bottom;
+    }
     if shown.seconds != Some(secs) {
         shown.seconds = Some(secs);
-        seconds.0 = if secs > 0 {
+        text.0 = if secs > 0 {
             secs.to_string()
         } else {
             String::new()
@@ -359,32 +368,62 @@ fn click(
     }
 }
 
-/// The hover popup of the button: Dota's title and description, and the wait while it runs. The
-/// words are the install's; without them the popup says what the Glyph is in this client's own.
+/// The installed tooltip of the player's Glyph.
 pub fn tip(texts: &crate::dota_text::Texts, core: &bota_client_core::App) -> Option<String> {
-    let ready_in = displayed_glyph(core)?.ready_after?;
-    let word = |key: &str, own: &str| texts.label(key, &[]).unwrap_or_else(|| own.to_owned());
-    let mut lines = format!(
-        "{}\n{}",
-        word(
-            "DOTA_Glossary_Map_Structures_Glyph",
-            "Glyph of Fortification"
+    tip_of(texts, displayed_glyph(core)?, core.tick_rate(), None)
+}
+
+pub(crate) fn team_tip(
+    texts: &crate::dota_text::Texts,
+    core: &bota_client_core::App,
+    team: Team,
+) -> Option<String> {
+    let glyph = core
+        .view()?
+        .glyphs
+        .iter()
+        .find(|glyph| glyph.team == team)
+        .copied()?;
+    tip_of(texts, glyph, core.tick_rate(), Some(team))
+}
+
+fn tip_of(
+    texts: &crate::dota_text::Texts,
+    glyph: GlyphView,
+    rate: u16,
+    team: Option<Team>,
+) -> Option<String> {
+    let ready_in = glyph.ready_after?;
+    let charges = glyph.charges?;
+    let mut title = texts.label("DOTA_Glossary_Map_Structures_Glyph", &[])?;
+    let lines = [
+        team.and_then(team_buttons::team_label)
+            .and_then(|key| texts.label(key, &[])),
+        texts.label("DOTA_Glossary_Map_Structures_Glyph_Desc", &[]),
+        texts.label(
+            "DOTA_HUD_GlyphCharges",
+            &[("charges_available", charges.to_string())],
         ),
-        word(
-            "DOTA_Glossary_Map_Structures_Glyph_Desc",
-            "Makes the structures of the team invulnerable for a few seconds; the whole team shares it."
-        )
-    );
-    if ready_in > 0 {
-        let rate = u32::from(core.tick_rate().max(1));
-        let secs = ready_in.div_ceil(rate).to_string();
-        let wait = texts
-            .label("DOTA_HUD_GlyphCooldown", &[("cooldown_time", secs.clone())])
-            .unwrap_or_else(|| format!("Cooldown: {secs}"));
-        lines.push('\n');
-        lines.push_str(&wait);
+        (ready_in > 0)
+            .then(|| {
+                let seconds = ready_in.div_ceil(u32::from(rate.max(1))).to_string();
+                if charges > 0
+                    && let Some(line) = texts.label(
+                        "DOTA_HUD_GlyphUseCooldown",
+                        &[("use_cooldown_time", seconds.clone())],
+                    )
+                {
+                    return Some(line);
+                }
+                texts.label("DOTA_HUD_GlyphCooldown", &[("cooldown_time", seconds)])
+            })
+            .flatten(),
+    ];
+    for line in lines.into_iter().flatten() {
+        title.push('\n');
+        title.push_str(&line);
     }
-    Some(lines)
+    Some(title)
 }
 
 #[cfg(test)]

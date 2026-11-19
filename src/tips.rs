@@ -244,12 +244,17 @@ fn pick(
     attribute: Query<(Entity, &DirectlyHovered), With<crate::talents::AttributeRow>>,
     innate: Query<(Entity, &DirectlyHovered), With<crate::hud::InnateButton>>,
     layout: Query<(&ComputedNode, &UiGlobalTransform)>,
-    (mut shown, mut anchor, settings, scan, glyph): (
+    (mut shown, mut anchor, settings, scan, glyph, teams): (
         ResMut<Shown>,
         ResMut<ShownAnchor>,
         Res<crate::config::Settings>,
         Query<(Entity, &DirectlyHovered), With<crate::scan::ScanButton>>,
         Query<(Entity, &DirectlyHovered), With<crate::glyph::GlyphButton>>,
+        Query<(
+            Entity,
+            &DirectlyHovered,
+            &crate::ui::team_buttons::TeamButton,
+        )>,
     ),
 ) {
     let core = &session.0;
@@ -275,6 +280,17 @@ fn pick(
     } else if let Some((entity, _)) = attribute.iter().find(|(_, i)| i.get()) {
         over = Some(entity);
         Some(note_tip(attribute_tip(&texts, core)))
+    } else if let Some((entity, _, face)) = teams.iter().find(|(_, hovered, _)| hovered.get()) {
+        over = Some(entity);
+        match face.ability {
+            crate::ui::team_buttons::Ability::Glyph => {
+                crate::glyph::team_tip(&texts, core, face.team)
+            }
+            crate::ui::team_buttons::Ability::Scan => {
+                crate::scan::team_tip(&texts, core, face.team)
+            }
+        }
+        .map(note_tip)
     } else if let Some((entity, _)) = scan.iter().find(|(_, i)| i.get()) {
         over = Some(entity);
         crate::scan::tip(&texts, core, &settings).map(note_tip)

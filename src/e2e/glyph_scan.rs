@@ -11,8 +11,6 @@ use bota_proto::{Cheat, HeroId, Team};
 
 use super::harness::{Client, Patience, Server, quiet_seat};
 
-const RADIANT_BADGE: &str = "hud glyph radiant charges";
-
 fn joined_scene() -> (Server, Client) {
     let server = Server::for_hud(2, &[]);
     quiet_seat(&server, HeroId::SHADOW_FIEND);
@@ -115,7 +113,7 @@ fn the_glyph_and_the_scan_stand_in_the_two_wells_of_the_plate_against_the_minima
 #[test]
 fn the_glyph_has_the_games_popup_with_its_wait() {
     let (_server, mut client) = scene();
-    let glyph = named(&mut client, "hud glyph");
+    let glyph = named(&mut client, "hud glyph player");
     client.hover_ui(glyph, Duration::from_secs(30));
     // The popup's lines are spans of its body, which the texts shown do not list.
     let said = |c: &mut Client, word: &str| {
@@ -267,6 +265,95 @@ fn press(client: &mut Client, key: KeyCode) {
     client.key(key, ButtonState::Released);
 }
 
+#[test]
+fn the_empty_glyph_shows_its_wait_without_a_charge_badge() {
+    let server = Server::for_hud(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.ready_with_match_held(&server);
+    client.cheat(Cheat::StartGame);
+    client.until("the Glyph button is drawn", |client| {
+        let button = named(client, "hud glyph");
+        client
+            .world()
+            .get::<InheritedVisibility>(button)
+            .is_some_and(|seen| seen.get())
+    });
+    assert_eq!(glyph_charges(&client), Some(0));
+    assert_eq!(glyph_badge(&mut client), None, "zero hides the charge disc");
+}
+
+#[test]
+fn both_charge_badges_use_the_reference_label_geometry_and_font() {
+    let (_server, mut client) = scene();
+    client.cheat(Cheat::Refresh);
+    client.frames(4);
+    let unit = dota(&client);
+    for (button, badge) in [
+        ("hud glyph", "hud glyph charges"),
+        ("hud scan", "hud scan charges"),
+    ] {
+        let entity = named(&mut client, badge);
+        let face = named_rect(&mut client, button);
+        let bounds = rect(&client, entity);
+        near("reference disc diameter", bounds.width(), 20.0 * unit);
+        near("reference right alignment", bounds.max.x, face.max.x);
+        near(
+            "reference bottom inset",
+            face.max.y - bounds.max.y,
+            2.0 * unit,
+        );
+        let world = client.world();
+        assert!(
+            world
+                .get::<InheritedVisibility>(entity)
+                .is_some_and(|seen| seen.get()),
+            "{badge} is drawn"
+        );
+        let font = world
+            .get::<Children>(entity)
+            .expect("charge label")
+            .iter()
+            .find_map(|child| world.get::<TextFont>(child))
+            .expect("charge font");
+        assert_eq!(
+            font.font_size,
+            bevy::text::FontSize::Px(18.0 * crate::ui::DOTA)
+        );
+        assert_eq!(
+            font.font,
+            world.resource::<crate::ui::Fonts>().regular.clone().into()
+        );
+    }
+}
+
+#[test]
+fn the_glyph_omits_the_popup_without_installed_text() {
+    let (_server, client) = scene();
+    assert!(crate::glyph::tip(&crate::dota_text::Texts::default(), client.core()).is_none());
+}
+
+pub(super) fn recorded_team_buttons() -> super::fog_pov::ReplayFile {
+    let mut game = super::fog_pov::Spectated::pair("2");
+    game.cheat(Cheat::Refresh);
+    game.wait("a charge on each side", |driver, _| {
+        driver.glyph().and_then(|glyph| glyph.charges) == Some(1)
+    });
+    game.order(bota_proto::Order::Glyph);
+    game.wait("one Glyph waiting and the other ready", |_, client| {
+        let waits = |team| {
+            client
+                .view()
+                .glyphs
+                .iter()
+                .find(|glyph| glyph.team == team)
+                .and_then(|glyph| glyph.ready_after)
+        };
+        waits(Team::Radiant).is_some_and(|ticks| ticks >= 100 * bota_core::rules::TICKS_PER_SECOND)
+            && waits(Team::Dire) == Some(0)
+    });
+    game.save()
+}
+
 /// The lockstep server advances once the client acknowledges a view. Pump the connection
 /// between HUD checks so the intervening ticks need neither UI frames nor wall-clock pacing.
 fn advance_to(client: &mut Client, tick: u32) {
@@ -280,10 +367,11 @@ fn advance_to(client: &mut Client, tick: u32) {
 
 #[test]
 fn the_glyph_button_counts_from_empty_to_full_and_back_after_both_uses() {
-    use bota_core::rules::{GLYPH_USE_COOLDOWN_TICKS, Schedule, TICKS_PER_SECOND};
+    use bota_core::rules::{GLYPH_USE_COOLDOWN_TICKS, TICKS_PER_SECOND};
 
-    let server = Server::start(1, &["--immortal-structures"]);
+    let server = Server::for_hud(1, &["--immortal-structures"]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     assert_eq!(
         glyph_charges(&client),
@@ -291,33 +379,12 @@ fn the_glyph_button_counts_from_empty_to_full_and_back_after_both_uses() {
         "charges at game tick {}",
         client.view().game_tick()
     );
-    client.until("the empty Glyph count is drawn", |c| {
-        glyph_badge(c).as_deref() == Some("0")
-    });
-    assert_eq!(badge_number(&mut client, RADIANT_BADGE), None);
-
-    let schedule = Schedule::of(client.core().pregame_ticks());
-    for (minute, charges, label) in [(3, 1, "1"), (9, 2, "2")] {
-        let due = schedule.at_minute(minute);
-        advance_to(&mut client, due - 1);
-        assert_eq!(client.view().game_tick(), due - 1);
-        assert_eq!(glyph_charges(&client), Some(charges - 1));
-        client.until("the earned Glyph charge is drawn", |c| {
+    for (charges, label) in [(1, "1"), (2, "2")] {
+        client.cheat(Cheat::Refresh);
+        client.until("the granted Glyph charge is drawn", |c| {
             glyph_charges(c) == Some(charges) && glyph_badge(c).as_deref() == Some(label)
         });
-        assert!(client.view().game_tick() >= due);
     }
-    super::hud_layout::on_screen(&mut client);
-    let glyph = named_rect(&mut client, "hud glyph");
-    let badge = named_rect(&mut client, "hud glyph charges");
-    let unit = dota(&client);
-    near("the badge's width", badge.width(), 20.0 * unit);
-    near("the badge's right edge", badge.max.x, glyph.max.x);
-    near(
-        "the badge above the button's foot",
-        glyph.max.y - badge.max.y,
-        2.0 * unit,
-    );
 
     press(&mut client, KeyCode::KeyJ);
     client.until("the Glyph shows one charge after the first use", |c| {
@@ -346,13 +413,13 @@ fn the_glyph_button_counts_from_empty_to_full_and_back_after_both_uses() {
         c.core().glyph().and_then(|glyph| glyph.ready_after) == Some(0) && glyph_cover(c) < cover
     });
     press(&mut client, KeyCode::KeyJ);
-    client.until("the Glyph shows zero after the last use", |c| {
-        glyph_charges(c) == Some(0) && glyph_badge(c).as_deref() == Some("0")
+    client.until("the empty Glyph hides the badge after the last use", |c| {
+        glyph_charges(c) == Some(0) && glyph_badge(c).is_none()
     });
 }
 
 #[test]
-fn a_spectator_can_read_each_sides_glyph_count_and_players_only_receive_their_own() {
+fn the_spectator_halves_show_each_sides_sweep_and_popup() {
     use bota_proto::Order;
 
     let mut game = super::fog_pov::Spectated::pair("2");
@@ -374,6 +441,15 @@ fn a_spectator_can_read_each_sides_glyph_count_and_players_only_receive_their_ow
                 .iter()
                 .any(|glyph| glyph.team == Team::Dire && glyph.charges == Some(1))
     });
+    let fountain = bota_core::map_of(bota_core::MAP2_ID).fountains[1];
+    game.order(Order::Scan { at: fountain });
+    game.wait("Radiant has spent its Scan charge", |_, client| {
+        client
+            .core()
+            .scan_of(Team::Radiant)
+            .is_some_and(|side| side.ledger.charges == 0)
+    });
+
     for player in [&game.driver, game.other.as_ref().expect("the Dire player")] {
         let side = player.my_team().expect("the player's own side");
         let view = player.view().expect("the player's view");
@@ -388,19 +464,39 @@ fn a_spectator_can_read_each_sides_glyph_count_and_players_only_receive_their_ow
         );
     }
     super::hud_layout::on_screen(&mut game.client);
-    assert_eq!(
-        badge_number(&mut game.client, RADIANT_BADGE).as_deref(),
-        Some("0")
-    );
-    assert_eq!(glyph_badge(&mut game.client).as_deref(), Some("1"));
-    let radiant = named_rect(&mut game.client, RADIANT_BADGE);
-    let dire = named_rect(&mut game.client, "hud glyph charges");
-    assert!(radiant.max.x < dire.min.x, "Radiant is left of Dire");
-    for (side, expected) in [(Team::Radiant, "0"), (Team::Dire, "1")] {
+    for ability in ["glyph", "scan"] {
+        for (side, team) in [
+            ("radiant", "DOTA_Tooltip_Glyph_Radiant"),
+            ("dire", "DOTA_Tooltip_Glyph_Dire"),
+        ] {
+            let face = named(&mut game.client, &format!("hud {ability} {side}"));
+            let team = game
+                .client
+                .world()
+                .resource::<crate::dota_text::Texts>()
+                .label(team, &[])
+                .expect("the installed team label");
+            game.client.hover_ui(face, Duration::from_secs(10));
+            game.client.within(
+                Duration::from_secs(10),
+                "the hovered team's tooltip",
+                |client| {
+                    super::hero_page::tooltip_words(client)
+                        .iter()
+                        .any(|text| text.contains(&team))
+                },
+            );
+        }
+    }
+    assert!(team_cover(&mut game.client, "hud glyph radiant") > 0.0);
+    assert_eq!(team_cover(&mut game.client, "hud glyph dire"), 0.0);
+    assert!(team_cover(&mut game.client, "hud scan radiant") > 0.0);
+    assert_eq!(team_cover(&mut game.client, "hud scan dire"), 0.0);
+    assert_eq!(glyph_badge(&mut game.client), None);
+    for (side, expected) in [(Team::Radiant, None), (Team::Dire, Some("1"))] {
         game.next_side(side);
-        game.wait("the watched side's Glyph badge is drawn", |_, client| {
-            glyph_badge(client).as_deref() == Some(expected)
-                && badge_number(client, RADIANT_BADGE).is_none()
+        game.wait("the watched side's Glyph badge", |_, client| {
+            glyph_badge(client).as_deref() == expected
         });
     }
 }
@@ -412,7 +508,7 @@ fn a_click_on_the_glyph_button_uses_a_charge() {
     client.cheat(bota_proto::Cheat::Refresh);
     client.until("a charge held", |c| glyph_charges(c).is_some_and(|n| n > 0));
     let held = glyph_charges(&client).expect("told");
-    let glyph = named(&mut client, "hud glyph");
+    let glyph = named(&mut client, "hud glyph player");
     client.hover_ui(glyph, Duration::from_secs(30));
     client.click(MouseButton::Left);
     client.until("a charge spent", |c| glyph_charges(c) == Some(held - 1));
@@ -478,25 +574,42 @@ fn a_replay_shows_the_glyph_of_the_side_it_is_seen_from_or_of_both_sides() {
             held.is_some_and(|n| n > 0),
             "{pov:?}: the stream tells charges: {held:?}"
         );
-        let glyph = named(&mut client, "hud glyph");
+        let glyph = named(&mut client, "hud glyph player");
         let world = client.world();
         assert!(
             world
                 .get::<InheritedVisibility>(glyph)
-                .is_some_and(|seen| seen.get()),
-            "{pov:?}: the Glyph's button is drawn"
+                .is_some_and(|seen| seen.get())
+                == pov.is_some(),
+            "{pov:?}: the normal button is drawn for a team view"
         );
         assert_eq!(
             glyph_badge(&mut client),
-            held.map(|n| n.to_string()),
-            "{pov:?}: its badge tells the charges"
-        );
-        assert_eq!(
-            badge_number(&mut client, RADIANT_BADGE).as_deref(),
-            pov.is_none().then_some("1"),
-            "{pov:?}: a second badge is drawn only with the all-teams view"
+            pov.and(held).map(|n| n.to_string())
         );
     }
+}
+
+fn team_cover(client: &mut Client, name: &str) -> f32 {
+    let face = named(client, name);
+    let world = client.world();
+    let paint = world.get::<Children>(face).expect("a clipped disc")[0];
+    let gradient = world
+        .get::<Children>(paint)
+        .expect("the face's art and sweep")
+        .iter()
+        .find_map(|child| world.get::<BackgroundGradient>(child))
+        .expect("the team's sweep");
+    gradient
+        .0
+        .iter()
+        .filter_map(|gradient| match gradient {
+            bevy::ui::Gradient::Conic(conic) => Some(conic),
+            _ => None,
+        })
+        .flat_map(|conic| &conic.stops)
+        .map(|stop| stop.color.to_srgba().alpha)
+        .fold(0.0, f32::max)
 }
 
 /// The darkest the Glyph's sweep is over the button, 0 when it is clear.
@@ -577,12 +690,9 @@ fn a_late_watcher_sees_the_glyph_charge_without_a_recharge_sweep() {
         },
     );
     watcher.ready_with_match_held(&server);
+    assert_eq!(glyph_badge(&mut watcher), None);
     assert_eq!(
-        badge_number(&mut watcher, RADIANT_BADGE).as_deref(),
-        Some("1")
-    );
-    assert_eq!(
-        glyph_cover(&mut watcher),
+        team_cover(&mut watcher, "hud glyph radiant"),
         0.0,
         "the watcher never saw the recharge begin"
     );

@@ -933,6 +933,10 @@ texture hud.aghs_scepter panorama/images/hud/reborn/aghsstatus_scepter_psd.vtex_
 texture hud.aghs_scepter_on panorama/images/hud/reborn/aghsstatus_scepter_on_psd.vtex_c hud/aghsstatus_scepter_on_psd.png
 texture hud.aghs_shard panorama/images/hud/reborn/aghsstatus_shard_psd.vtex_c hud/aghsstatus_shard_psd.png
 texture hud.aghs_shard_on panorama/images/hud/reborn/aghsstatus_shard_on_psd.vtex_c hud/aghsstatus_shard_on_psd.png
+texture hud.glyph_radiant panorama/images/hud/reborn/icon_glyph_on_radiant_psd.vtex_c hud/icon_glyph_on_radiant_psd.png
+texture hud.glyph_dire panorama/images/hud/reborn/icon_glyph_on_dire_psd.vtex_c hud/icon_glyph_on_dire_psd.png
+texture hud.scan_radiant panorama/images/hud/reborn/icon_scan_on_radiant_psd.vtex_c hud/icon_scan_on_radiant_psd.png
+texture hud.scan_dire panorama/images/hud/reborn/icon_scan_on_dire_psd.vtex_c hud/icon_scan_on_dire_psd.png
 texture hud.glyph_scan_bg panorama/images/hud/reborn/glyph_scan_bg_psd.vtex_c hud/glyph_scan_bg_psd.png
 # Tooltip art: the bars over an item's active, use and passive sections, and the cost icons.
 texture tip.active panorama/images/hud/item_tooltip_active_psd.vtex_c hud/item_tooltip_active_psd.png
@@ -985,6 +989,12 @@ label resource/localization/abilities_english.txt DOTA_Tooltip_ability_attribute
 label resource/localization/dota_english.txt DOTA_Glossary_Map_Structures_Glyph
 label resource/localization/dota_english.txt DOTA_Glossary_Map_Structures_Glyph_Desc
 label resource/localization/dota_english.txt DOTA_HUD_GlyphCooldown
+label resource/localization/dota_english.txt DOTA_Tooltip_Glyph_Radiant
+label resource/localization/dota_english.txt DOTA_Tooltip_Glyph_Dire
+label resource/localization/dota_english.txt DOTA_HUD_GlyphCharges
+label resource/localization/dota_english.txt DOTA_HUD_GlyphUseCooldown
+label resource/localization/dota_english.txt DOTA_HUD_RadarCharges
+label resource/localization/dota_english.txt DOTA_HUD_RadarCooldown
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_radar
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_radar_Description
 label resource/localization/dota_english.txt dota_hud_error_cant_radar

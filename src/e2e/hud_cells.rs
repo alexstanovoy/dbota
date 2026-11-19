@@ -407,6 +407,30 @@ fn waiting_glyph_and_live_hud_readouts_update_without_allocating_on_a_fixed_snap
     );
 }
 
+#[test]
+fn positive_charge_badges_and_spectator_halves_update_without_allocating() {
+    let file = super::glyph_scan::recorded_team_buttons();
+    let mut client = super::fog_pov::replay_from_side(&file, 1);
+    assert!(
+        client
+            .core()
+            .glyph()
+            .and_then(|glyph| glyph.charges)
+            .is_some_and(|held| held > 0)
+    );
+    assert!(
+        client
+            .core()
+            .scan()
+            .is_some_and(|side| side.ledger.charges > 0)
+    );
+    measure_hud_update(client.world_mut(), "2 fps", "1 fps");
+    drop(client);
+
+    let mut spectator = super::fog_pov::replay_observed(&file, None, &[], |_| {});
+    measure_hud_update(spectator.world_mut(), "2 fps", "1 fps");
+}
+
 struct FixedTimings;
 
 impl bota_client_core::LiveLink for FixedTimings {

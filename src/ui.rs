@@ -5,6 +5,7 @@ pub(crate) mod checkbox;
 mod draw;
 pub(crate) mod effects;
 pub(crate) mod help;
+pub(crate) mod team_buttons;
 pub(crate) use draw::Draw;
 
 #[derive(Component)]
@@ -272,24 +273,17 @@ pub fn text(s: impl Into<String>, font: &Handle<Font>, size: f32, color: Color) 
     )
 }
 
-/// A count at a lower corner of a button. The left corner is for Radiant when both sides are shown.
+/// The player's charge label inherits the HUD's regular grey label style.
 pub(crate) fn spawn_charge_badge(
     commands: &mut Commands,
     fonts: &Fonts,
     button: Entity,
-    left: bool,
 ) -> (Entity, Entity) {
-    let (left, right) = if left {
-        (px(0), Val::Auto)
-    } else {
-        (Val::Auto, px(0))
-    };
     let badge = commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left,
-                right,
+                right: px(0),
                 bottom: dota(2.0),
                 width: dota(20.0),
                 height: dota(20.0),
@@ -309,7 +303,13 @@ pub(crate) fn spawn_charge_badge(
         .id();
     let count = commands
         .spawn((
-            text("", &fonts.bold, 12.0 * DOTA, INK),
+            text(
+                "",
+                &fonts.regular,
+                18.0 * DOTA,
+                Color::srgb_u8(176, 188, 194),
+            ),
+            bevy::text::LineHeight::Px(20.0 * DOTA),
             Pickable::IGNORE,
             ChildOf(badge),
         ))

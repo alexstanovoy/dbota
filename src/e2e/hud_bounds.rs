@@ -524,3 +524,158 @@ fn the_neutral_item_slot_stands_inside_the_hero_panel_level_with_the_first_row_o
         );
     }
 }
+
+const TEAM_BUTTON_SIZES: [(u32, u32); 7] = [
+    (1280, 720),
+    (1920, 1080),
+    (1920, 1200),
+    (2877, 1620),
+    (3840, 2160),
+    (3440, 1440),
+    (1024, 600),
+];
+
+#[test]
+fn the_all_teams_buttons_fit_at_every_hud_size_and_scale() {
+    let replay = super::glyph_scan::recorded_team_buttons();
+    let mut client = super::fog_pov::replay_observed(&replay, None, &[], |_| {});
+    super::hud_layout::on_screen(&mut client);
+    let faces = [
+        "hud glyph radiant",
+        "hud glyph dire",
+        "hud scan radiant",
+        "hud scan dire",
+    ];
+    for (width, height) in TEAM_BUTTON_SIZES {
+        super::menu::resize_menu_window(&mut client, UVec2::new(width, height));
+        for scale in SCALES {
+            client
+                .world_mut()
+                .resource_mut::<crate::config::Settings>()
+                .ui_scale = scale;
+            client.frames(3);
+            let parts = drawn_parts(&client);
+            assert_wells_apart(&parts);
+            let listed = |name: &str| {
+                parts
+                    .iter()
+                    .find(|part| part.label == name)
+                    .and_then(|part| part.visible)
+            };
+            for face in faces {
+                assert!(
+                    listed(face).is_some(),
+                    "{face} is drawn at {width}x{height} scale {scale}"
+                );
+            }
+            let map = listed("hud minimap").expect("the minimap");
+            for (left, right) in [(faces[0], faces[1]), (faces[2], faces[3])] {
+                let left = listed(left).unwrap();
+                let right = listed(right).unwrap();
+                assert!(left.max.x <= right.min.x + SLACK, "halves are side by side");
+                assert!(
+                    !overlap(left, map) && !overlap(right, map),
+                    "halves clear the minimap"
+                );
+            }
+            for player_only in ["hud glyph charges", "hud scan charges", "hud glyph seconds"] {
+                assert!(
+                    listed(player_only).is_none(),
+                    "{player_only} is hidden in the all-teams view"
+                );
+            }
+            let window = window_rect(&mut client);
+            let defects = complaints(&client, window, &faces);
+            assert!(
+                defects.is_empty(),
+                "{width}x{height} scale {scale}: {} layout complaints, first {:?}",
+                defects.len(),
+                defects.first()
+            );
+        }
+    }
+}
+
+fn assert_wells_apart(parts: &[Drawn]) {
+    let locate = |name| {
+        parts
+            .iter()
+            .position(|part| part.label == name)
+            .expect(name)
+    };
+    let glyph = locate("hud glyph");
+    let scan = locate("hud scan");
+    for (left, glyph_part) in parts
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| under(parts, *index, glyph))
+    {
+        for (right, scan_part) in parts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| under(parts, *index, scan))
+        {
+            assert!(
+                !lie_on_one_another(parts, left, right),
+                "{} overlaps {}",
+                glyph_part.label,
+                scan_part.label
+            );
+        }
+    }
+}
+
+#[test]
+fn the_player_glyph_count_and_three_digit_wait_fit_at_every_hud_size_and_scale() {
+    let replay = super::glyph_scan::recorded_team_buttons();
+    let mut client = super::fog_pov::replay_from_side(&replay, 1);
+    super::hud_layout::on_screen(&mut client);
+    // Stress the layout with a three-digit wait while a charge is held.
+    let mut view = client.view().clone();
+    view.tick += 1;
+    let glyph = view
+        .glyphs
+        .iter_mut()
+        .find(|glyph| glyph.team == bota_proto::Team::Dire)
+        .expect("the player's Glyph");
+    assert_eq!(glyph.charges, Some(1));
+    glyph.ready_after = Some(123 * u32::from(client.core().tick_rate()));
+    client
+        .core_mut()
+        .handle(bota_proto::ServerMsg::Snapshot { view });
+
+    for (width, height) in TEAM_BUTTON_SIZES {
+        super::menu::resize_menu_window(&mut client, UVec2::new(width, height));
+        for scale in SCALES {
+            client
+                .world_mut()
+                .resource_mut::<crate::config::Settings>()
+                .ui_scale = scale;
+            client.frames(3);
+            let parts = drawn_parts(&client);
+            assert_wells_apart(&parts);
+            let visible = |name| {
+                parts
+                    .iter()
+                    .find(|part| part.label == name && part.visible.is_some())
+                    .expect(name)
+            };
+            let timer = visible("hud glyph seconds");
+            assert_eq!(
+                client
+                    .world()
+                    .get::<Text>(timer.entity)
+                    .expect("Glyph timer text")
+                    .0,
+                "123"
+            );
+            let badge = visible("hud glyph charges");
+            assert!(
+                !overlap(timer.visible.unwrap(), badge.visible.unwrap()),
+                "{width}x{height} at {scale}: timer {:?} overlaps badge {:?}",
+                timer.visible,
+                badge.visible
+            );
+        }
+    }
+}
