@@ -95,7 +95,8 @@ fn sharpest_step(pixels: &[u8], width: usize) -> i32 {
 /// What the importer's `soften=` makes of `raw`, which is what a menu on this build's cache holds.
 fn softened(raw: &[u8], width: usize, how: Soften) -> Vec<u8> {
     let mut pixels = raw.to_vec();
-    dbota_import::soften::apply(&mut pixels, width, raw.len() / 4 / width, how);
+    dbota_import::soften::apply(&mut pixels, width, raw.len() / 4 / width, how)
+        .expect("the install's painting fits the import limit");
     pixels
 }
 

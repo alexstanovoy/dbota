@@ -36,8 +36,8 @@
 #           (category, tab and button names) out of the localization. Written by the Rust importer only.
 #   texture <logical> <vpk .vtex_c> <out .png> [soften=<sigma pixels, up to 8> [grain=<levels, up to 16>]]
 #           soften= blurs the picture by a Gaussian of that many pixels, grain= lays fixed noise of that
-#           amplitude over its colour (a texture that is no sprite sheet; made once here, so a client
-#           spends nothing on it).
+#           amplitude over its colour. The importer accepts whole textures up to 2,097,152 pixels
+#           for softening and writes the result to the cache for the client to draw.
 #   font    <logical> <loose file under game/dota: panorama/fonts/x.otf> <out .otf>
 #           a typeface the install keeps beside its packages, copied whole once it reads as one.
 #   particle <logical> <vpk .vpcf_c> <out .json> [models=<control point>:<vpk .vmdl>[@<attachment>][,...]]

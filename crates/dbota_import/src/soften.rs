@@ -4,12 +4,35 @@
 
 use crate::catalog::Soften;
 
+/// The menu painting is 2048 × 1024. This caps the horizontal pass at 32 MiB of scratch.
+pub(crate) const MAX_PIXELS: usize = 2048 * 1024;
+
+pub(crate) fn check_size(width: usize, height: usize) -> heatel::Result<usize> {
+    let count = width.checked_mul(height);
+    match count {
+        Some(count @ 1..=MAX_PIXELS) => Ok(count),
+        Some(0) => Err(heatel::Error::Malformed {
+            what: "texture",
+            detail: "softening requires a nonempty image".to_owned(),
+        }),
+        _ => Err(heatel::Error::Malformed {
+            what: "texture",
+            detail: format!("{width} × {height} exceeds the {MAX_PIXELS}-pixel softening limit"),
+        }),
+    }
+}
+
 /// Blurs `pixels` (RGBA8, `width` by `height`, rows from the top) by a Gaussian of `soften.sigma`
 /// pixels, edges repeating, and lays `soften.grain` levels of fixed noise over the colour (not the
-/// alpha). Panics when `pixels` are not `width` by `height` RGBA8 pixels, or `soften` is beyond
-/// what a manifest line may ask for.
-pub fn apply(pixels: &mut [u8], width: usize, height: usize, soften: Soften) {
-    assert_eq!(pixels.len(), width * height * 4, "RGBA8 pixels");
+/// alpha). The horizontal pass needs at most 32 MiB.
+pub fn apply(pixels: &mut [u8], width: usize, height: usize, soften: Soften) -> heatel::Result<()> {
+    let count = check_size(width, height)?;
+    if pixels.len() != count * 4 {
+        return Err(heatel::Error::Malformed {
+            what: "texture",
+            detail: format!("expected {} RGBA8 bytes, got {}", count * 4, pixels.len()),
+        });
+    }
     assert!(
         soften.sigma > 0.0 && soften.sigma <= Soften::MAX_SIGMA,
         "a Gaussian within the manifest's bound"
@@ -41,16 +64,42 @@ pub fn apply(pixels: &mut [u8], width: usize, height: usize, soften: Soften) {
             }
         }
     }
+    Ok(())
 }
 
 /// The Gaussian's weights over `-radius..=radius`, summing to one.
 fn kernel(sigma: f32, radius: i32) -> Vec<f32> {
     let mut kernel: Vec<f32> = (-radius..=radius)
-        .map(|at| (-((at * at) as f32) / (2.0 * sigma * sigma)).exp())
+        .map(|at| {
+            if at == 0 {
+                return 1.0;
+            }
+            exp_weight(-((at * at) as f32) / (2.0 * sigma * sigma))
+        })
         .collect();
     let total: f32 = kernel.iter().sum();
     kernel.iter_mut().for_each(|weight| *weight /= total);
     kernel
+}
+
+/// Evaluate the negative exponent in a fixed order across platforms. Reducing the argument to
+/// [-1, 0] keeps the Taylor remainder below 1/17! before the five squarings. Outside the cutoff,
+/// the tap is too small to affect any RGBA8 channel.
+fn exp_weight(exponent: f32) -> f32 {
+    if exponent < -32.0 {
+        return 0.0;
+    }
+    let reduced = f64::from(exponent) / 32.0;
+    let mut term = 1.0;
+    let mut sum = term;
+    for power in 1..=16 {
+        term *= reduced / f64::from(power);
+        sum += term;
+    }
+    for _ in 0..5 {
+        sum *= sum;
+    }
+    sum as f32
 }
 
 /// The weighted sum of the values `value` reads around `centre` of a line of `length`, the line's
@@ -114,7 +163,7 @@ mod tests {
     fn softening_turns_the_hard_edges_of_blocks_into_gentle_steps() {
         let mut pixels = blocks(16);
         assert_eq!(sharpest_step(&pixels, 16), 160, "hard edges before");
-        apply(&mut pixels, 16, 16, SOFTEN);
+        apply(&mut pixels, 16, 16, SOFTEN).unwrap();
         assert!(
             sharpest_step(&pixels, 16) < 80,
             "no edge keeps more than half its step: {}",
@@ -125,7 +174,7 @@ mod tests {
     #[test]
     fn softening_leaves_an_opaque_picture_opaque_and_the_grain_in_the_colour_only() {
         let mut pixels = blocks(16);
-        apply(&mut pixels, 16, 16, SOFTEN);
+        apply(&mut pixels, 16, 16, SOFTEN).unwrap();
         assert!(
             pixels
                 .as_chunks::<4>()
@@ -142,7 +191,8 @@ mod tests {
                 sigma: 1.4,
                 grain: 0,
             },
-        );
+        )
+        .unwrap();
         let most = pixels
             .iter()
             .zip(&plain)
@@ -150,14 +200,6 @@ mod tests {
             .max()
             .expect("pixels");
         assert_eq!(most, 2, "the grain moves a level by at most its amplitude");
-    }
-
-    #[test]
-    fn softening_makes_the_same_picture_every_time() {
-        let (mut first, mut second) = (blocks(16), blocks(16));
-        apply(&mut first, 16, 16, SOFTEN);
-        apply(&mut second, 16, 16, SOFTEN);
-        assert_eq!(first, second);
     }
 
     #[test]
@@ -171,7 +213,8 @@ mod tests {
                 sigma: 2.0,
                 grain: 0,
             },
-        );
+        )
+        .unwrap();
         assert!(
             pixels
                 .as_chunks::<4>()

@@ -2090,9 +2090,10 @@ fn softened_png(texture: &Texture, soften: Soften) -> Result<Vec<u8>> {
     if texture.first_frame_rect().is_some() {
         return Err(malformed("texture", "a sprite sheet cannot be softened"));
     }
-    let mut pixels = texture.to_rgba8()?;
     let (width, height) = (texture.width(), texture.height());
-    crate::soften::apply(&mut pixels, width as usize, height as usize, soften);
+    crate::soften::check_size(width as usize, height as usize)?;
+    let mut pixels = texture.to_rgba8()?;
+    crate::soften::apply(&mut pixels, width as usize, height as usize, soften)?;
     Texture::from_rgba8(width, height, pixels)?.to_png()
 }
 

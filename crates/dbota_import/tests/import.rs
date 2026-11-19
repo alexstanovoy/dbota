@@ -1074,9 +1074,81 @@ fn a_texture_line_that_softens_writes_the_painting_softened_and_one_that_does_no
     let soft = png_pixels(&sink.0["out/soft.png"]);
     assert_eq!(plain, blocks, "without soften= the painting is as it is");
     assert_eq!(sharpest(&plain), 160, "hard edges without soften=");
+    assert_eq!(
+        crc32fast::hash(&soft),
+        0x8c84_92ca,
+        "the same softened RGBA pixels on every platform"
+    );
     assert!(
         sharpest(&soft) < 80,
         "with soften= no edge keeps more than half its step: {}",
         sharpest(&soft)
+    );
+}
+
+#[test]
+fn an_oversized_softened_texture_reports_the_pixel_limit_without_writing_a_png() {
+    let side = 1449;
+    let pixels = vec![64; side * side * 4];
+    let src = install(&[(
+        "pak01_dir.vpk",
+        package("textures", "t", "vtex_c", &rgba8_vtex(side as u16, &pixels)),
+    )]);
+    let mut plan = Plan::parse(
+        "texture soft textures/t.vtex_c out/soft.png soften=1.4\n",
+        "",
+    )
+    .expect("a plan");
+    plan.items
+        .retain(|item| matches!(item, Item::Texture { .. }));
+    let mut sink = Memory::default();
+    let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).expect("import report");
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+    assert!(
+        report.failed[0]
+            .1
+            .contains("1449 × 1449 exceeds the 2097152-pixel softening limit"),
+        "{:?}",
+        report.failed
+    );
+    assert!(!sink.0.contains_key("out/soft.png"));
+}
+
+#[test]
+fn a_softened_texture_near_a_rounding_boundary_has_a_stable_digest() {
+    let line = [
+        212, 47, 139, 44, 147, 229, 243, 138, 103, 63, 131, 137, 237, 153, 49, 177, 130, 172, 44,
+        208, 170, 143, 93, 190, 173,
+    ];
+    let row: Vec<u8> = line
+        .into_iter()
+        .flat_map(|level| [level, level, level, 255])
+        .collect();
+    let pixels = row.repeat(line.len());
+    let src = install(&[(
+        "pak01_dir.vpk",
+        package(
+            "textures",
+            "t",
+            "vtex_c",
+            &rgba8_vtex(line.len() as u16, &pixels),
+        ),
+    )]);
+    let mut plan = Plan::parse(
+        "texture soft textures/t.vtex_c out/soft.png soften=3.95\n",
+        "",
+    )
+    .expect("a plan");
+    plan.items
+        .retain(|item| matches!(item, Item::Texture { .. }));
+    let mut sink = Memory::default();
+    let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).expect("import report");
+    assert!(report.failed.is_empty(), "{report:?}");
+    let pixels = png_pixels(&sink.0["out/soft.png"]);
+    // The centre rounds to a different level with some platform expf implementations.
+    assert_eq!(
+        crc32fast::hash(&pixels),
+        0x7ed4_a856,
+        "rounding-boundary pixel digest"
     );
 }
