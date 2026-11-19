@@ -53,8 +53,6 @@ pub(crate) struct ScanCount;
 #[derive(Component)]
 struct MinimapRing;
 
-/// The badge's diameter, in logical pixels.
-const BADGE: f32 = 18.0;
 /// The ring colours of the running scan particle: green while nothing is found, red when found.
 pub(crate) const SEARCHING_COLOUR: Color = Color::srgb(0.0, 0.75, 0.0);
 pub(crate) const FOUND_COLOUR: Color = Color::srgb(0.82, 0.34, 0.34);
@@ -136,32 +134,9 @@ fn spawn(
         Pickable::IGNORE,
         ChildOf(button),
     ));
-    let badge = commands
-        .spawn((
-            ScanBadge,
-            Node {
-                position_type: PositionType::Absolute,
-                right: px(-2),
-                bottom: px(-2),
-                width: px(BADGE),
-                height: px(BADGE),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::MAX,
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.1, 0.11, 0.13)),
-            Pickable::IGNORE,
-            Visibility::Hidden,
-            ChildOf(button),
-        ))
-        .id();
-    commands.spawn((
-        ScanCount,
-        ui::text("", &fonts.bold, 12.0, ui::INK),
-        Pickable::IGNORE,
-        ChildOf(badge),
-    ));
+    let (badge, count) = crate::glyph::spawn_charge_badge(&mut commands, &fonts, button);
+    commands.entity(badge).insert(ScanBadge);
+    commands.entity(count).insert(ScanCount);
 }
 
 /// The side whose Scan the HUD shows, and the game-clock tick the wait is counted from.

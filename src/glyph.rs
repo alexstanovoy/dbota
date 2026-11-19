@@ -37,6 +37,13 @@ struct GlyphIcon {
 #[derive(Component)]
 struct GlyphSweep;
 
+/// The badge with the charges held, and the number in it.
+#[derive(Component)]
+struct GlyphBadge;
+
+#[derive(Component)]
+struct GlyphCount;
+
 /// The seconds left, in the middle.
 #[derive(Component)]
 pub(crate) struct GlyphSeconds;
@@ -125,6 +132,52 @@ fn spawn(
         Pickable::IGNORE,
         ChildOf(button),
     ));
+    let (badge, count) = spawn_charge_badge(&mut commands, &fonts, button);
+    commands
+        .entity(badge)
+        .insert((GlyphBadge, Name::new("hud glyph charges")));
+    commands.entity(count).insert(GlyphCount);
+}
+
+/// The badge of the charges a button holds, at its lower right: Dota's `ChargeCount` (20 of its
+/// pixels across, a dark gradient disc with a shadow, the number centred in it). Hidden until the
+/// caller shows it. Returns the badge and its number.
+pub(crate) fn spawn_charge_badge(
+    commands: &mut Commands,
+    fonts: &Fonts,
+    button: Entity,
+) -> (Entity, Entity) {
+    let badge = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                right: dota(-2.0),
+                bottom: dota(-2.0),
+                width: dota(20.0),
+                height: dota(20.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                ColorStop::auto(Color::srgb(0.267, 0.267, 0.267)),
+                ColorStop::auto(Color::BLACK),
+            ])),
+            BoxShadow::new(Color::BLACK, dota(2.0), dota(2.0), px(0), dota(4.0)),
+            Pickable::IGNORE,
+            Visibility::Hidden,
+            ChildOf(button),
+        ))
+        .id();
+    let count = commands
+        .spawn((
+            ui::text("", &fonts.bold, 12.0 * ui::DOTA, ui::INK),
+            Pickable::IGNORE,
+            ChildOf(badge),
+        ))
+        .id();
+    (badge, count)
 }
 
 /// The share of a wait of `wait` ticks still to go with `ready_in` left: what the dark sweep
@@ -138,10 +191,12 @@ fn sweep_left(ready_in: u32, wait: u32) -> f32 {
 #[allow(clippy::type_complexity)]
 fn show(
     session: NonSend<Session>,
-    mut frame: Single<&mut Visibility, With<GlyphFrame>>,
+    mut frame: Single<&mut Visibility, (With<GlyphFrame>, Without<GlyphBadge>)>,
     mut icon: Single<(&GlyphIcon, &mut ImageNode), Without<GlyphSweep>>,
     mut sweep: Single<&mut BackgroundGradient, With<GlyphSweep>>,
-    mut seconds: Single<&mut Text, With<GlyphSeconds>>,
+    mut seconds: Single<&mut Text, (With<GlyphSeconds>, Without<GlyphCount>)>,
+    mut badge: Single<&mut Visibility, (With<GlyphBadge>, Without<GlyphFrame>)>,
+    mut count: Single<&mut Text, (With<GlyphCount>, Without<GlyphSeconds>)>,
 ) {
     let core = &session.0;
     let rate = u32::from(core.tick_rate()).max(1);
@@ -185,6 +240,13 @@ fn show(
         String::new()
     };
     seconds.set_if_neq(Text(text));
+    // None held, no badge (`.NoCharges #GlyphChargeCount`).
+    badge.set_if_neq(if charges > 0 {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    });
+    count.set_if_neq(Text(charges.to_string()));
 }
 
 /// A click on the button activates the Glyph.

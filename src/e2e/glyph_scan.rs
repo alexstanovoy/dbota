@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 
+use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bota_proto::HeroId;
@@ -152,4 +153,78 @@ fn the_glyph_button_counts_the_wait_the_server_reports() {
         seconds.abs_diff(told.div_ceil(rate)) <= 2,
         "the button says {seconds} s, the server reports {told} ticks"
     );
+}
+
+/// What the Glyph's badge shows: its number while it is drawn, None while it is not.
+fn glyph_badge(client: &mut Client) -> Option<String> {
+    let badge = named(client, "hud glyph charges");
+    let world = client.world();
+    let shown = world.get::<InheritedVisibility>(badge)?.get();
+    let text = world
+        .get::<Children>(badge)?
+        .iter()
+        .find_map(|child| world.get::<Text>(child))?;
+    shown.then(|| text.0.clone())
+}
+
+fn glyph_charges(client: &Client) -> Option<u8> {
+    client.core().glyph().and_then(|glyph| glyph.charges)
+}
+
+fn press(client: &mut Client, key: KeyCode) {
+    client.key(key, ButtonState::Pressed);
+    client.key(key, ButtonState::Released);
+}
+
+/// Since the game's 7.42 the Glyph holds charges, and its button says how many, as the Scan's does:
+/// nothing while none is held, the number while one or two are, one fewer once it is used.
+#[test]
+fn the_glyph_button_shows_the_charges_it_holds_and_one_fewer_once_it_is_used() {
+    let (_server, mut client) = scene();
+    client.frames(5);
+    assert_eq!(
+        glyph_charges(&client),
+        Some(0),
+        "none before the first wait is out"
+    );
+    assert_eq!(glyph_badge(&mut client), None, "no badge without a charge");
+    client.cheat(bota_proto::Cheat::Refresh);
+    client.until("a charge held", |c| glyph_charges(c).is_some_and(|n| n > 0));
+    client.frames(5);
+    let held = glyph_charges(&client).expect("told");
+    assert_eq!(
+        glyph_badge(&mut client),
+        Some(held.to_string()),
+        "the badge tells the {held} charges held"
+    );
+    press(&mut client, KeyCode::KeyJ);
+    client.until("a charge spent", |c| glyph_charges(c) == Some(held - 1));
+    client.frames(5);
+    assert!(
+        client
+            .core()
+            .glyph()
+            .and_then(|glyph| glyph.ready_after)
+            .is_some_and(|wait| wait > 0),
+        "the button waits between two uses"
+    );
+    let left = held - 1;
+    assert_eq!(
+        glyph_badge(&mut client),
+        (left > 0).then(|| left.to_string()),
+        "the badge tells what is left"
+    );
+}
+
+/// A click on the Glyph's button uses a charge, as its key does.
+#[test]
+fn a_click_on_the_glyph_button_uses_a_charge() {
+    let (_server, mut client) = scene();
+    client.cheat(bota_proto::Cheat::Refresh);
+    client.until("a charge held", |c| glyph_charges(c).is_some_and(|n| n > 0));
+    let held = glyph_charges(&client).expect("told");
+    let glyph = named(&mut client, "hud glyph");
+    client.hover_ui(glyph, Duration::from_secs(30));
+    client.click(MouseButton::Left);
+    client.until("a charge spent", |c| glyph_charges(c) == Some(held - 1));
 }
