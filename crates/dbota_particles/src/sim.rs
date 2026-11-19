@@ -267,7 +267,8 @@ impl Instance {
         }
     }
 
-    /// Selects which systems of this instance can present geometry.
+    /// Replaces the presentation selection. Only systems matching `visible` draw,
+    /// regardless of whether a selection was previously made.
     pub fn show_systems(&mut self, visible: impl Fn(&super::library::Def) -> bool) {
         let mask = self
             .draws
@@ -277,7 +278,8 @@ impl Instance {
         }
     }
 
-    /// Hides part of a previously selected set without revealing its hidden systems.
+    /// Narrows the presentation selection. Before any selection all systems are
+    /// visible. Matching systems are hidden and existing exclusions are kept.
     pub fn hide_systems(&mut self, hidden: impl Fn(&super::library::Def) -> bool) {
         let mask = self
             .draws

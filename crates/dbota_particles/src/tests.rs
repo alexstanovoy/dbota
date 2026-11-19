@@ -2497,3 +2497,37 @@ fn recycled_head_and_chain_plays_start_with_their_unfiltered_model_poses() {
     let fresh = vec![(head, head), (chain, chain)];
     assert_eq!(poses, [(fresh.clone(), vec![chain]), (fresh, vec![head])]);
 }
+
+#[test]
+fn hiding_starts_from_all_systems_and_showing_replaces_the_selection() {
+    let mut effect = model_skin_effect();
+    let mut other = model_skin_effect();
+    let mut second = Arc::get_mut(&mut other).unwrap().defs.pop().unwrap();
+    second.path = "other".into();
+    Arc::get_mut(&mut effect).unwrap().defs.push(second);
+    let selection = |instance: &Instance| [instance.shows_system(0), instance.shows_system(1)];
+    let mut instance = Instance::new(effect, 1);
+    assert_eq!(
+        selection(&instance),
+        [true, true],
+        "a fresh instance draws all systems"
+    );
+    instance.hide_systems(|def| def.path == "example");
+    assert_eq!(
+        selection(&instance),
+        [false, true],
+        "hiding preserves unfiltered systems"
+    );
+    instance.show_systems(|def| def.path == "example");
+    assert_eq!(
+        selection(&instance),
+        [true, false],
+        "showing replaces the selection"
+    );
+    instance.hide_systems(|_| false);
+    assert_eq!(
+        selection(&instance),
+        [true, false],
+        "hiding never reveals a system"
+    );
+}
