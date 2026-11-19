@@ -874,6 +874,21 @@ texture hud.intelligence panorama/images/primary_attribute_icons/primary_attribu
 texture hud.talents panorama/images/hud/reborn/stat_branch_large_png.vtex_c hud/stat_branch_large_png.png
 texture hud.talents_learnable panorama/images/hud/reborn/statbranch_button_lvlup_psd.vtex_c hud/statbranch_button_lvlup_psd.png
 texture hud.attributes_learnable panorama/images/hud/reborn/statbranch_attribs_lvlup_psd.vtex_c hud/statbranch_attribs_lvlup_psd.png
+# The talent window (Dota's `DOTAStatBranch`): its backdrop as the pinned window and as the hover tooltip, a row's glow (both
+# choices open, only the left, only the right), the level badge, the Attribute Bonus's plate and its glow; the button's leaf
+# of each tier once its talent is taken (the right choice's leaf, mirrored for the left).
+texture hud.statbranch_backdrop panorama/images/hud/reborn/statbranch_background_psd.vtex_c hud/statbranch_background_psd.png
+texture hud.statbranch_backdrop_tooltip panorama/images/hud/reborn/statbranch_background_tooltip_psd.vtex_c hud/statbranch_background_tooltip_psd.png
+texture hud.statbranch_glow panorama/images/hud/reborn/statbranch_select_bg_psd.vtex_c hud/statbranch_select_bg_psd.png
+texture hud.statbranch_glow_left panorama/images/hud/reborn/statbranch_left_select_bg_psd.vtex_c hud/statbranch_left_select_bg_psd.png
+texture hud.statbranch_glow_right panorama/images/hud/reborn/statbranch_right_select_bg_psd.vtex_c hud/statbranch_right_select_bg_psd.png
+texture hud.statbranch_level panorama/images/hud/reborn/statbranch_levelbg_psd.vtex_c hud/statbranch_levelbg_psd.png
+texture hud.statbranch_attribute panorama/images/hud/reborn/statbranch_stat_background_psd.vtex_c hud/statbranch_stat_background_psd.png
+texture hud.statbranch_attribute_glow panorama/images/hud/reborn/statbranch_stat_select_bg_psd.vtex_c hud/statbranch_stat_select_bg_psd.png
+texture hud.tree_leaf_10 panorama/images/hud/reborn/statbranch_button_pip10_psd.vtex_c hud/statbranch_button_pip10_psd.png
+texture hud.tree_leaf_15 panorama/images/hud/reborn/statbranch_button_pip15_psd.vtex_c hud/statbranch_button_pip15_psd.png
+texture hud.tree_leaf_20 panorama/images/hud/reborn/statbranch_button_pip20_psd.vtex_c hud/statbranch_button_pip20_psd.png
+texture hud.tree_leaf_25 panorama/images/hud/reborn/statbranch_button_pip25_psd.vtex_c hud/statbranch_button_pip25_psd.png
 texture hud.innate panorama/images/hud/facets/innate_icon_png.vtex_c hud/innate_icon_png.png
 texture hud.levelup_button panorama/images/hud/reborn/levelup_button_1_psd.vtex_c hud/levelup_button_1_psd.png
 texture hud.levelup_well panorama/images/hud/reborn/levelup_plus_well_psd.vtex_c hud/levelup_plus_well_psd.png
@@ -931,6 +946,7 @@ label resource/localization/dota_english.txt DOTA_HUD_PrimaryAttributeIntelligen
 label resource/localization/dota_english.txt DOTA_HUD_StrengthDetails
 label resource/localization/dota_english.txt DOTA_HUD_AgilityDetails
 label resource/localization/dota_english.txt DOTA_HUD_IntelligenceDetails
+label resource/localization/dota_english.txt DOTA_StatBranch_Title
 label resource/localization/dota_english.txt DOTA_StatBranch_TooltipTitle
 label resource/localization/dota_english.txt DOTA_LevelUpAttributes
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_attribute_bonus
@@ -966,6 +982,7 @@ font font.display panorama/fonts/reaver-bold.otf fonts/reaver-bold.otf
 font font.bold panorama/fonts/radiance-bold.otf fonts/radiance-bold.otf
 font font.semibold panorama/fonts/radiance-semibold.otf fonts/radiance-semibold.otf
 font font.regular panorama/fonts/radiance-regular.otf fonts/radiance-regular.otf
+font font.numbers panorama/fonts/radiancem-regular.otf fonts/radiancem-regular.otf
 label resource/localization/dota_english.txt DOTA_GoodGuysCaps
 label resource/localization/dota_english.txt DOTA_BadGuysCaps
 label resource/localization/dota_english.txt DOTA_Scoreboard_Header_TalentTree
@@ -2190,6 +2207,8 @@ label resource/localization/dota_english.txt dota_hud_error_item_already_purchas
 label resource/localization/dota_english.txt dota_hud_error_secret_shop_not_in_range
 label resource/localization/dota_english.txt dota_hud_error_cant_purchase_inventory_full
 label resource/localization/dota_english.txt dota_hud_error_ability_not_learned
+label resource/localization/dota_english.txt dota_hud_error_ability_cant_upgrade_no_points
+label resource/localization/dota_english.txt dota_hud_error_ability_cant_upgrade_hero_level
 label resource/localization/dota_english.txt dota_hud_error_no_charges
 label resource/localization/dota_english.txt dota_hud_error_tutorial_shop_not_in_range
 label resource/localization/dota_english.txt dota_hud_error_cant_pick_up_item

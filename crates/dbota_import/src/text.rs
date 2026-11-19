@@ -24,9 +24,14 @@ use serde_json::{Map, Value as Json, json};
 use crate::import::safe_path;
 
 /// The names of `ids.txt` whose texts the client shows: items and abilities (not recipes),
-/// `text` entries, and the heroes whose ability scripts hold them.
+/// `text` entries, the talents of every hero's tree (the simulator's own list of them, so a hero
+/// added there brings its talents' texts), and the heroes whose ability scripts hold them.
 pub fn wanted(ids: &[Id]) -> Wanted {
-    let mut names = Vec::new();
+    let mut names: Vec<String> = bota_core::HEROES
+        .iter()
+        .filter_map(|hero| hero.talents)
+        .flat_map(|tree| tree.iter().map(|talent| talent.key().to_owned()))
+        .collect();
     let mut heroes = Vec::new();
     for id in ids {
         match id {
