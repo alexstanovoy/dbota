@@ -1198,6 +1198,10 @@ CLICK_CUSTOM_LOBBIES = (1140, 478)
 CLICK_CREATE_LOBBY = (1140, 549)
 CLICK_LOBBY_OK = (578, 500)
 CLICK_MY_GAMES = (220, 16)
+CLICK_LOG_OUT = (1132, 16)
+CLICK_LOGIN_FIELD = (560, 225)
+CLICK_PASSWORD_FIELD = (560, 280)
+CLICK_SIGN_IN = (640, 325)
 CLICK_WATCH_REPLAY = (646, 150)
 CLICK_DELETE_REPLAY = (788, 150)
 CLICK_CONFIRM_DELETE = (578, 388)
@@ -1371,39 +1375,37 @@ OPFS_REPLAYS = """async () => {
 }"""
 
 
-def check_replay_probe(directory):
+def check_replay_probe(directory, context):
     """An OPFS inspection survives concurrent deletion and still reports unrelated read errors."""
     server = serve(directory)
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(args=BROWSER_ARGS)
-            page = browser.new_page()
-            page.route("**/*", lambda route: route.fulfill(content_type="text/html", body="<html></html>"))
-            page.goto(f"http://127.0.0.1:{server.server_address[1]}/probe")
-            page.evaluate("""async () => {
-              const root = await navigator.storage.getDirectory();
-              const dir = await root.getDirectoryHandle('dbota-replays', {create: true});
-              await dir.getFileHandle('kept.brp', {create: true});
-              await dir.getFileHandle('removed.tmp', {create: true});
-              const read = FileSystemFileHandle.prototype.getFile;
-              FileSystemFileHandle.prototype.getFile = async function() {
-                if (this.name === 'removed.tmp') await dir.removeEntry(this.name);
-                return read.call(this);
-              };
-            }""")
-            assert page.evaluate(OPFS_REPLAYS) == [["kept.brp", 0]], "the surviving file is still inspected"
-            page.evaluate("""() => {
-              FileSystemFileHandle.prototype.getFile = async function() {
-                throw new DOMException('probe read refused', 'NotReadableError');
-              };
-            }""")
-            try:
-                page.evaluate(OPFS_REPLAYS)
-            except PlaywrightError as error:
-                assert "NotReadableError: probe read refused" in str(error), error
-            else:
-                raise AssertionError("the probe must report unexpected I/O errors")
-            browser.close()
+        page = context.new_page()
+        page.route("**/*", lambda route: route.fulfill(content_type="text/html", body="<html></html>"))
+        page.goto(f"http://127.0.0.1:{server.server_address[1]}/probe")
+        page.evaluate("""async () => {
+          const root = await navigator.storage.getDirectory();
+          const dir = await root.getDirectoryHandle('dbota-replays', {create: true});
+          await dir.getFileHandle('kept.brp', {create: true});
+          await dir.getFileHandle('removed.tmp', {create: true});
+          const read = FileSystemFileHandle.prototype.getFile;
+          FileSystemFileHandle.prototype.getFile = async function() {
+            if (this.name === 'removed.tmp') await dir.removeEntry(this.name);
+            return read.call(this);
+          };
+        }""")
+        assert page.evaluate(OPFS_REPLAYS) == [["kept.brp", 0]], "the surviving file is still inspected"
+        page.evaluate("""() => {
+          FileSystemFileHandle.prototype.getFile = async function() {
+            throw new DOMException('probe read refused', 'NotReadableError');
+          };
+        }""")
+        try:
+            page.evaluate(OPFS_REPLAYS)
+        except PlaywrightError as error:
+            assert "NotReadableError: probe read refused" in str(error), error
+        else:
+            raise AssertionError("the probe must report unexpected I/O errors")
+        page.close()
     finally:
         server.shutdown()
     print("replay probe: concurrent deletion is harmless, unexpected read errors are reported")
@@ -1412,7 +1414,6 @@ def check_replay_probe(directory):
 def check_replays_page(directory, server_bin, radovid_bin, shots=False):
     """A practice match through radovid goes into OPFS, plays from MY GAMES, and can be deleted
     with confirmation."""
-    check_replay_probe(directory)
     evidence = HERE.parent.parent / "temp/smoke-replays"
     evidence.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="service-", dir=evidence) as folder:
@@ -1421,7 +1422,7 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
         subprocess.run([radovid_bin, "dev-cert", str(work)], check=True, capture_output=True)
         port, game = free_port(), free_port()
         page_dir = work / "page"
-        shutil.copytree(directory, page_dir, symlinks=False)
+        shutil.copytree(directory, page_dir, copy_function=os.link)
         # Link the read-only shared cache's files and keep our own directories writable.
         shutil.copytree(cache_folder(), page_dir / "cache", copy_function=os.link)
         for path, _, _ in os.walk(page_dir / "cache"):
@@ -1433,7 +1434,7 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
         ) as service:
             try:
                 wait_port(port)
-                drive_replays_page(work, evidence, port, shots)
+                drive_replays_page(directory, work, evidence, port, shots)
             finally:
                 service.terminate()
                 service.wait(timeout=20)
@@ -1446,6 +1447,10 @@ def wait_for_browser(page, condition, what, timeout=120):
         if condition():
             return
         page.wait_for_timeout(250)
+    try:
+        page.screenshot(path=str(HERE.parent.parent / "temp/smoke-timeout.png"), timeout=20000)
+    except PlaywrightError:
+        pass
     raise AssertionError(f"timed out waiting for {what}")
 
 
@@ -1453,14 +1458,14 @@ def wait_for_sign_in(page):
     wait_for_browser(page, lambda: page.evaluate("() => window.smokeSignedIn === true"), "sign-in")
 
 
-def play_practice_match(page, console, draw, click, shot):
-    """Register and start the browser's only practice match through its menu."""
-    for _ in range(3):  # login, password, SIGN IN, then REGISTER
+def register_replay_player(page, login, draw, *, login_is_prefilled=False):
+    # The form starts at the first empty field, then Tab reaches SIGN IN and REGISTER.
+    for _ in range(2 if login_is_prefilled else 3):
         page.keyboard.press("Tab")
         draw(page)
     page.keyboard.press("Enter")
     draw(page)
-    page.keyboard.type("smoker")
+    page.keyboard.type(login)
     page.keyboard.press("Tab")
     draw(page)
     page.keyboard.type("correct horse battery")
@@ -1470,6 +1475,11 @@ def play_practice_match(page, console, draw, click, shot):
     page.keyboard.press("Enter")
     wait_for_sign_in(page)
     draw(page)
+
+
+def play_practice_match(page, console, draw, click, shot):
+    """Register and start the browser's only practice match through its menu."""
+    register_replay_player(page, "smoker", draw)
     shot(page, "3-home")
     for position in (CLICK_PLAY, CLICK_CUSTOM_LOBBIES, CLICK_CREATE_LOBBY):
         click(page, position)
@@ -1494,19 +1504,56 @@ def wait_for_practice_result(work):
     raise AssertionError("radovid did not record the result and its replay")
 
 
-def drive_replays_page(work, evidence, port, shots):
+def change_replay_account(page, console, draw, click, name):
+    """The saved file stays in OPFS while the second account and the guest see an empty shelf."""
+    def logout():
+        console.clear()
+        click(page, CLICK_LOG_OUT)
+        wait_for_browser(page, lambda: page.evaluate("() => window.smokeSignedIn === false"), "sign-out")
+        wait_console(page, console, r"replays: 0 kept", 30, "the guest shelf")
+        assert any(file == name for file, _ in page.evaluate(OPFS_REPLAYS)), "the replay stays on disk"
+        draw(page)
+
+    logout()
+    console.clear()
+    register_replay_player(page, "other", draw, login_is_prefilled=True)
+    wait_console(page, console, r"replays: 0 kept", 30, "the second account's shelf")
+    click(page, CLICK_MY_GAMES)
+    logout()
+
+    console.clear()
+    click(page, CLICK_LOGIN_FIELD)
+    for _ in "other":
+        page.keyboard.press("Backspace")
+        draw(page)
+    page.keyboard.type("smoker")
+    click(page, CLICK_PASSWORD_FIELD)
+    page.keyboard.type("correct horse battery")
+    click(page, CLICK_SIGN_IN)
+    wait_for_sign_in(page)
+    wait_console(page, console, r"replays: 1 kept", 30, "Alice's shelf")
+    print("replay shelf: account switching hides the saved file until its owner returns")
+
+
+def drive_replays_page(directory, work, evidence, port, shots):
     with sync_playwright() as p:
         browser = p.chromium.launch(args=[*BROWSER_ARGS, "--ignore-certificate-errors"])
         context = browser.new_context(viewport={"width": 1280, "height": 720}, ignore_https_errors=True)
+        check_replay_probe(directory, context)
         # A token is stored again when the service accepts a saved session on a later visit.
         context.add_init_script("""(() => {
             const save = Storage.prototype.setItem;
+            const remove = Storage.prototype.removeItem;
+            Storage.prototype.removeItem = function(key) {
+                remove.call(this, key);
+                if (key === 'dbota.session') window.smokeSignedIn = false;
+            };
             Storage.prototype.setItem = function(key, value) {
                 save.call(this, key, value);
                 if (key === 'dbota.session') window.smokeSignedIn = true;
             };
         })()""")
-        url = f"https://127.0.0.1:{port}/?cache=http"
+        url = f"https://127.0.0.1:{port}/?cache=http&gpu=webgl2"
 
         def visit():
             page = context.new_page()
@@ -1549,7 +1596,12 @@ def drive_replays_page(work, evidence, port, shots):
         assert len(replay) == 1, f"the replay is stored in OPFS: {stored}"
         name, size = replay[0]
         assert size == file.stat().st_size, "the stored replay is the service's file"
-        assert any(name == "index.txt" for name, _ in stored), "the index is beside it"
+        wait_for_browser(page, lambda: page.evaluate("""async name => {
+            const root = await navigator.storage.getDirectory();
+            const library = await root.getDirectoryHandle('dbota-replays');
+            const index = await (await library.getFileHandle('index.txt')).getFile();
+            return (await index.text()).split('\\n').some(row => row.split('\\t')[5] === name);
+        }""", name), "the saved replay's index row")
         assert not problems, f"fetch visit: {problems}"
         print(f"stored: {name} ({size} bytes) in OPFS")
         page.close()
@@ -1564,12 +1616,30 @@ def drive_replays_page(work, evidence, port, shots):
         bad = [line for line in console if "cannot be read" in line or "panicked" in line or "RuntimeError" in line]
         assert not bad and not problems, (bad, problems)
         print("watch: the stored replay plays from MY GAMES")
+        # Damage the owned file after the successful playback. Its index and owner stay put.
+        page.evaluate("""async name => {
+            const root = await navigator.storage.getDirectory();
+            const replays = await root.getDirectoryHandle('dbota-replays');
+            const write = await (await replays.getFileHandle(name)).createWritable();
+            await write.write(new Uint8Array(2048).fill(7));
+            await write.close();
+        }""", name)
         page.close()
 
         page, console, problems = visit()
         wait_for_sign_in(page)
-        wait_console(page, console, r"replays: 1 kept", 300, "the replay available for deletion")
+        wait_console(page, console, r"replays: 1 kept", 300, "the replay available for inspection")
         click(page, CLICK_MY_GAMES)
+        wait_console(page, console, r"replays: a kept replay is unreadable", 30, "the broken replay row")
+        shot(page, "9-broken-replay")
+        click(page, CLICK_WATCH_REPLAY)
+        assert not any("match known:" in line for line in console), "a broken replay has no watch action"
+        print("replay shelf: an unreadable file is marked broken")
+
+        change_replay_account(page, console, draw, click, name)
+        click(page, CLICK_MY_GAMES)
+        wait_console(page, console, r"replays: a kept replay is unreadable", 30, "Alice's broken replay after signing back in")
+        size = 2048
         click(page, CLICK_DELETE_REPLAY)
         shot(page, "9-delete-confirm")
         assert (name, size) in map(tuple, page.evaluate(OPFS_REPLAYS)), "one click keeps the file"
