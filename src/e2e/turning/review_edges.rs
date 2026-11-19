@@ -164,14 +164,20 @@ fn fixed_snapshot_interval(
 
 fn max_speed(client: &mut Client) {
     client.cheat(Cheat::Levels { count: 29 });
-    let item = bota_core::item_by_key("item_butterfly").expect("Butterfly");
-    for _ in 0..6 {
-        client.cheat(Cheat::Item { item });
-    }
+    // Since 7.42 no inventory reaches the cap (the Butterfly lost its base attack-speed
+    // share): the modifier cheat's own attack speed does.
+    client.cheat(Cheat::ApplyModifier {
+        target: bota_proto::Target::None,
+        spec: bota_proto::ModifierSpec {
+            attack_speed: bota_proto::ModifierSpec::MAX_ATTACK_SPEED,
+            ..bota_proto::ModifierSpec::NOMINAL
+        },
+        ticks: bota_proto::MAX_MODIFIER_TICKS,
+    });
     assert_eq!(
         bota_core::attack_gain(bota_proto::Fixed::from_int(client.me().attack_speed)),
         7000,
-        "the real inventory reaches the 700 attack-speed cap"
+        "the hero reaches the 700 attack-speed cap"
     );
     assert!(
         client.me().attack_point <= 72,
