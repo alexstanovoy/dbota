@@ -20,10 +20,10 @@ pub fn plugin(app: &mut App) {
         .add_systems(PostUpdate, report.in_set(crate::loading::Report));
 }
 
-/// The paths in the cache to hold: every texture of the manifest but the map's ground (its own
-/// loader reads that) and the icons of the install's every item and ability (the manifest lists
-/// them all, a thousand the match never shows), the icons of the ids bota knows instead (items,
-/// abilities, buffs), the portraits' backgrounds.
+/// Match art held resident. The map loads its own ground textures. The main menu loads the
+/// current side's backdrop on demand. Keeping both menu backdrops here would take 16 MiB out
+/// of the interface budget even in a match launched without the menu. The cache lists every
+/// installed icon, so hold only the ones named by the match's items, abilities and buffs.
 pub fn paths(manifest: &Manifest) -> Vec<String> {
     let textures = manifest
         .files
@@ -31,7 +31,10 @@ pub fn paths(manifest: &Manifest) -> Vec<String> {
         .filter(|(logical, path)| {
             let installed_icon =
                 logical.starts_with("icon.item.") || logical.starts_with("icon.ability.");
-            !logical.starts_with("ground.") && !installed_icon && path.ends_with(".png")
+            !logical.starts_with("ground.")
+                && !logical.starts_with("menu.background.")
+                && !installed_icon
+                && path.ends_with(".png")
         })
         .map(|(_, path)| path.clone());
     let icons = manifest
@@ -94,4 +97,22 @@ fn report(art: Res<Art>, server: Res<AssetServer>, mut parts: ResMut<crate::load
         .filter(|image| crate::loading::settled(&server, image))
         .count();
     parts.set("art", ready, art.0.len());
+}
+
+/// Images which did not become usable through the normal loading path.
+#[cfg(test)]
+pub(crate) fn unavailable(world: &World) -> Vec<String> {
+    let art = world.resource::<Art>();
+    let server = world.resource::<AssetServer>();
+    art.0
+        .iter()
+        .filter(|image| !server.is_loaded_with_dependencies(image.id()))
+        .map(|image| {
+            format!(
+                "{:?}: {:?}",
+                server.get_path(image.id()),
+                server.get_load_states(image.id())
+            )
+        })
+        .collect()
 }

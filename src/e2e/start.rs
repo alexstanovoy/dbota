@@ -283,12 +283,29 @@ fn the_interface_images_held_resident_stay_within_their_budget() {
     let manifest = client.world().resource::<crate::manifest::Manifest>();
     let paths = crate::preload::paths(manifest);
     let bytes = crate::preload::decoded_bytes(&manifest.root, &paths).expect("measured natively");
+    let menu_backdrop = manifest
+        .files
+        .iter()
+        .filter(|(logical, _)| logical.starts_with("menu.background."))
+        .map(|(_, path)| {
+            assert!(
+                paths.binary_search(path).is_err(),
+                "match preload holds menu backdrop {path}"
+            );
+            crate::preload::decoded_bytes(&manifest.root, std::slice::from_ref(path))
+                .expect("backdrop measured natively")
+        })
+        .max()
+        .unwrap_or_default();
     assert!(
-        bytes <= crate::preload::RESIDENT_BUDGET,
-        "{} images take {} MiB decoded; the bound is {} MiB",
+        bytes + menu_backdrop <= crate::preload::RESIDENT_BUDGET,
+        "{} match images ({bytes} bytes) and a menu backdrop ({menu_backdrop} bytes) exceed the {} byte budget",
         paths.len(),
-        bytes >> 20,
-        crate::preload::RESIDENT_BUDGET >> 20
+        crate::preload::RESIDENT_BUDGET
+    );
+    eprintln!(
+        "{} match images take {bytes} bytes, with {menu_backdrop} bytes for a menu backdrop",
+        paths.len()
     );
 }
 
