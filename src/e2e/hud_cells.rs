@@ -455,3 +455,53 @@ fn both_scores_of_the_top_bar_are_white() {
         assert_eq!(ink, Color::WHITE, "the {side} score");
     }
 }
+
+#[test]
+fn consuming_a_shard_changes_the_hud_to_the_installed_active_mark() {
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::Cheat;
+
+    let server = Server::start(2, &[]);
+    quiet_seat(&server, HeroId::SHADOW_FIEND);
+    let mut client = Client::join(&server, HeroId::PUDGE, &[]);
+    super::hud_layout::on_screen(&mut client);
+    let path = |client: &mut Client| {
+        let marks = named(client, "hud aghs");
+        let shard = client
+            .world()
+            .get::<Children>(marks)
+            .expect("Aghanim marks")[1];
+        path_of(
+            client,
+            client.world().get::<ImageNode>(shard).expect("drawn Shard"),
+        )
+    };
+    assert!(path(&mut client).ends_with("aghsstatus_shard_psd.png"));
+
+    let item = bota_core::item_by_key("item_aghanims_shard_roshan").expect("Shard consumable");
+    client.cheat(Cheat::Item { item });
+    client.until("the Shard is in the hero's inventory", |c| {
+        c.me().items.iter().flatten().any(|held| held.id == item)
+    });
+    let slot = client
+        .me()
+        .items
+        .iter()
+        .position(|held| held.is_some_and(|held| held.id == item))
+        .expect("a Shard slot");
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Item(slot as u8),
+        ctrl: false,
+    });
+    client.until("the active Shard icon is drawn", |c| {
+        path(c).ends_with("aghsstatus_shard_on_psd.png")
+    });
+    assert!(
+        client
+            .me()
+            .items
+            .iter()
+            .flatten()
+            .all(|held| held.id != item)
+    );
+}

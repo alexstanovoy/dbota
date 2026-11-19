@@ -392,6 +392,7 @@ fn a_match_stopped_before_a_minute_of_play_shows_no_rates() {
         backpack: None,
         bought_back_at: None,
         buyback: None,
+        upgrades: None,
     };
     let stats = |seconds: u32| MatchStats {
         duration: (90 + seconds) * 30,

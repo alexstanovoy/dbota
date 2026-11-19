@@ -1868,6 +1868,7 @@ pub(crate) mod tests {
                 backpack: None,
                 bought_back_at: None,
                 buyback: None,
+                upgrades: None,
             }],
             projectiles: Vec::new(),
             loot: Vec::new(),

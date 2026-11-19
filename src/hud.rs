@@ -149,6 +149,13 @@ struct AbilityCell(u8);
 #[derive(Component)]
 struct AghsMark;
 
+#[derive(Component)]
+struct AghsIcon {
+    upgrade: bota_core::HeroUpgrade,
+    inactive: Handle<Image>,
+    active: Handle<Image>,
+}
+
 /// An ability box of the bottom panel, by slot.
 #[derive(Component, Clone, Copy)]
 #[require(bevy::picking::hover::DirectlyHovered)]
@@ -489,6 +496,7 @@ pub(crate) fn updates() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::syste
             level_ups,
             innate,
             ability_row,
+            aghs_icons,
             // The preview is made by `boxes` in the frame the item is dropped.
             slots.after(crate::input::boxes),
             portrait,
@@ -913,16 +921,57 @@ fn spawn_aghs_mark(kit: &mut Spawner, row: Entity) {
             ChildOf(row),
         ))
         .id();
-    for (logical, share) in [("hud.aghs_scepter", 65.0), ("hud.aghs_shard", 35.0)] {
+    use bota_core::HeroUpgrade::{Scepter, Shard};
+    for (upgrade, inactive, active, share) in [
+        (Scepter, "hud.aghs_scepter", "hud.aghs_scepter_on", 65.0),
+        (Shard, "hud.aghs_shard", "hud.aghs_shard_on", 35.0),
+    ] {
+        let load = |key| kit.manifest.file(key).map(|path| kit.server.load(path));
+        let inactive = load(inactive);
+        let active = load(active).or_else(|| inactive.clone());
+        let art = inactive.clone().map_or_else(
+            || ImageNode::default().with_color(Color::NONE),
+            ImageNode::new,
+        );
         kit.commands.spawn((
+            AghsIcon {
+                upgrade,
+                inactive: inactive.unwrap_or_default(),
+                active: active.unwrap_or_default(),
+            },
             Node {
                 height: percent(share),
                 ..default()
             },
-            ui::art(kit.manifest, kit.server, logical),
+            art,
+            BackgroundColor(Color::NONE),
             Pickable::IGNORE,
             ChildOf(mark),
         ));
+    }
+}
+
+fn aghs_icons(session: NonSend<Session>, mut icons: Query<(&AghsIcon, &mut ImageNode)>) {
+    let (player, unit, kit) = subject(&session.0);
+    let upgrades = player
+        .and_then(|player| player.upgrades)
+        .unwrap_or_default();
+    let items = unit
+        .map(|unit| unit.items.as_slice())
+        .or_else(|| kit.map(|kit| kit.items.as_slice()))
+        .unwrap_or_default();
+    let scepter_equipped = items
+        .iter()
+        .take(usize::from(INVENTORY_SLOTS))
+        .flatten()
+        .any(|item| item.id == bota_core::SCEPTER_ITEM && item.mute_left == 0);
+    for (icon, mut art) in &mut icons {
+        let on = icon.upgrade.held(upgrades)
+            || icon.upgrade == bota_core::HeroUpgrade::Scepter && scepter_equipped;
+        let next = if on { &icon.active } else { &icon.inactive };
+        if art.image != *next {
+            art.image = next.clone();
+        }
     }
 }
 
