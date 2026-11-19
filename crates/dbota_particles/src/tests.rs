@@ -2450,3 +2450,50 @@ fn a_renderers_authored_depth_bias_reaches_its_cards() {
     assert_eq!(quads.len(), 1);
     assert_eq!(quads[0].depth_bias, 5.0);
 }
+
+#[test]
+fn recycled_head_and_chain_plays_start_with_their_unfiltered_model_poses() {
+    let mut effect = model_skin_effect();
+    let effect_mut = Arc::get_mut(&mut effect).expect("unique effect");
+    effect_mut.defs[0].children.push((1, false, 0.0));
+    let mut child = model_skin_effect();
+    let mut def = Arc::get_mut(&mut child).unwrap().defs.pop().unwrap();
+    def.path = "chain".into();
+    def.system.initializers[0].class = sphere_at(4);
+    effect_mut.defs.push(def);
+    let mut playing = super::plugin::Simulation::default();
+    let mut poses = Vec::new();
+    for visible in ["example", "chain"] {
+        let old = playing.start(&effect, 1).unwrap();
+        let instance = playing.get_mut(old).unwrap();
+        instance.show_systems(|def| def.path == visible);
+        instance.attach_rope_to_model(Some(6));
+        instance.model_bindings.push((0, 0, 99, Vec3::X));
+        playing.cancel(old);
+
+        let new = playing.start(&effect, 2).unwrap();
+        let instance = playing.get_mut(new).unwrap();
+        instance.set_control_point(3, Vec3::new(120.0, 10.0, 20.0), Vec3::ZERO, false);
+        instance.set_control_point(4, Vec3::new(50.0, 5.0, 20.0), Vec3::ZERO, false);
+        instance.advance(0.02, None);
+        let mut models = Vec::new();
+        super::models::gather(instance, &mut models, 100.0);
+        let fresh = models
+            .iter()
+            .map(|model| (model.transform.translation, model.socket))
+            .collect::<Vec<_>>();
+        instance.show_systems(|def| def.path != visible);
+        models.clear();
+        super::models::gather(instance, &mut models, 100.0);
+        let opposite = models
+            .iter()
+            .map(|model| model.transform.translation)
+            .collect::<Vec<_>>();
+        poses.push((fresh, opposite));
+        playing.cancel(new);
+    }
+    let head = Vec3::new(120.0, 20.0, -10.0);
+    let chain = Vec3::new(50.0, 20.0, -5.0);
+    let fresh = vec![(head, head), (chain, chain)];
+    assert_eq!(poses, [(fresh.clone(), vec![chain]), (fresh, vec![head])]);
+}

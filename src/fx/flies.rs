@@ -78,7 +78,6 @@ impl Flying {
                 return true;
             }
             if rules
-                .0
                 .get(key.rule)
                 .is_some_and(|rule| rule.fx.at == At::Chain)
             {
@@ -361,6 +360,7 @@ impl FlightPresentation<'_, '_> {
                 let wearable = manifest.model(rule.fx.hide_wearable.as_deref()?)?;
                 Some(manifest.model(wearable.attach.as_deref()?)?.scale)
             });
+        let mut visible_head = None;
         if let Some((tip, direction, velocity, speed)) = motion {
             let launch = hand.unwrap_or(tip);
             let key = Key {
@@ -383,7 +383,8 @@ impl FlightPresentation<'_, '_> {
             } else {
                 TetherDraws::Head
             };
-            if let Some(handle) = self.place_tether(rule, effect, key, position, draws) {
+            visible_head = self.place_tether(rule, effect, key, position, draws);
+            if let Some(handle) = visible_head {
                 let model = source
                     .and_then(|unit| self.unit_index.0.get(&unit.id))
                     .and_then(|entity| self.units.get(*entity).ok())
@@ -439,7 +440,16 @@ impl FlightPresentation<'_, '_> {
                 scale,
                 caught: false,
             };
-            let _ = self.place_tether(rule, effect, key, position, TetherDraws::Chain);
+            if let Some(handle) = self.place_tether(rule, effect, key, position, TetherDraws::Chain)
+                && segment.reaches_head
+                && let Some(head) = visible_head
+                && let Some(point) = tip_point(rule)
+            {
+                self.playing
+                    .get_mut(handle)
+                    .expect("a held rope")
+                    .attach_rope_to_flight(point, head);
+            }
         }
     }
 
@@ -457,14 +467,7 @@ impl FlightPresentation<'_, '_> {
         if !sight.allows_projectile(projectile) {
             return None;
         }
-        // A whole-map recording can contain the head's previous position in fog.
-        // Partial tethers use the current witnessed point.
-        let own = projectile.team == tether.viewer;
-        let previous = sight
-            .core()
-            .prev_view()
-            .filter(|before| own && before.tick.checked_add(1) == Some(view.tick))
-            .and_then(|old| old.projectile(tether.id));
+        let previous = sight.previous_projectile(tether.id);
         let flight =
             bota_client_core::interpolate_flight(projectile, previous, sight.core().smooth.alpha());
         let mut tip = above_ground(&self.ground, Vec2::new(flight.x, flight.y), height);
@@ -518,7 +521,7 @@ impl FlightPresentation<'_, '_> {
                 .any(|op| matches!(op.class, Operator::MaintainSequentialPath(_)));
             match draws {
                 TetherDraws::All => true,
-                TetherDraws::Head => !def.model_draws.is_empty(),
+                TetherDraws::Head => !chain,
                 TetherDraws::Chain => chain,
             }
         });
@@ -526,12 +529,9 @@ impl FlightPresentation<'_, '_> {
         instance.set_direction_from(LAUNCH, place_of(direction));
         instance.set_control_point(TIP, place_of(tip), place_of(velocity), false);
         instance.drive_carrier(place_of(tip), place_of(velocity));
-        let attachment = match draws {
-            TetherDraws::All => rule.fx.feeds.iter().find_map(|(point, feed)| {
-                matches!(feed, super::line::Feed::FlightTip).then_some(*point)
-            }),
-            _ => None,
-        };
+        let attachment = matches!(draws, TetherDraws::All)
+            .then(|| tip_point(rule))
+            .flatten();
         instance.attach_rope_to_model(attachment);
         let flight_lifetime = 2.0 * bota_core::rules::HOOK_RANGE as f32 / speed.max(1.0);
         let feeds = Feeds {
@@ -548,6 +548,13 @@ impl FlightPresentation<'_, '_> {
         });
         Some(handle)
     }
+}
+
+fn tip_point(rule: &Rule) -> Option<usize> {
+    rule.fx
+        .feeds
+        .iter()
+        .find_map(|(point, feed)| matches!(feed, super::line::Feed::FlightTip).then_some(*point))
 }
 
 #[derive(Clone, Copy)]

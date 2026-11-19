@@ -28,6 +28,7 @@ const LEFT_OUT: [&str; 46] = [
     // their effects without them.
     // The Twin Gates' ambient strings a cable of rope between two of its points
     // (team_portal_ambient_rope): the client draws the glow without it.
+    "C_INIT_CreateAlongPath",
     "C_INIT_CreateOnModelAtHeight",
     "C_INIT_CreateSpiralSphere",
     "C_INIT_InitFromParentKilled",
@@ -51,13 +52,12 @@ const LEFT_OUT: [&str; 46] = [
     "C_OP_LagCompensation",
     "C_OP_LerpEndCapVector",
     "C_OP_LerpScalar",
+    "C_OP_LerpToOtherAttribute",
     "C_OP_LocalAccelerationForce",
     "C_OP_LockToSavedSequentialPathV2",
-    "C_OP_MovementRigidAttachToCP",
     "C_OP_OscillateScalar",
     "C_OP_RemapCPtoScalar",
     "C_OP_RemapCPtoVector",
-    "C_OP_RemapSpeed",
     "C_OP_RemapSpeedtoCP",
     "C_OP_RemapTransformOrientationToYaw",
     "C_OP_RemapVisibilityScalar",
@@ -280,69 +280,124 @@ fn installed_particle_roots(source: &DirSource) -> Vec<(String, String)> {
 type ModelRequests = BTreeMap<(String, String), BTreeSet<Option<u16>>>;
 
 fn installed_model_requests(source: &DirSource, pak: &Vpk) -> ModelRequests {
-    use heatel::particle::{FloatInput, Renderer};
-    let mut queue = installed_particle_roots(source);
-    let mut seen = BTreeSet::new();
+    use dbota_import::catalog::{self, Line};
+    let catalog = catalog::parse(
+        include_str!("../../../assets-manifest/manifest.txt"),
+        include_str!("../../../assets-manifest/ids.txt"),
+    )
+    .expect("manifest");
+    let bindings: BTreeMap<_, _> = catalog
+        .lines
+        .iter()
+        .filter_map(|line| {
+            let Line::File(file) = line else {
+                return None;
+            };
+            (!file.models.is_empty()).then_some((file.src.trim_end_matches("_c"), &file.models))
+        })
+        .collect();
     let mut requests = ModelRequests::new();
-    // The models the manifest binds to a particle's control points are exported beside it too.
-    for line in include_str!("../../../assets-manifest/manifest.txt").lines() {
-        let words: Vec<_> = line.split_whitespace().collect();
-        if words.first() != Some(&"particle") {
-            continue;
-        }
-        let dir = words[3].rsplit_once('/').map_or("", |(dir, _)| dir);
-        let bound = words.iter().filter_map(|word| word.strip_prefix("models="));
-        for item in bound.flat_map(|list| list.split(',')) {
-            let (_, vmdl) = item.split_once(':').expect("<control point>:<vmdl>");
-            let vmdl = vmdl.split_once('@').map_or(vmdl, |(path, _)| path);
-            requests
-                .entry((dir.to_owned(), vmdl.to_owned()))
-                .or_default()
-                .insert(Some(0));
-        }
-    }
-    while let Some((path, dir)) = queue.pop() {
-        if !seen.insert((path.clone(), dir.clone())) {
-            continue;
-        }
-        let bytes = pak
-            .read_file(source, &format!("{path}_c"))
-            .expect("particle");
-        let system = System::read(&Resource::parse(&bytes).expect("resource")).expect("system");
-        queue.extend(
-            system
-                .children
-                .iter()
-                .map(|child| (child.path.clone(), dir.clone())),
-        );
-        for renderer in system.renderers {
-            let Renderer::Models(model) = renderer.class else {
-                continue;
-            };
-            if model.model_input.is_some() {
+    let mut systems = BTreeMap::new();
+    for (root, dir) in installed_particle_roots(source) {
+        let bound = bindings
+            .get(root.as_str())
+            .map_or(&[][..], |models| models.as_slice());
+        let mut queue = vec![root];
+        let mut seen = BTreeSet::new();
+        while let Some(path) = queue.pop() {
+            if !seen.insert(path.clone()) {
                 continue;
             }
-            let skin = match model.skin {
-                FloatInput::Literal(value) => {
-                    Some(if value.is_finite() && (0.0..64.0).contains(&value) {
-                        value as u16
-                    } else {
-                        0
-                    })
-                }
-                _ => None,
-            };
-            for name in model.paths() {
-                requests
-                    .entry((dir.clone(), name.to_owned()))
-                    .or_default()
-                    .insert(skin);
-            }
+            let system = systems.entry(path.clone()).or_insert_with(|| {
+                let bytes = pak
+                    .read_file(source, &format!("{path}_c"))
+                    .expect("particle");
+                System::read(&Resource::parse(&bytes).expect("resource")).expect("system")
+            });
+            queue.extend(system.children.iter().map(|child| child.path.clone()));
+            add_model_requests(system, bound, &dir, &mut requests);
         }
     }
     requests
 }
 
+fn add_model_requests(
+    system: &System,
+    bound: &[dbota_import::catalog::ControlPointModel],
+    dir: &str,
+    requests: &mut ModelRequests,
+) {
+    for renderer in &system.renderers {
+        let heatel::particle::Renderer::Models(model) = &renderer.class else {
+            continue;
+        };
+        let skin = match model.skin {
+            heatel::particle::FloatInput::Literal(value) => Some(if (0.0..64.0).contains(&value) {
+                value as u16
+            } else {
+                0
+            }),
+            _ => None,
+        };
+        if let Some(point) = model.model_input {
+            for binding in bound
+                .iter()
+                .filter(|binding| usize::from(binding.point) == point.index())
+            {
+                requests
+                    .entry((dir.to_owned(), binding.vmdl.clone()))
+                    .or_default()
+                    .insert(skin);
+            }
+        } else {
+            for name in model.paths() {
+                requests
+                    .entry((dir.to_owned(), name.to_owned()))
+                    .or_default()
+                    .insert(skin);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a local Dota 2 install"]
+fn particle_budget_counts_the_skin_of_a_control_point_renderer() {
+    use dbota_import::catalog::ControlPointModel;
+    use heatel::particle::{ControlPoint, Renderer};
+    let source = DirSource::new(local_install());
+    let pak = Vpk::open(&source, "pak01_dir.vpk").unwrap();
+    let bytes = pak
+        .read_file(&source, "particles/neutral_fx/frogmen_water_bubble.vpcf_c")
+        .unwrap();
+    let mut particle = System::read(&Resource::parse(&bytes).unwrap()).unwrap();
+    let model = particle
+        .renderers
+        .iter_mut()
+        .find_map(|renderer| match &mut renderer.class {
+            Renderer::Models(model) => Some(model),
+            _ => None,
+        })
+        .expect("installed renderer with a selected skin");
+    let point = ControlPoint::new(7).unwrap();
+    model.model_input = Some(point);
+    let weapon = "models/particle/sphere.vmdl".to_owned();
+    let mut requests = ModelRequests::new();
+    add_model_requests(
+        &particle,
+        &[ControlPointModel {
+            point: 7,
+            vmdl: weapon.clone(),
+            attachment: None,
+        }],
+        "particles",
+        &mut requests,
+    );
+    assert_eq!(
+        requests.get(&("particles".into(), weapon)),
+        Some(&BTreeSet::from([Some(5)]))
+    );
+}
 fn local_install() -> PathBuf {
     let provided = std::env::var_os("DBOTA_DOTA_PATH").map(PathBuf::from);
     find_game_dir(provided.as_deref()).expect("local install; set DBOTA_DOTA_PATH")

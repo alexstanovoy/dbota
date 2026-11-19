@@ -289,7 +289,7 @@ pub struct ParticleModelBinding<'a> {
 
 /// A particle file: `{"version", "root", "systems": [{"path", "system"}], "textures":
 /// [{"vtex", "file", "sheet"}], "materials": [{"vmat", "vtex", "blend", "sheets"}], "models":
-/// [{"vmdl", "file", "skin"}], "control_point_models": [{"control_point", "vmdl"}]}`, the root system first, each system as heatel's serde form of
+/// [{"vmdl", "file", "skin"}], "control_point_models": [{"control_point", "vmdl", "attachment"}]}`, the root system first, each system as heatel's serde form of
 /// [`System`] (children by path), a sheet as its sequences of `{"clamp", "frames": [[display
 /// time, cropped u0 v0 u1 v1, uncropped u0 v0 u1 v1]]}` or `null`.
 pub fn particle_json(

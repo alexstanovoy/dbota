@@ -57,6 +57,7 @@ pub struct Simulation {
     slots: Vec<(u32, Option<Instance>)>,
     free: Vec<usize>,
     spare: Vec<Instance>,
+    rope_models: Vec<models::Placed>,
     /// Each look's cards this frame, kept for their capacity.
     lists: Vec<Vec<Quad>>,
     stage_lists: Vec<Vec<Quad>>,
@@ -460,6 +461,21 @@ impl Simulation {
                     socket = instance
                         .rope_model_point
                         .map(|point| (point, from_world(model.socket)));
+                }
+            }
+            if let Some(head) = instance.rope_model_source {
+                socket = None;
+                if let Some((generation, Some(head_instance))) = playing.slots.get(head.slot)
+                    && *generation == head.generation
+                    && permitted(head, head_instance)
+                {
+                    playing.rope_models.clear();
+                    models::gather(head_instance, &mut playing.rope_models, units_per_metre);
+                    if let [model] = playing.rope_models.as_slice() {
+                        socket = instance
+                            .rope_model_point
+                            .map(|point| (point, from_world(model.socket)));
+                    }
                 }
             }
             if !instance.out_of_view() {

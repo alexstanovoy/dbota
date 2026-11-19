@@ -192,24 +192,31 @@ impl EventSight<'_> {
         })
     }
 
+    /// The previous snapshot can name a projectile only within the same stream and audience.
+    pub fn previous_projectile(&self, id: EntityId) -> Option<&bota_proto::ProjectileView> {
+        let now = self.core().view()?;
+        let previous = self.core().prev_view()?;
+        if previous.viewer != now.viewer || previous.tick.checked_add(1) != Some(now.tick) {
+            return None;
+        }
+        previous
+            .projectile(id)
+            .filter(|old| self.allows_projectile(old))
+    }
+
     pub fn flights(&self) -> impl Iterator<Item = bota_client_core::Flight> + '_ {
         let alpha = self.core().smooth.alpha();
-        let view = self.core().view();
-        let previous = self.core().prev_view().filter(|old| {
-            view.is_some_and(|now| {
-                old.viewer == now.viewer && old.tick.checked_add(1) == Some(now.tick)
-            })
-        });
-        view.into_iter()
+        self.core()
+            .view()
+            .into_iter()
             .flat_map(|view| &view.projectiles)
-            .filter_map(move |missile| {
-                if !self.allows_projectile(missile) {
-                    return None;
-                }
-                let before = previous
-                    .and_then(|old| old.projectile(missile.id))
-                    .filter(|old| self.allows_projectile(old));
-                Some(bota_client_core::interpolate_flight(missile, before, alpha))
+            .filter(|missile| self.allows_projectile(missile))
+            .map(move |missile| {
+                bota_client_core::interpolate_flight(
+                    missile,
+                    self.previous_projectile(missile.id),
+                    alpha,
+                )
             })
     }
 

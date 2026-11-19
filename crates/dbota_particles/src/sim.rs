@@ -117,6 +117,7 @@ pub struct Instance {
     host_pose_changed: bool,
     /// A positioned model may give a rope its real socket while retaining its own pivot.
     pub(crate) rope_model_point: Option<usize>,
+    pub(crate) rope_model_source: Option<super::plugin::Handle>,
     /// Definitions (indices into the effect) whose cards are left out of the frame, for a test
     /// comparing the frame without them.
     #[cfg(any(test, feature = "test-support"))]
@@ -203,6 +204,10 @@ impl Instance {
                 .map_or(index + 1, |&last| nodes[last].end);
             nodes[index].end = end;
         }
+        Self::with_nodes(effect, nodes)
+    }
+
+    fn with_nodes(effect: Arc<Effect>, nodes: Vec<Node>) -> Self {
         Self {
             effect,
             nodes,
@@ -211,6 +216,7 @@ impl Instance {
             posed_by_host: false,
             host_pose_changed: false,
             rope_model_point: None,
+            rope_model_source: None,
             #[cfg(any(test, feature = "test-support"))]
             hidden_defs: Vec::new(),
             portrait: false,
@@ -225,18 +231,13 @@ impl Instance {
         }
     }
 
-    /// Plays the effect again from its start, its draws keyed by `seed`, keeping what its
-    /// particles' columns hold.
+    /// Starts a fresh play, reusing the nodes' particle storage.
     pub fn restart(&mut self, seed: u32) {
-        self.presentation_opacity = 1.0;
-        self.life = 0.0;
-        self.held = false;
-        self.undrawn = 0.0;
-        self.out_of_view = false;
-        self.ending = false;
-        for (index, node) in self.nodes.iter_mut().enumerate() {
+        let mut nodes = std::mem::take(&mut self.nodes);
+        for (index, node) in nodes.iter_mut().enumerate() {
             node.reset(seed.wrapping_add(129 * index as u32));
         }
+        *self = Self::with_nodes(Arc::clone(&self.effect), nodes);
     }
 
     /// Supplies the models of the objects bound to this effect. Where a runtime model is
@@ -327,6 +328,13 @@ impl Instance {
     /// Joins the maintained rope's far end to the displayed model's socket.
     pub fn attach_rope_to_model(&mut self, point: Option<usize>) {
         self.rope_model_point = point;
+        self.rope_model_source = None;
+    }
+
+    /// Joins this rope to the socket of a different visible effect.
+    pub fn attach_rope_to_flight(&mut self, point: usize, head: super::plugin::Handle) {
+        self.rope_model_point = Some(point);
+        self.rope_model_source = Some(head);
     }
 
     /// Places an output of the root's child binding at the host's authoritative carrier frame.

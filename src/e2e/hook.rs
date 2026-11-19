@@ -44,6 +44,7 @@ struct Frame {
     /// Where the wire's hook is relative to the thrower and the reach of the launch pose.
     wire_reach: f32,
     socket_reach: f32,
+    launch_centre: Option<Vec3>,
     hero_scale: Option<f32>,
     weapon_scale: Option<f32>,
     /// The particle that chases the hook and ends the chain.
@@ -254,7 +255,7 @@ fn record(
             })
             .fold(0.0, f32::max)
     });
-    let socket_reach = home.zip(socket).map_or(0.0, |(home, socket)| {
+    let launch_centre = home.map(|home| {
         let height = effect.defs[0]
             .system
             .operators
@@ -270,8 +271,11 @@ fn record(
                 Some(height)
             })
             .expect("the installed hook carrier height");
-        socket.distance(home.extend(ground.at(home.x, home.y) + height))
+        home.extend(ground.at(home.x, home.y) + height)
     });
+    let socket_reach = launch_centre
+        .zip(socket)
+        .map_or(0.0, |(centre, socket)| socket.distance(centre));
     let point = |p: Spot| Vec2::new(p.x.to_f32(), p.y.to_f32());
     let audience = view.viewer.or(sight.fog().team).unwrap_or(Team::Radiant);
     let tether = view
@@ -325,6 +329,7 @@ fn record(
         socket,
         wire_reach,
         socket_reach,
+        launch_centre,
         hero_scale,
         weapon_scale: worn.map(|(scale, _)| scale),
         parent,
@@ -378,6 +383,10 @@ enum AfterLaunch {
     Wait,
     Move(Spot),
     HideCaster(Spot),
+    CatchAlly,
+    KillCaught,
+    KillCaster,
+    WitnessLaunch,
 }
 
 fn record_throws_with(
@@ -402,7 +411,7 @@ fn record_throws_with(
     if victim {
         game.cheat(Cheat::CreateHero {
             hero: HeroId::SHADOW_FIEND,
-            enemy: true,
+            enemy: !matches!(after_launch, AfterLaunch::CatchAlly),
             at: at + Spot::from_ints(VICTIM_DISTANCE, 0),
         });
     }
@@ -444,6 +453,22 @@ fn record_throws_with(
                 .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
         );
     }
+    if matches!(after_launch, AfterLaunch::WitnessLaunch) {
+        game.client
+            .world_mut()
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(FRAME));
+        game.wait(
+            "the opponent can already draw the caster's hand",
+            |_, client| {
+                client
+                    .world()
+                    .resource::<Frames>()
+                    .0
+                    .last()
+                    .is_some_and(|frame| frame.visible_caster && frame.socket.is_some())
+            },
+        );
+    }
     for _ in 0..throws {
         game.cheat(Cheat::Refresh);
         game.order(Order::Cast {
@@ -451,7 +476,29 @@ fn record_throws_with(
             target: Target::Pos(at + Spot::from_ints(AIM_DISTANCE, 0)),
         });
         match after_launch {
-            AfterLaunch::Wait => {}
+            AfterLaunch::Wait | AfterLaunch::CatchAlly | AfterLaunch::WitnessLaunch => {}
+            AfterLaunch::KillCaught | AfterLaunch::KillCaster => {
+                let mut target = None;
+                game.wait("a moving hook for the death scenario", |driver, _| {
+                    let view = driver.view().unwrap();
+                    target = view.tethers.iter().find_map(|tether| {
+                        let head = tether.head?;
+                        match after_launch {
+                            AfterLaunch::KillCaught => head.caught,
+                            _ => view
+                                .projectile(tether.id)
+                                .filter(|shot| shot.pos != at)
+                                .map(|_| hero),
+                        }
+                    });
+                    target.is_some()
+                });
+                game.cheat(Cheat::Damage {
+                    target: Target::Unit(target.unwrap()),
+                    amount: 1000,
+                    kind: bota_proto::DamageKind::Pure,
+                });
+            }
             AfterLaunch::Move(spot) => {
                 game.wait("the head starts coming back", |driver, _| {
                     driver
@@ -477,8 +524,12 @@ fn record_throws_with(
             }
         }
         game.wait("the hook has flown and come back", |driver, _| {
-            driver.view().unwrap().unit(hero).unwrap().abilities[slot.0 as usize].cooldown_left > 0
-                && driver.view().unwrap().tethers.is_empty()
+            let view = driver.view().unwrap();
+            view.tethers.is_empty()
+                && (matches!(after_launch, AfterLaunch::KillCaster)
+                    || view
+                        .unit(hero)
+                        .is_some_and(|unit| unit.abilities[slot.0 as usize].cooldown_left > 0))
         });
     }
     if observer.is_some() {
@@ -498,6 +549,9 @@ fn record_throws_with(
         let name = match (observer, after_launch) {
             (_, AfterLaunch::HideCaster(_)) => "hook-caster-leaves-fog.brp".into(),
             (_, AfterLaunch::Move(_)) => "hook-moving-caster.brp".into(),
+            (_, AfterLaunch::CatchAlly) => "hook-ally.brp".into(),
+            (_, AfterLaunch::KillCaught) => "hook-victim-dies.brp".into(),
+            (_, AfterLaunch::KillCaster) => "hook-caster-dies.brp".into(),
             (Some(distance), _) => format!("hook-fog-{distance}.brp"),
             (None, _) => format!("hook-{}{throws}.brp", if victim { "hit" } else { "miss" }),
         };
@@ -633,6 +687,11 @@ fn assert_chain_spans(flight: &[Frame]) {
 
 #[test]
 fn a_flying_hook_head_uses_the_weapon_scale_of_the_drawn_hero() {
+    let file = record_throws(true, 1, MID);
+    assert_flying_weapon_scale(&play(&file, 0, MID));
+}
+
+fn assert_flying_weapon_scale(frames: &[Frame]) {
     use heatel::particle::{Field, FloatInput, Initializer, Mapping, Renderer, SetMethod, System};
 
     let cache = std::path::PathBuf::from(std::env::var_os("DBOTA_ASSETS").expect("test cache"));
@@ -684,9 +743,7 @@ fn a_flying_hook_head_uses_the_weapon_scale_of_the_drawn_hero() {
         flying_span, held_span,
         "the same weapon geometry flies and is worn"
     );
-    let file = record_throws(true, 1, MID);
-    let frames = play(&file, 0, MID);
-    let flight = flights(&frames)[0];
+    let flight = flights(frames)[0];
     for frame in flight {
         let hero = frame.hero_scale.expect("the drawn hero scale");
         let [head] = frame.models.as_slice() else {
@@ -1027,6 +1084,11 @@ fn review_flying_head_and_chain_emerge_from_fog_on_the_victims_stream_and_replay
             let (left, _) = frame
                 .visible_chain_bounds
                 .expect("the visible chain has bounds");
+            // A visible weapon can itself extend across the ground sight edge.
+            let left = frame
+                .head_sockets
+                .iter()
+                .fold(left, |edge, socket| edge.min(socket.x));
             let min_drawn = frame
                 .rope
                 .iter()
@@ -1169,7 +1231,12 @@ fn review_a_caster_leaving_sight_does_not_take_the_visible_head_or_chain_with_hi
                 .target_socket
                 .map_or(frame.wire_head.unwrap().0, Vec3::truncate);
             assert!(
-                head.truncate().distance(at) < 20.0,
+                head.truncate().distance(at)
+                    < if frame.target_socket.is_some() {
+                        0.1
+                    } else {
+                        rules::HOOK_SPEED as f32 / rules::TICKS_PER_SECOND as f32 + 0.1
+                    },
                 "visible head is at {head:?}, expected {at:?} at tick {}",
                 frame.tick
             );
@@ -1466,4 +1533,345 @@ fn review_rewinding_and_pausing_recreates_the_launch_pose_without_return_trails(
         frame.blur.iter().all(|point| point.distance(head) < 70.0),
         "rewind kept the return's blur"
     );
+}
+
+#[test]
+fn an_opponent_who_sees_the_throw_sees_the_head_leave_the_hand_live_and_in_replay() {
+    let (file, live) = record_throws_with(
+        false,
+        1,
+        MID,
+        Some(VICTIM_DISTANCE),
+        AfterLaunch::WitnessLaunch,
+    );
+    let replay = play(&file, 1, MID);
+    let errors = [("live", &live), ("replay", &replay)].map(|(stream, frames)| {
+        let (launch, centre, wire) = frames
+            .iter()
+            .find_map(|frame| {
+                let (wire, seen) = frame.wire_head?;
+                let centre = frame.launch_centre?;
+                (seen
+                    && frame.visible_caster
+                    && !frame.returning
+                    && wire.distance(centre.truncate()) < frame.socket_reach
+                    && (stream == "live" || wire == centre.truncate()))
+                .then_some((frame, centre, wire))
+            })
+            .unwrap_or_else(|| panic!("{stream} missed the visible launch"));
+        let head = launch.head().expect("the launch head is drawn").0;
+        let hand = launch.socket.expect("the visible caster's hand socket");
+        // A live render may first sample the next network snapshot. Until the projectile
+        // clears the hand, its visible trajectory lies on the segment from the hand to
+        // the pose at that observation, even when interpolated within the interval.
+        let travel = wire - centre.truncate();
+        let last = centre
+            + travel.extend(0.0)
+            + (hand - centre) * (1.0 - travel.length() / launch.socket_reach);
+        let axis = last - hand;
+        let offset = if axis.length_squared() > 0.0 {
+            axis * ((head - hand).dot(axis) / axis.length_squared()).clamp(0.0, 1.0)
+        } else {
+            Vec3::ZERO
+        };
+        (stream, head.distance(hand + offset))
+    });
+    assert!(
+        errors.iter().all(|(_, error)| *error < 0.1),
+        "launch distances from the hand trajectory: {errors:?}"
+    );
+}
+
+#[test]
+fn an_opponents_visible_hook_advances_on_each_frame_between_snapshots_at_240_hz() {
+    let (file, _) = record_throws_seen(false, 1, MID, Some(VICTIM_DISTANCE));
+    let mut client = replay_client(&file, 1, MID);
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f64(1.0 / 240.0),
+        ));
+    client.within(SOON, "the enemy hook replay finished", |c| {
+        c.tick() >= file.tick()
+    });
+    let frames = &client.world().resource::<Frames>().0;
+    let steps: Vec<_> = frames
+        .windows(2)
+        .filter_map(|pair| {
+            let [before, now] = pair else { unreachable!() };
+            let (wire, visible) = now.wire_head?;
+            if !visible
+                || now.returning
+                || wire.x < MID.0 as f32 + 180.0
+                || wire.x > MID.0 as f32 + 340.0
+                || before.tick != now.tick
+            {
+                return None;
+            }
+            Some(now.head()?.0.x - before.head()?.0.x)
+        })
+        .collect();
+    assert!(
+        steps.len() >= 12,
+        "several visible snapshots should each contain multiple rendered frames"
+    );
+    assert!(
+        steps.iter().all(|step| *step > 0.0 && *step < 15.0),
+        "visible outbound motion per rendered frame: {steps:?}"
+    );
+}
+
+#[test]
+fn the_visible_part_of_an_enemy_tether_meets_the_heads_socket_and_keeps_its_blur() {
+    let (file, _) = record_throws_seen(false, 1, YARD, Some(1100));
+    let frames = play_recording(&file, 1, YARD, true);
+    let first = frames
+        .iter()
+        .find(|frame| !frame.visible_caster && frame.wire_head.is_some_and(|(_, visible)| visible))
+        .expect("the first witnessed enemy head");
+    let (head, _) = first.head().expect("the first visible sample is drawn");
+    assert!(
+        head.truncate().distance(first.wire_head.unwrap().0) < 0.1,
+        "the first visible frame used a previous position in fog"
+    );
+    let exposed: Vec<_> = frames
+        .iter()
+        .filter(|frame| {
+            !frame.visible_caster
+                && !frame.returning
+                && frame.visible_chain_length > 120.0
+                && frame.head().is_some()
+        })
+        .collect();
+    assert!(exposed.len() >= 3, "several partial flight frames");
+    let edges: Vec<_> = exposed
+        .iter()
+        .map(|frame| {
+            let [socket] = frame.head_sockets.as_slice() else {
+                panic!("one flown socket")
+            };
+            frame
+                .rope
+                .iter()
+                .map(|point| point.distance(*socket))
+                .fold(f32::INFINITY, f32::min)
+        })
+        .collect();
+    let blurred = exposed
+        .iter()
+        .filter(|frame| !frame.blur.is_empty())
+        .count();
+    assert!(
+        edges.iter().all(|error| *error < 0.1) && blurred > 0,
+        "distances from exposed rope to socket {edges:?}, frames with visible blur {blurred}"
+    );
+}
+
+#[test]
+fn an_allied_catch_uses_the_ally_attachment_during_the_pull() {
+    let (file, _) = record_throws_with(true, 1, MID, None, AfterLaunch::CatchAlly);
+    let frames = play(&file, 0, MID);
+    let bound: Vec<_> = frames
+        .iter()
+        .filter_map(|frame| Some((frame.head()?.0, frame.target_socket?)))
+        .collect();
+    assert!(
+        bound.len() > 3,
+        "the ally is carried for several rendered frames"
+    );
+    assert!(bound.first().unwrap().0.x - bound.last().unwrap().0.x > 100.0);
+    assert!(
+        bound
+            .iter()
+            .all(|(head, socket)| head.distance(*socket) < 0.1),
+        "the visible head follows the ally's animated hit socket"
+    );
+}
+
+#[test]
+fn a_victim_dying_during_the_pull_releases_the_attachment_and_the_head_returns() {
+    let (file, _) = record_throws_with(true, 1, MID, None, AfterLaunch::KillCaught);
+    let frames = play(&file, 0, MID);
+    let latched = frames
+        .iter()
+        .position(|frame| frame.target_socket.is_some())
+        .expect("the victim is caught");
+    let released: Vec<_> = frames[latched..]
+        .iter()
+        .filter(|frame| frame.returning && frame.target_socket.is_none())
+        .filter_map(|frame| frame.head().map(|head| head.0))
+        .collect();
+    assert!(
+        released.len() >= 2,
+        "the head keeps returning after the victim dies"
+    );
+    assert!(released.first().unwrap().x - released.last().unwrap().x > 60.0);
+}
+
+#[test]
+fn the_throwers_death_takes_the_rope_and_head_out_of_the_next_frame() {
+    let (file, _) = record_throws_with(false, 1, MID, None, AfterLaunch::KillCaster);
+    let frames = play(&file, 0, MID);
+    let flying = frames
+        .iter()
+        .position(|frame| frame.pudge.is_some() && frame.chain_drawn && frame.head().is_some())
+        .expect("a visible outbound cast");
+    let dead: Vec<_> = frames[flying..]
+        .iter()
+        .filter(|frame| frame.pudge.is_none())
+        .collect();
+    assert!(
+        !dead.is_empty(),
+        "the recording shows the caster's death during the throw"
+    );
+    assert!(
+        dead.iter()
+            .all(|frame| frame.head().is_none() && !frame.chain_drawn),
+        "a displayed head or rope survived the caster's death"
+    );
+}
+
+#[test]
+fn switching_the_replay_pov_mid_flight_hides_the_previous_sides_hook_immediately() {
+    let file = record_throws(false, 1, YARD);
+    let mut client = replay_client(&file, 0, YARD);
+    client.within(SOON, "the caster sees a moving hook", |client| {
+        client
+            .world()
+            .resource::<Frames>()
+            .0
+            .last()
+            .is_some_and(|frame| frame.head().is_some() && frame.chain_drawn)
+    });
+    if let Source::Replay(player) = &mut client.core_mut().source {
+        player.paused = true;
+    }
+    let at = client.tick();
+    client.core_mut().act(bota_client_core::Intent::NextEyes);
+    client.step_frames(1);
+    assert_eq!(client.core().my_slot, Some(bota_proto::SlotId(1)));
+    assert_eq!(client.tick(), at);
+    let frames = client.world().resource::<Frames>();
+    let first_enemy_frame = frames.0.last().unwrap();
+    assert!(
+        first_enemy_frame.head().is_none() && first_enemy_frame.rope.is_empty(),
+        "the same tick's hidden head and chain leaked into the new view"
+    );
+}
+
+#[test]
+fn a_caught_unit_becoming_invisible_does_not_leave_the_head_attached_to_hidden_geometry() {
+    let file = record_throws(true, 1, MID);
+    let mut client = replay_client(&file, 0, MID);
+    let mut views = Vec::new();
+    client.within(SOON, "the caught victim is in several snapshots", |c| {
+        let view = c.view();
+        let caught = view
+            .tethers
+            .iter()
+            .any(|t| t.viewer == Team::Radiant && t.head.is_some_and(|h| h.caught.is_some()));
+        if caught
+            && views
+                .last()
+                .is_none_or(|old: &bota_proto::WorldView| old.tick < view.tick)
+        {
+            views.push(view.clone());
+        }
+        views.len() == 6
+    });
+    for view in &mut views[2..] {
+        let id = view
+            .tethers
+            .iter_mut()
+            .find(|t| t.viewer == Team::Radiant)
+            .unwrap()
+            .head
+            .as_mut()
+            .unwrap()
+            .caught
+            .take()
+            .unwrap();
+        let obscured = view
+            .units
+            .iter_mut()
+            .find(|unit| unit.id == id)
+            .expect("unit is recorded");
+        obscured.seen_by.as_mut().unwrap().radiant = false;
+        obscured.pos.y += bota_proto::Fixed::from_int(1200);
+    }
+    let hidden_tick = views[2].tick;
+    let last_tick = views.last().unwrap().tick;
+    let before = client.world().resource::<Frames>().0.len();
+    replace_replay(&mut client, &file, views, false);
+    client.within(SOON, "the invisible-victim replay played", |c| {
+        c.tick() >= last_tick
+    });
+    let frames = &client.world().resource::<Frames>().0[before..];
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame.tick < hidden_tick && frame.target_socket.is_some())
+    );
+    let hidden: Vec<_> = frames
+        .iter()
+        .filter(|frame| frame.tick >= hidden_tick)
+        .filter_map(|frame| frame.head())
+        .collect();
+    assert!(
+        hidden.len() >= 2,
+        "the visible head has measurements during the hidden interval"
+    );
+    assert!(
+        hidden
+            .iter()
+            .all(|(head, _)| (head.y - MID.1 as f32).abs() < 1.0),
+        "the head must follow its flight line when its caught unit disappears"
+    );
+}
+
+#[test]
+fn a_rescaled_live_rig_drives_the_flying_weapon_scale() {
+    let file = record_throws(true, 1, MID);
+    let mut client = replay_client(&file, 0, MID);
+    client.within(SOON, "the visible worn hook before the cast", |c| {
+        c.world()
+            .resource::<Frames>()
+            .0
+            .last()
+            .is_some_and(|f| f.worn_visible && !f.hook_told)
+    });
+    let original = client
+        .world()
+        .resource::<Frames>()
+        .0
+        .last()
+        .unwrap()
+        .hero_scale
+        .unwrap();
+    let world = client.world_mut();
+    let (wearable, body) = world
+        .query::<(Entity, &crate::units::Wearable)>()
+        .iter(world)
+        .find_map(|(entity, worn)| {
+            worn.world_model()
+                .filter(|(_, model)| model.ends_with("pudge_weapon.glb"))
+                .map(|_| (entity, worn.wearer()))
+        })
+        .expect("the visible rig and mounted blade");
+    let multiplier = 1.35;
+    for root in [wearable, body] {
+        world.get_mut::<Transform>(root).unwrap().scale *= multiplier;
+    }
+    client.within(SOON, "the rescaled hero finishes his throw", |c| {
+        c.tick() >= file.tick()
+    });
+    let frames = &client.world().resource::<Frames>().0;
+    let flight = flights(frames)[0];
+    assert!(
+        flight
+            .iter()
+            .all(|f| (f.hero_scale.unwrap() - original * multiplier).abs() < 0.001),
+        "the flight is rendered with the rescaled rig"
+    );
+    assert_flying_weapon_scale(frames);
 }
