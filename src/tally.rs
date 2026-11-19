@@ -10,6 +10,10 @@ use crate::ui::{self, Fonts};
 /// The plate's place and size, in interface pixels.
 const PLATE_TOP: f32 = 66.5;
 const PLATE: (f32, f32) = (170.0, 44.5);
+pub(crate) const fn bottom() -> f32 {
+    PLATE_TOP + PLATE.1
+}
+
 /// The room left of the lines, and the rows' size.
 const INSET: f32 = 7.5;
 const FONT: f32 = 17.5;
@@ -21,7 +25,7 @@ const LABEL: Color = Color::srgb(0.72, 0.78, 0.86);
 
 /// The plate.
 #[derive(Component)]
-struct Tally;
+pub(crate) struct Tally;
 
 /// What a line of the plate says: the figures it keeps up to date.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]

@@ -26,6 +26,106 @@ pub(crate) mod outline;
 
 /// World units of the map along each axis.
 pub(crate) const MAP_SIZE: f32 = bota_core::rules::MAP_SIZE as f32;
+/// The photograph, overlay marks and clicks all use the same square world region.
+#[derive(Clone, Copy, Resource)]
+pub(crate) struct MapProjection {
+    origin: Vec2,
+    span: f32,
+    domain: f32,
+}
+
+impl Default for MapProjection {
+    fn default() -> Self {
+        Self {
+            origin: Vec2::ZERO,
+            span: MAP_SIZE,
+            domain: MAP_SIZE,
+        }
+    }
+}
+
+impl MapProjection {
+    fn of(statics: &bota_client_core::MatchStatic) -> Self {
+        let metadata = statics.metadata();
+        let axis = metadata.terrain_cells as usize;
+        let cell = crate::terrain::CELL;
+        let domain = axis as f32 * cell;
+        let full = Self {
+            origin: Vec2::ZERO,
+            span: domain,
+            domain,
+        };
+        if !crate::map::sandbox_map(metadata.map) {
+            return full;
+        }
+        let walkable = statics
+            .terrain()
+            .iter()
+            .enumerate()
+            .filter(|(_, tile)| **tile & 0x80 != 0)
+            .map(|(index, _)| Vec2::new((index % axis) as f32, (index / axis) as f32));
+        let (low, high) = walkable.fold(
+            (Vec2::splat(f32::INFINITY), Vec2::ZERO),
+            |(low, high), point| (low.min(point), high.max(point + Vec2::ONE)),
+        );
+        if !low.is_finite() {
+            return full;
+        }
+        // Leave four cells of scenery around the sandbox's walkable ground.
+        let span = (((high - low).max_element() + 8.0) * cell).min(domain);
+        let origin = ((low + high) * (cell / 2.0) - Vec2::splat(span / 2.0))
+            .clamp(Vec2::ZERO, Vec2::splat(domain - span));
+        Self {
+            origin,
+            span,
+            domain,
+        }
+    }
+
+    pub(crate) fn on_map(self, x: f32, y: f32) -> Vec2 {
+        let fraction = (Vec2::new(x, y) - self.origin) / self.span;
+        Vec2::new(fraction.x, 1.0 - fraction.y) * INNER
+    }
+
+    fn world(self, fraction: Vec2) -> Vec2 {
+        self.origin + Vec2::new(fraction.x, 1.0 - fraction.y) * self.span
+    }
+
+    pub(crate) fn pixels(self, units: f32) -> f32 {
+        units * INNER / self.span
+    }
+
+    fn fog_crop(self, cells: usize) -> Option<Rect> {
+        if self.span == self.domain {
+            return None;
+        }
+        let ratio = cells as f32 / self.domain;
+        let start = Vec2::new(self.origin.x, self.domain - self.origin.y - self.span) * ratio;
+        Some(Rect::from_corners(
+            start,
+            start + Vec2::splat(self.span * ratio),
+        ))
+    }
+}
+
+fn update_projection(
+    session: NonSend<Session>,
+    mut projection: ResMut<MapProjection>,
+    mut previous: Local<Option<std::sync::Arc<bota_client_core::MatchStatic>>>,
+) {
+    let statics = session.0.statics();
+    let same = match (previous.as_ref(), statics) {
+        (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    };
+    if !same {
+        *projection =
+            statics.map_or_else(MapProjection::default, |statics| MapProjection::of(statics));
+        *previous = statics.cloned();
+    }
+}
+
 /// Interface pixels of the minimap's side, its frame included: the reference game's minimap stands at the
 /// screen's corner, a square of a quarter of the window's height.
 pub const SIDE: f32 = 308.0;
@@ -211,6 +311,8 @@ pub(crate) struct PingRing;
 pub fn plugin(app: &mut App) {
     outline::plugin(app);
     app.init_resource::<PhotoTaken>()
+        .init_resource::<MapProjection>()
+        .add_systems(PreUpdate, update_projection.after(crate::session::pump))
         .add_systems(Startup, spawn)
         .add_systems(First, reset.in_set(crate::loading::Begin))
         .add_systems(
@@ -415,6 +517,7 @@ fn reset(
 fn photograph(
     mut commands: Commands,
     ready: Res<crate::trees::SceneryReady>,
+    projection: Res<MapProjection>,
     minimap: Res<Minimap>,
     mut cameras: Query<(Entity, &mut PhotoCamera, &mut Camera)>,
     mut shown: Single<&mut Visibility, With<Photo>>,
@@ -445,6 +548,7 @@ fn photograph(
             }
         }
         Err(_) => {
+            let centre = projection.origin + Vec2::splat(projection.span / 2.0);
             commands.spawn((
                 Camera3d::default(),
                 Camera {
@@ -459,13 +563,13 @@ fn photograph(
                     near: 1.0,
                     far: 12_000.0,
                     scaling_mode: ScalingMode::Fixed {
-                        width: MAP_SIZE,
-                        height: MAP_SIZE,
+                        width: projection.span,
+                        height: projection.span,
                     },
                     ..OrthographicProjection::default_3d()
                 }),
-                Transform::from_xyz(MAP_SIZE / 2.0, 6_000.0, -MAP_SIZE / 2.0)
-                    .looking_at(Vec3::new(MAP_SIZE / 2.0, 0.0, -MAP_SIZE / 2.0), Vec3::NEG_Z),
+                Transform::from_xyz(centre.x, 6_000.0, -centre.y)
+                    .looking_at(Vec3::new(centre.x, 0.0, -centre.y), Vec3::NEG_Z),
                 RenderLayers::layer(0),
                 Msaa::Off,
                 PhotoCamera(3),
@@ -474,18 +578,13 @@ fn photograph(
     }
 }
 
-/// Where a bota world point falls on the minimap, in interface pixels from
-/// its inner top-left corner.
+#[cfg(test)]
 pub(crate) fn on_map(x: f32, y: f32) -> Vec2 {
-    Vec2::new(x / MAP_SIZE * INNER, (1.0 - y / MAP_SIZE) * INNER)
-}
-
-/// How many interface pixels a stretch of the map takes on the minimap.
-pub(crate) fn map_to_pixels(units: f32) -> f32 {
-    units / MAP_SIZE * INNER
+    MapProjection::default().on_map(x, y)
 }
 
 fn shop_marks(
+    projection: Res<MapProjection>,
     session: NonSend<Session>,
     minimap: Res<Minimap>,
     manifest: Res<crate::manifest::Manifest>,
@@ -505,7 +604,7 @@ fn shop_marks(
             *visibility = Visibility::Hidden;
             continue;
         };
-        let pos = on_map(shop.pos.x.to_f32(), shop.pos.y.to_f32());
+        let pos = projection.on_map(shop.pos.x.to_f32(), shop.pos.y.to_f32());
         node.left = px(pos.x - 7.0);
         node.top = px(pos.y - 7.0);
         image.image = icon.clone();
@@ -516,6 +615,7 @@ fn shop_marks(
 /// Puts a mark on every unit shown, the fog over the photo, and the camera's
 /// frame.
 fn marks(
+    projection: Res<MapProjection>,
     mut commands: Commands,
     roshan: Res<crate::roshan_status::Sighting>,
     session: NonSend<Session>,
@@ -536,10 +636,14 @@ fn marks(
     let Some(view) = core.view() else {
         return;
     };
-    if let (Some(veil), Ok(mut image)) = (veil, images.get_mut(minimap.fog))
-        && image.image != veil.0
-    {
-        image.image = veil.0.clone();
+    if let (Some(veil), Ok(mut image)) = (veil, images.get_mut(minimap.fog)) {
+        if image.image != veil.0 {
+            image.image = veil.0.clone();
+        }
+        let crop = projection.fog_crop(core.terrain_cells());
+        if image.rect != crop {
+            image.rect = crop;
+        }
     }
     let shown = view
         .units
@@ -555,7 +659,7 @@ fn marks(
     for u in shown.take(MAX_MARKS) {
         let (icon, size) = unit_icon(u);
         let icon = icon.and_then(|logical| handles.get(logical, &manifest, &server));
-        let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
+        let at = projection.on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
         let node = Node {
             position_type: PositionType::Absolute,
             left: px(at.x - size / 2.0),
@@ -635,7 +739,7 @@ fn marks(
     .map(|p| {
         camera
             .viewport_to_world(cam_gt, p)
-            .map_or(Vec2::ZERO, |ray| ray_on_map(ray, &ground))
+            .map_or(Vec2::ZERO, |ray| ray_on_map(ray, &ground, *projection))
     });
     let frame = camera_frame(corners);
     if let Ok((mut node, _, _)) = nodes.get_mut(minimap.view) {
@@ -653,14 +757,14 @@ fn marks(
 /// that looks past the horizon, where it runs off the map in the direction it looks, so that the
 /// camera's frame spreads to the map's edge there, as the reference game's does, instead of
 /// folding to a corner of the minimap.
-fn ray_on_map(ray: Ray3d, ground: &Ground) -> Vec2 {
+fn ray_on_map(ray: Ray3d, ground: &Ground, projection: MapProjection) -> Vec2 {
     if let Some(ground) = crate::camera::ray_to_ground(ray, ground) {
-        return on_map(ground.x, -ground.z);
+        return projection.on_map(ground.x, -ground.z);
     }
     let heading = Vec2::new(ray.direction.x, -ray.direction.z).normalize_or_zero();
     let origin = Vec2::new(ray.origin.x, -ray.origin.z);
-    let far = origin + heading * 2.0 * MAP_SIZE;
-    on_map(far.x, far.y)
+    let far = origin + heading * 2.0 * projection.span;
+    projection.on_map(far.x, far.y)
 }
 
 /// The least a frame is across, in interface pixels: a camera looking past the map's edge is still
@@ -776,6 +880,7 @@ const REMEMBERED: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
 /// kind, a cell of the minimap sheet. The icons are made as runes are seen,
 /// so a match without runes carries none.
 fn rune_marks(
+    projection: Res<MapProjection>,
     mut commands: Commands,
     mut minimap: ResMut<Minimap>,
     memory: Res<crate::runes::RuneMemory>,
@@ -817,7 +922,7 @@ fn rune_marks(
             continue;
         };
         mark.set_if_neq(RuneMark(Some((rune.id, rune.kind, rune.seen))));
-        let at = on_map(rune.at.x, rune.at.y);
+        let at = projection.on_map(rune.at.x, rune.at.y);
         let (left, top) = (px(at.x - RUNE_ICON / 2.0), px(at.y - RUNE_ICON / 2.0));
         if node.left != left || node.top != top {
             node.left = left;
@@ -844,6 +949,7 @@ fn rune_marks(
 /// Marks each of the map's objectives shown by its own icon. The icons are
 /// made as objectives come into view, so a match with none carries none.
 fn objective_marks(
+    projection: Res<MapProjection>,
     mut commands: Commands,
     session: NonSend<Session>,
     mut minimap: ResMut<Minimap>,
@@ -890,7 +996,7 @@ fn objective_marks(
             vis.set_if_neq(Visibility::Hidden);
             continue;
         };
-        let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
+        let at = projection.on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
         node.set_if_neq(Node {
             left: px(at.x - size / 2.0),
             top: px(at.y - size / 2.0),
@@ -912,6 +1018,7 @@ fn objective_marks(
 /// way it faces; with Alt held, as its own icon in a disc of that colour.
 #[allow(clippy::type_complexity)]
 fn hero_marks(
+    projection: Res<MapProjection>,
     session: NonSend<Session>,
     minimap: Res<Minimap>,
     grid: Res<FogGrid>,
@@ -954,7 +1061,7 @@ fn hero_marks(
             .and_then(|hero| manifest.dota_name("hero", hero.0))
             .and_then(|name| handles.get(&format!("minimap.hero.{name}"), &manifest, &server));
         let size = if face.is_some() { HERO_ICON } else { HERO_MARK };
-        let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
+        let at = projection.on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
         node.set_if_neq(Node {
             left: px(at.x - size / 2.0),
             top: px(at.y - size / 2.0),
@@ -1039,6 +1146,7 @@ fn ping_size(elapsed: u32) -> f32 {
 /// whichever side it brings (Dota marks both, through the fog), and then
 /// every spot the side's players pinged, swelling the same way.
 fn pings(
+    projection: Res<MapProjection>,
     sight: crate::fog::EventSight,
     minimap: Res<Minimap>,
     colours: Res<crate::player_colour::PlayerColours>,
@@ -1069,7 +1177,7 @@ fn pings(
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
-        let centre = on_map(at.x, at.y);
+        let centre = projection.on_map(at.x, at.y);
         node.set_if_neq(Node {
             left: px(centre.x - size / 2.0),
             top: px(centre.y - size / 2.0),
@@ -1086,6 +1194,7 @@ fn pings(
 
 /// A left click or a drag moves the camera; a right click walks there.
 fn clicks(
+    projection: Res<MapProjection>,
     mut session: NonSendMut<Session>,
     minimap: Res<Minimap>,
     frames: Query<(&DirectlyHovered, &ComputedNode, &UiGlobalTransform)>,
@@ -1112,9 +1221,11 @@ fn clicks(
     // The node's centre and size are in physical pixels.
     let scale = window.scale_factor();
     let center = transform.translation / scale;
-    let half = computed.size() / scale / 2.0;
-    let k = ((cursor - (center - half)) / (half * 2.0)).clamp(Vec2::ZERO, Vec2::ONE);
-    let (x, y) = (k.x * MAP_SIZE, (1.0 - k.y) * MAP_SIZE);
+    let bounds = computed.border();
+    let start = center + (bounds.min_inset - computed.size() / 2.0) / scale;
+    let size = (computed.size() - (bounds.min_inset + bounds.max_inset)) / scale;
+    let fraction = ((cursor - start) / size.max(Vec2::ONE)).clamp(Vec2::ZERO, Vec2::ONE);
+    let Vec2 { x, y } = projection.world(fraction);
     let core = &mut session.0;
     // The Scan taken up is aimed where the minimap is clicked.
     if core.scan_aim && buttons.just_pressed(MouseButton::Left) {
@@ -1137,10 +1248,7 @@ fn clicks(
         core.pinned = None;
         cam.focus = Vec3::new(x, ground.at(x, y), -y);
     }
-    if buttons.just_pressed(MouseButton::Right)
-        && core.my_standing_hero().is_some()
-        && core.controls_selection()
-    {
+    if buttons.just_pressed(MouseButton::Right) && core.gives_orders() {
         core.act(Intent::MoveTo((x, y)));
     }
 }

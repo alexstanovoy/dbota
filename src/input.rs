@@ -93,7 +93,13 @@ pub fn plugin(app: &mut App) {
         .add_observer(ability_press)
         .add_systems(
             PreUpdate,
-            (over_hud, typing, crate::chat::typing, keys)
+            (
+                over_hud,
+                crate::demo::blur_search,
+                typing,
+                crate::chat::typing,
+                keys,
+            )
                 .chain()
                 .after(crate::session::pump)
                 .after(bevy::ui::UiSystems::Focus)
@@ -262,6 +268,7 @@ pub(crate) fn keys(
     mut groups: ResMut<ControlGroups>,
     mut exit: MessageWriter<AppExit>,
     muted: Res<crate::keys::Muted>,
+    mut demo: ResMut<crate::demo::DemoPanel>,
     menu: Option<NonSendMut<crate::main_menu::MenuCore>>,
 ) {
     let core = &mut session.0;
@@ -273,7 +280,7 @@ pub(crate) fn keys(
     if *typing != Typing::No || typing.is_changed() || *muted != crate::keys::Muted::No {
         return;
     }
-    if fired.pressed(Action::Escape) {
+    if fired.pressed(Action::Escape) && !demo.cancel_placement() {
         escape(core, &mut panels, &mut screen, menu, &mut exit);
     }
     if fired.pressed(Action::Console) && matches!(core.source, Source::Live(_)) {

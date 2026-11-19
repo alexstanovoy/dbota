@@ -688,12 +688,128 @@ fn the_hud_holds_together_with_the_cheat_panel_open() {
             client.click_named("demo fold");
             client.frames(4);
             let window = window_rect(&mut client);
+            check_demo_scroll(&mut client, window)
+                .unwrap_or_else(|message| panic!("{width}x{height}, scale {scale}: {message}"));
             let complaints = complaints(&client, window, &["hud demo panel", "demo levelmax"]);
             assert!(
                 complaints.is_empty(),
                 "{width}x{height}, scale {scale}:\n{}",
                 complaints.join("\n")
             );
+        }
+    }
+}
+
+fn demo_cells(parts: &[Drawn]) -> impl Iterator<Item = &Drawn> {
+    parts
+        .iter()
+        .filter(|part| part.solid && part.label.starts_with("demo ") && part.label != "demo fold")
+}
+
+fn scroll_demo(client: &mut Client, at: Vec2, steps: f32) {
+    client.mouse(at);
+    let world = client.world_mut();
+    let window = world
+        .query_filtered::<Entity, With<bevy::window::PrimaryWindow>>()
+        .single(world)
+        .unwrap();
+    world.write_message(bevy::input::mouse::MouseWheel {
+        unit: bevy::input::mouse::MouseScrollUnit::Line,
+        x: 0.0,
+        y: steps,
+        window,
+        phase: bevy::input::touch::TouchPhase::Moved,
+    });
+    client.frames(3);
+}
+
+fn check_demo_scroll(client: &mut Client, window: Rect) -> Result<(), String> {
+    let parts = drawn_parts(client);
+    let body = parts
+        .iter()
+        .find(|part| part.label == "hud demo panel")
+        .expect("open panel");
+    let mut pending: std::collections::BTreeSet<_> =
+        demo_cells(&parts).map(|part| part.label.clone()).collect();
+    let at = body.rect.center();
+    if body.rect.height() < 160.0
+        && demo_cells(&parts).any(|cell| !contained(cell.rect, body.rect, SLACK))
+    {
+        return Err(format!(
+            "the panel needs room to scroll, got {}",
+            body.rect.height()
+        ));
+    }
+    for _ in 0..16 {
+        let parts = drawn_parts(client);
+        for cell in demo_cells(&parts) {
+            if cell.visible.is_some_and(|visible| {
+                contained(cell.rect, visible, SLACK) && contained(visible, window, SLACK)
+            }) {
+                pending.remove(&cell.label);
+            }
+        }
+        if pending.is_empty() {
+            scroll_demo(client, at, 40.0);
+            return Ok(());
+        }
+        scroll_demo(client, at, -3.0);
+    }
+    Err(format!(
+        "controls never fully visible when scrolling: {pending:?}"
+    ))
+}
+
+#[test]
+fn all_demo_labels_fit_in_their_cells_with_padding_even_with_search_results() {
+    for scale in SCALES {
+        let (_server, mut client) = hud_with(1024, 600, scale, &[]);
+        client.click_named("demo fold");
+        let parts = drawn_parts(&client);
+        let body = parts
+            .iter()
+            .find(|part| part.label == "hud demo panel")
+            .expect("open panel");
+        let at = body.rect.center();
+        for _ in 0..12 {
+            if drawn_parts(&client).iter().any(|part| {
+                part.label == "demo items"
+                    && part
+                        .visible
+                        .is_some_and(|visible| contained(part.rect, visible, SLACK))
+            }) {
+                break;
+            }
+            scroll_demo(&mut client, at, -2.0);
+        }
+        client.click_named("demo items");
+        client.type_text("heart");
+        let parts = drawn_parts(&client);
+        assert!(
+            parts
+                .iter()
+                .any(|item| item.label.starts_with("demo item "))
+        );
+        for (index, cell) in parts
+            .iter()
+            .enumerate()
+            .filter(|(_, part)| demo_cells(std::slice::from_ref(part)).next().is_some())
+        {
+            for word in parts.iter().filter(|part| {
+                part.parent == Some(index) && client.world().get::<Text>(part.entity).is_some()
+            }) {
+                let padded = Rect::from_corners(
+                    cell.rect.min + Vec2::splat(1.0),
+                    cell.rect.max - Vec2::splat(1.0),
+                );
+                assert!(
+                    contained(word.rect, padded, 0.5),
+                    "scale {scale}: {} touches its cell: {:?} versus {:?}",
+                    cell.label,
+                    word.rect,
+                    cell.rect
+                );
+            }
         }
     }
 }

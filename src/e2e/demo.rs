@@ -122,12 +122,37 @@ fn demo_level_up_raises_the_selected_hero_one_level() {
 }
 
 #[test]
-fn demo_level_max_raises_the_selected_hero_to_the_cap() {
+fn demo_level_max_learns_every_ability_and_leaves_talents_to_the_player() {
     let (_server, mut client) = demo();
     let hero = client.me().id;
     let count = bota_core::rules::HERO_MAX_LEVEL;
-    hero_cheat(&mut client, "demo levelmax", Cheat::Levels { count });
+    let slot = client.core().my_slot.expect("the seat");
+    let talents = client
+        .core()
+        .talents_of(slot)
+        .expect("talent alternatives")
+        .learned;
+    client.click_named("demo levelmax");
     expect_level(&mut client, hero, count);
+    let seen = client.tick();
+    client.until(
+        "the level change and any following order have reached the client",
+        |c| c.tick() > seen + 2,
+    );
+    let abilities = &client.me().abilities;
+    assert!(
+        abilities
+            .iter()
+            .filter(|spell| spell.max_level > 0
+                && bota_core::ability_def(spell.id).is_some_and(|def| def.granted_at.is_none()))
+            .all(|spell| spell.level == spell.max_level),
+        "Level Max learns each regular ability: {abilities:?}"
+    );
+    assert_eq!(
+        client.core().talents_of(slot).unwrap().learned,
+        talents,
+        "Level Max leaves talent choices to the player"
+    );
 }
 
 #[test]
@@ -382,8 +407,12 @@ fn demo_all_vision_shows_an_enemy_outside_the_players_sight() {
 #[test]
 fn demo_uses_the_short_lane_and_draws_roshan() {
     let (_server, mut client) = demo();
+    expect_demo_world(&mut client);
+}
+
+fn expect_demo_world(client: &mut Client) {
     click_cheat(
-        &mut client,
+        client,
         "demo all vision",
         None,
         Cheat::AllVision { on: true },
@@ -491,7 +520,7 @@ fn demo_controls_are_offered_only_in_live_cheat_matches() {
         quiet_seat(&server, HeroId::PUDGE);
         let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
         client.ready_with_match_held(&server);
-    client.frames(2);
+        client.frames(2);
         assert_eq!(level_plate(&mut client, "demo fold"), cheats);
     }
 }
@@ -669,4 +698,252 @@ fn demo_free_spells_and_normal_spells_change_the_cooldown_shown() {
         "the normal spell spent mana and started its cooldown",
         |client| client.me().mana < mana && client.me().abilities[0].cooldown_left > 0,
     );
+}
+
+#[test]
+fn clicking_the_ground_after_search_restores_game_hotkeys() {
+    let (_server, mut client) = demo();
+    client.click_named("demo learn max");
+    client.click_named("demo items");
+    client.type_text("heart");
+    let at = nearby(&client, 200, -80);
+    point(&mut client, at, MouseButton::Left);
+    client.tap_named(KeyCode::F4, bevy::input::keyboard::Key::F4);
+    assert!(
+        client.world().resource::<crate::input::Panels>().shop,
+        "the shop hotkey works after clicking outside search"
+    );
+}
+
+#[test]
+fn the_hero_controls_explain_when_the_selection_cannot_be_controlled() {
+    let (_server, mut client) = demo();
+    let unit = client
+        .view()
+        .units
+        .iter()
+        .find(|unit| unit.kind == UnitKind::Tower)
+        .expect("tower")
+        .id;
+    select(&mut client, unit);
+    let world = client.world_mut();
+    let cell = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "demo levelup")
+        .unwrap()
+        .0;
+    assert!(
+        world.get::<bevy::ui::InteractionDisabled>(cell).is_some(),
+        "the level button is disabled for a tower"
+    );
+    assert!(
+        world
+            .query::<&Text>()
+            .iter(world)
+            .any(|text| text.0 == "ENEMY CREEPS HERE"),
+        "placement identifies the side it spawns"
+    );
+}
+
+fn forged_cheat(client: &mut Client, unit: EntityId) {
+    let seen = client.tick();
+    client
+        .core_mut()
+        .source
+        .send(&bota_proto::ClientMsg::Order {
+            seq: 1000,
+            unit: Some(unit),
+            order: Order::Cheat {
+                cheat: Cheat::Levels { count: 29 },
+            },
+            seen: Some(seen),
+            queue: false,
+        });
+}
+
+#[test]
+fn an_order_crafted_without_cheats_is_refused_by_the_match() {
+    let server = Server::for_hud_with_cheats(1, &[], false);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.ready_with_match_held(&server);
+    client.frames(2);
+    assert!(!level_plate(&mut client, "demo fold"));
+    client
+        .core_mut()
+        .act(Intent::Cheat(Cheat::Levels { count: 29 }));
+    client.within(
+        std::time::Duration::from_secs(20),
+        "the server refuses the cheat order",
+        |client| {
+            matches!(
+                client.core().reject,
+                Some((
+                    bota_client_core::Refused::Rule(bota_proto::RejectReason::NoCheats),
+                    _
+                ))
+            )
+        },
+    );
+    assert_eq!(client.me().level, 1);
+}
+
+#[test]
+fn a_spectator_cannot_send_a_cheat_even_if_the_match_allows_cheats() {
+    let server = Server::start(1, &["--spectators", "open"]);
+    let mut player = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    let mut watcher = Client::run(&["--addr", &server.address, "--spectate"]);
+    watcher.until("spectator watches the match", |watcher| {
+        player.frames(1);
+        watcher.core().view().is_some()
+    });
+    let id = player.me().id;
+    let tick = watcher.tick();
+    assert!(!level_plate(&mut watcher, "demo fold"));
+    forged_cheat(&mut watcher, id);
+    watcher.until("both sides saw later snapshots", |watcher| {
+        player.frames(1);
+        watcher.tick() > tick + 2 && player.tick() > tick + 2
+    });
+    assert_eq!(player.me().level, 1, "the seatless order had no effect");
+}
+
+#[test]
+fn a_replay_of_a_cheat_match_has_no_panel_or_order_authority() {
+    use bota_proto::{ReplayRecord, ServerMsg};
+    let mut reader = bota_proto::FrameReader::new();
+    reader.push(&crate::units::tests::replay_of_heroes_on_grid(1, 1));
+    let mut replay = Vec::new();
+    while let Some(mut record) = reader
+        .next_message::<ReplayRecord>()
+        .expect("the replay record")
+    {
+        if let ReplayRecord::Msg(ServerMsg::MatchStart { info }) = &mut record {
+            info.cheats = true;
+        }
+        bota_proto::encode_frame(&record, &mut replay).expect("the replay record encoded");
+    }
+    let core = bota_client_core::App::new(bota_client_core::Source::Replay(Box::new(
+        bota_client_core::ReplayPlayer::from_reader(std::io::Cursor::new(replay)),
+    )));
+    let mut client = Client::run_with_core(&["--replay", "in_memory.brp"], core);
+    client.until("the replay snapshot", |client| {
+        client.core().view().is_some()
+    });
+    super::hud_layout::on_screen(&mut client);
+    assert!(!level_plate(&mut client, "demo fold"));
+    let unit = &client.view().units[0];
+    let (id, level) = (unit.id, unit.level);
+    forged_cheat(&mut client, id);
+    client.frames(3);
+    assert_eq!(client.view().unit(id).expect("recorded hero").level, level);
+}
+
+#[test]
+fn the_ended_match_has_no_panel_and_ignores_a_late_cheat() {
+    let (mut server, mut client) = demo();
+    let (id, level) = (client.me().id, client.me().level);
+    server.ask_to_finish();
+    client.until("the match has ended on the client", |client| {
+        client.core().aborted.is_some()
+    });
+    server.wait();
+    client.frames(2);
+    assert!(!level_plate(&mut client, "demo fold"));
+    forged_cheat(&mut client, id);
+    client.frames(3);
+    assert_eq!(client.view().unit(id).expect("last snapshot").level, level);
+}
+
+#[test]
+fn the_panel_takes_its_top_edge_from_the_tally() {
+    let (_server, mut client) = demo();
+    let world = client.world_mut();
+    let named = |world: &mut World, label| {
+        world
+            .query::<(Entity, &Name)>()
+            .iter(world)
+            .find(|(_, name)| name.as_str() == label)
+            .unwrap()
+            .0
+    };
+    let (panel, tally) = (named(world, "demo controls"), named(world, "hud tally"));
+    let Val::Px(top) = world.get::<Node>(panel).unwrap().top else {
+        panic!("panel top")
+    };
+    let mut tally = world.get_mut::<Node>(tally).unwrap();
+    let Val::Px(height) = tally.height else {
+        panic!("tally height")
+    };
+    tally.height = px(height + 24.0);
+    client.frames(2);
+    assert_eq!(
+        client.world().get::<Node>(panel).unwrap().top,
+        px(top + 24.0)
+    );
+}
+
+#[test]
+fn an_armed_teleport_gives_a_short_instruction_and_escape_cancels_it() {
+    let (_server, mut client) = demo();
+    client.click_named("demo teleport");
+    assert!(
+        client.shown_texts().contains(&"PICK SPOT".to_owned()),
+        "the armed button uses a caption that fits its cell"
+    );
+    assert!(
+        client
+            .shown_texts()
+            .contains(&"CLICK GROUND · ESC CANCELS".to_owned())
+    );
+    client.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
+    assert!(!client.shown_texts().contains(&"PICK SPOT".to_owned()));
+}
+
+#[test]
+fn escape_hides_the_search_caret_and_restores_hotkeys() {
+    let (_server, mut client) = demo();
+    client.click_named("demo items");
+    client.type_text("heart");
+    assert!(
+        client.shown_texts().contains(&"heart|".to_owned()),
+        "the focused field shows its caret"
+    );
+    client.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
+    assert!(client.shown_texts().contains(&"heart".to_owned()));
+    assert!(!client.shown_texts().contains(&"heart|".to_owned()));
+    client.tap_named(KeyCode::F4, bevy::input::keyboard::Key::F4);
+    assert!(client.world().resource::<crate::input::Panels>().shop);
+}
+
+#[test]
+fn the_demo_button_launches_the_shipped_demo_and_the_hero_rises_where_it_fell() {
+    use crate::main_menu::{Act, MenuCore};
+    let service = crate::main_menu::tests::service_from_demo_example();
+    let mut client = super::menu::signed_up(&service, "demoplayer");
+    super::menu::act(&mut client, Act::InspectHero(HeroId::SHADOW_FIEND));
+    client.click_named("demo hero");
+    client.until("Demo Hero seated by the matchmaking service", |c| {
+        c.core().my_standing_hero().is_some()
+    });
+    assert_eq!(
+        client.world().non_send::<MenuCore>().demo_hero(),
+        Some(HeroId::SHADOW_FIEND)
+    );
+    assert_eq!(
+        client.core().session().expect("service match").map().id,
+        bota_core::HERO_DEMO_ID,
+        "the launched ruleset uses the small Demo Hero map"
+    );
+    super::hud_layout::on_screen(&mut client);
+    expect_demo_world(&mut client);
+
+    let at = bota_core::rules::DEMO_HERO_STARTS[0];
+    client.cheat(Cheat::Teleport { at });
+    let (id, fell) = (client.me().id, client.me().pos);
+    client.cheat(Cheat::Suicide);
+    client.until("the hero down", |c| c.core().my_standing_hero().is_none());
+    client.until("the hero drawn again at its death position", |c| {
+        c.view().unit(id).is_some_and(|unit| unit.pos == fell) && c.body(id).is_some()
+    });
 }

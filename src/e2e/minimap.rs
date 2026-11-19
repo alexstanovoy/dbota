@@ -1139,3 +1139,73 @@ fn the_cameras_frame_runs_to_the_maps_edge_where_a_corner_looks_past_the_horizon
         "the frame spans the map's width, as the view widens towards the horizon: {frame:?}"
     );
 }
+
+#[test]
+fn clicking_the_minimap_and_drawing_the_hero_share_the_played_maps_extent() {
+    use super::harness::{Client, Server};
+    use bota_proto::HeroId;
+    for map in [bota_core::HERO_DEMO_ID, bota_proto::MapId(0)] {
+        let arg = map.0.to_string();
+        let server = Server::start(1, &["--map", &arg, "--seated-start"]);
+        let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+        super::hud_layout::on_screen(&mut client);
+        let view = client.core();
+        let side = view.terrain_cells();
+        let cell = crate::terrain::CELL;
+        let (low, high) = if map == bota_core::HERO_DEMO_ID {
+            view.terrain()
+                .iter()
+                .enumerate()
+                .filter(|(_, value)| **value & 0x80 != 0)
+                .map(|(index, _)| Vec2::new((index % side) as f32, (index / side) as f32))
+                .fold((Vec2::splat(f32::MAX), Vec2::ZERO), |(low, high), cell| {
+                    (low.min(cell), high.max(cell))
+                })
+        } else {
+            (Vec2::ZERO, Vec2::splat((side - 1) as f32))
+        };
+        let expected = (low + high + Vec2::ONE) * cell / 2.0;
+        let frame = crate::minimap::frame(client.world());
+        let middle = client.centre_of(frame).expect("laid out minimap");
+        client.mouse(middle);
+        client.click(MouseButton::Left);
+        let world = client.world_mut();
+        let camera = world
+            .query::<&crate::camera::RtsCamera>()
+            .single(world)
+            .unwrap();
+        assert!(
+            Vec2::new(camera.focus.x, -camera.focus.z).distance(expected) < 2.0,
+            "map {map:?} center click should focus {expected}, got {:?}",
+            camera.focus
+        );
+        let own = client.core().my_slot;
+        let unit = client.me();
+        let at = Vec2::new(unit.pos.x.to_f32(), unit.pos.y.to_f32());
+        let world = client.world_mut();
+        let position = world
+            .query::<(&crate::minimap::HeroMark, &Node)>()
+            .iter(world)
+            .find(|(mark, _)| mark.0.is_some_and(|(_, slot)| Some(slot) == own))
+            .map(|(_, node)| {
+                let (Val::Px(x), Val::Px(y), Val::Px(w), Val::Px(h)) =
+                    (node.left, node.top, node.width, node.height)
+                else {
+                    panic!("hero mark positioned in pixels")
+                };
+                Vec2::new(x + w / 2.0, y + h / 2.0)
+            })
+            .expect("drawn hero dot");
+        let padding = if map == bota_core::HERO_DEMO_ID {
+            8.0
+        } else {
+            0.0
+        };
+        let span = ((high - low).max_element() + 1.0 + padding) * cell;
+        let uv = (position / crate::minimap::INNER - Vec2::splat(0.5)) * Vec2::new(1.0, -1.0);
+        assert!(
+            (expected + uv * span).distance(at) < 3.0,
+            "map {map:?} hero dot maps back to its world position"
+        );
+    }
+}

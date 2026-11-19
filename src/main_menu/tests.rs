@@ -353,12 +353,83 @@ pub(crate) fn service_with_unranked() -> Service {
     })
 }
 
+pub(crate) fn service_from_demo_example() -> Service {
+    start_configured_service(
+        true,
+        |text| text,
+        |config| {
+            let path = bota_root().join("crates/bota_radovid/radovid.example.toml");
+            let mut demo = radovid::config::Config::load(&path)
+                .expect("the shipped matchmaking configuration")
+                .rulesets
+                .into_iter()
+                .find(|rules| rules.id == "demo")
+                .expect("the shipped Demo Hero ruleset");
+            let local = config
+                .rulesets
+                .iter_mut()
+                .find(|rules| rules.id == "demo")
+                .expect("local launcher");
+            demo.game_fingerprint = local.game_fingerprint;
+
+            // Run the shipped ruleset with a local executable and loopback transport.
+            // Keep its game arguments, in particular the map and cheats flags.
+            let mut args = demo.launcher.args.into_iter();
+            let mut local_args = Vec::new();
+            while let Some(argument) = args.next() {
+                match argument.as_str() {
+                    "--bind" | "--ws-port" => {
+                        args.next().expect("transport argument value");
+                        let value = if argument == "--bind" {
+                            "127.0.0.1"
+                        } else {
+                            "{port}"
+                        };
+                        local_args.extend([argument, value.to_owned()]);
+                    }
+                    "--tls-cert" | "--tls-key" => {
+                        args.next().expect("TLS argument path");
+                    }
+                    _ => local_args.push(argument),
+                }
+            }
+            local_args.extend(
+                [
+                    "--port",
+                    "0",
+                    "--mode",
+                    "lockstep",
+                    "--ack-timeout-ticks",
+                    "900",
+                    "--pick-secs",
+                    "1",
+                ]
+                .map(str::to_owned),
+            );
+            let env = demo.launcher.env;
+            demo.launcher = local.launcher.clone();
+            demo.launcher.args = local_args;
+            demo.launcher.env = env;
+            *local = demo;
+        },
+    )
+}
+
 fn start_service(save_replays: bool, change: impl FnOnce(String) -> String) -> Service {
+    start_configured_service(save_replays, change, |_| {})
+}
+
+fn start_configured_service(
+    save_replays: bool,
+    change: impl FnOnce(String) -> String,
+    configure: impl FnOnce(&mut radovid::config::Config),
+) -> Service {
     let binary = server_binary().to_owned();
     let dir = Scratch::new("service");
     let path = dir.0.join("radovid.toml");
     std::fs::write(&path, change(config(&dir, &binary, save_replays))).expect("config");
-    let config = radovid::config::Config::load(&path).expect("a valid configuration");
+    let mut config = radovid::config::Config::load(&path).expect("a valid configuration");
+    configure(&mut config);
     let public_identity = config.public_identity.clone();
     let names = vec!["127.0.0.1".to_owned(), "localhost".to_owned()];
     let identity = radovid::tls::self_signed(names).expect("certificate");

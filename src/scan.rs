@@ -373,6 +373,7 @@ fn draw(
 /// The rings of the running scans on the minimap, one node each, made as the minimap's frame
 /// appears: its diameter is the rule's radius twice over, to the map's scale.
 fn minimap_rings(
+    projection: Res<crate::minimap::MapProjection>,
     mut commands: Commands,
     displayed: Res<DisplayedScan>,
     frame: Option<Single<Entity, With<MinimapFrame>>>,
@@ -401,7 +402,7 @@ fn minimap_rings(
         }
         return;
     }
-    if !displayed.is_changed() && added.is_empty() {
+    if !displayed.is_changed() && !projection.is_changed() && added.is_empty() {
         return;
     }
     let mut radars = displayed
@@ -414,8 +415,8 @@ fn minimap_rings(
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
-        let centre = crate::minimap::on_map(radar.at.x.to_f32(), radar.at.y.to_f32());
-        let across = 2.0 * crate::minimap::map_to_pixels(SCAN_RADIUS as f32);
+        let centre = projection.on_map(radar.at.x.to_f32(), radar.at.y.to_f32());
+        let across = 2.0 * projection.pixels(SCAN_RADIUS as f32);
         node.set_if_neq(Node {
             left: px(centre.x - across / 2.0),
             top: px(centre.y - across / 2.0),
