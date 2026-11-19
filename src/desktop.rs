@@ -104,11 +104,15 @@ pub enum NoDialog {
 /// Asks the player for a folder with the system's own dialog; blocks until it is closed, so it
 /// runs on a thread of its own. `Ok(None)` when the player closed it unanswered.
 pub fn ask_folder(title: &str) -> Result<Option<PathBuf>, NoDialog> {
-    dialog(title)
+    dialog(title, true)
+}
+
+pub fn ask_file(title: &str) -> Result<Option<PathBuf>, NoDialog> {
+    dialog(title, false)
 }
 
 #[cfg(windows)]
-fn dialog(title: &str) -> Result<Option<PathBuf>, NoDialog> {
+fn dialog(title: &str, folder: bool) -> Result<Option<PathBuf>, NoDialog> {
     use std::os::windows::ffi::OsStringExt;
     use windows::Win32::Foundation::ERROR_CANCELLED;
     use windows::Win32::System::Com::{
@@ -128,7 +132,11 @@ fn dialog(title: &str) -> Result<Option<PathBuf>, NoDialog> {
         let answer = (|| {
             let dialog: IFileOpenDialog =
                 CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
-            dialog.SetOptions(dialog.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_PICKFOLDERS)?;
+            let mut options = dialog.GetOptions()? | FOS_FORCEFILESYSTEM;
+            if folder {
+                options |= FOS_PICKFOLDERS;
+            }
+            dialog.SetOptions(options)?;
             dialog.SetTitle(&HSTRING::from(title))?;
             if let Err(why) = dialog.Show(own_window()) {
                 if why.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
@@ -167,18 +175,23 @@ fn own_window() -> Option<windows::Win32::Foundation::HWND> {
 }
 
 #[cfg(target_os = "macos")]
-fn dialog(title: &str) -> Result<Option<PathBuf>, NoDialog> {
+fn dialog(title: &str, folder: bool) -> Result<Option<PathBuf>, NoDialog> {
     let quoted = title.replace(['"', '\\'], "");
-    let script = format!("POSIX path of (choose folder with prompt \"{quoted}\")");
+    let object = if folder { "folder" } else { "file" };
+    let script = format!("POSIX path of (choose {object} with prompt \"{quoted}\")");
     run_dialog(std::process::Command::new("osascript").args(["-e", &script]))
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn dialog(title: &str) -> Result<Option<PathBuf>, NoDialog> {
+fn dialog(title: &str, folder: bool) -> Result<Option<PathBuf>, NoDialog> {
     let mut zenity = std::process::Command::new("zenity");
-    zenity.args(["--file-selection", "--directory", "--title", title]);
+    zenity.args(["--file-selection", "--title", title]);
+    if folder {
+        zenity.arg("--directory");
+    }
     let mut kdialog = std::process::Command::new("kdialog");
-    kdialog.args(["--title", title, "--getexistingdirectory", "."]);
+    let selection = if folder { "--getexistingdirectory" } else { "--getopenfilename" };
+    kdialog.args(["--title", title, selection, "."]);
     match run_dialog(&mut zenity) {
         Err(NoDialog::Missing) => run_dialog(&mut kdialog),
         answer => answer,

@@ -1,12 +1,4 @@
-//! Avatar editor intent/state. The SDK/platform adapter supplies the picker and save backend;
-//! unavailable services keep the editor honest and cannot dispatch an upload.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "The disabled avatar editor retains its validated adapter seam until the service SDK exists"
-    )
-)]
+//! Avatar editing, from a picked file to the image committed by the service.
 use super::avatar_cache::Wish;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 use bota_radovid::proto::{AvatarVersion, Error, Reply};
@@ -16,7 +8,7 @@ use std::sync::Arc;
 /// The side of the picture an avatar is made at: what the service stores.
 pub const SIDE: u32 = super::avatar_image::SIDE;
 /// The most bytes of a picked file; a phone's photograph is a few megabytes.
-const INPUT_BYTES: usize = thumbnail::MAX_INPUT_BYTES;
+pub(super) const INPUT_BYTES: usize = thumbnail::MAX_INPUT_BYTES;
 /// The most pixels along either side of a picked picture.
 const INPUT_SIDE: u32 = thumbnail::MAX_SIDE;
 
@@ -178,18 +170,13 @@ impl Editor {
             Action::Open | Action::Cancel => {}
         }
     }
-    pub fn sync_owner(&mut self, account: Option<u64>) {
-        if self.account != account {
-            self.backend(account, false);
-        }
-    }
     pub fn take_request(&mut self) -> Option<Request> {
         self.request.take()
     }
     pub fn take_upload(&mut self) -> Option<Upload> {
         self.upload.take()
     }
-    pub fn selected(&mut self, token: Token, bytes: Option<Vec<u8>>) {
+    pub fn selected(&mut self, token: Token, file: Result<Option<Vec<u8>>, String>) {
         if !self.owns(token)
             || !self.view.open
             || !self.view.available
@@ -197,10 +184,14 @@ impl Editor {
         {
             return;
         }
-        let Some(bytes) = bytes else {
-            self.view.busy = false;
-            self.operation = None;
-            return;
+        let bytes = match file {
+            Ok(Some(bytes)) => bytes,
+            cancelled => {
+                self.view.busy = false;
+                self.operation = None;
+                self.view.notice = cancelled.err();
+                return;
+            }
         };
         if bytes.len() > INPUT_BYTES {
             self.view.busy = false;
@@ -389,21 +380,13 @@ pub fn encode(picture: &Pixels) -> Result<Vec<u8>, String> {
 }
 
 impl super::core::MenuCore {
-    pub fn avatar_backend(&mut self, available: bool) {
-        let account = self
-            .client
-            .as_ref()
-            .and_then(|client| client.me())
-            .map(|me| me.id.0);
-        self.avatar.backend(account, available);
-    }
     /// The platform's part of the editor: a picture to choose. Everything after the choice is the
     /// menu's own.
     pub fn take_avatar_request(&mut self) -> Option<Request> {
         self.avatar.take_request()
     }
-    pub fn avatar_selected(&mut self, token: Token, bytes: Option<Vec<u8>>) {
-        self.avatar.selected(token, bytes);
+    pub fn avatar_selected(&mut self, token: Token, file: Result<Option<Vec<u8>>, String>) {
+        self.avatar.selected(token, file);
     }
     pub(super) fn update_avatar(&mut self) {
         let account = self
@@ -416,7 +399,7 @@ impl super::core::MenuCore {
                     .or_else(|| self.account_profile.as_ref().map(|profile| profile.id.0))
             })
             .flatten();
-        self.avatar.sync_owner(account);
+        self.avatar.backend(account, self.account);
         self.avatar.poll();
         self.send_avatar_upload();
         self.fetch_own_avatar();
@@ -604,7 +587,7 @@ pub(crate) mod tests {
         };
         editor.backend(Some(2), true);
         editor.act(Action::Open);
-        editor.selected(token, Some(vec![0; 20]));
+        editor.selected(token, Ok(Some(vec![0; 20])));
         assert!(editor.decoding.is_none());
         assert!(editor.view.preview.is_none());
         assert!(!editor.view.busy);
@@ -632,7 +615,7 @@ pub(crate) mod tests {
         let Some(Request::Pick { token }) = editor.take_request() else {
             panic!("the editor asks for a picture");
         };
-        editor.selected(token, Some(file));
+        editor.selected(token, Ok(Some(file)));
         editor.finish();
         if editor.view.preview.is_none() {
             return Err(editor.view.notice.expect("a refusal is explained"));

@@ -17,6 +17,8 @@ mod avatar;
 mod avatar_cache;
 mod avatar_draw;
 mod avatar_image;
+#[cfg(not(test))]
+mod avatar_picker;
 pub(crate) mod backdrop;
 pub(crate) mod catalogue;
 mod core;
@@ -118,6 +120,7 @@ pub use view::{Connection, PageView};
         reason = "Avatar transport is capability-gated until its SDK endpoint exists"
     )
 )]
+#[cfg(test)]
 pub use avatar::Request as AvatarRequest;
 
 #[cfg(test)]

@@ -171,6 +171,36 @@ globalThis.dbota_page = {
   keepCursor(keep) {
     pointer.keep(keep);
   },
+  pickAvatar(limit) {
+    return new Promise((resolve, reject) => {
+      const picker = document.createElement("input");
+      picker.type = "file";
+      picker.accept = "image/png,image/jpeg";
+      picker.hidden = true;
+      picker.addEventListener("cancel", () => {
+        picker.remove();
+        resolve(null);
+      }, { once: true });
+      picker.addEventListener("change", async () => {
+        const file = picker.files.item(0);
+        picker.remove();
+        if (!file) return resolve(null);
+        if (file.size > limit) return reject(`Choose a PNG or JPEG up to ${limit >> 20} MB.`);
+        try {
+          resolve(new Uint8Array(await file.arrayBuffer()));
+        } catch {
+          reject("Could not read the chosen image.");
+        }
+      }, { once: true });
+      document.body.append(picker);
+      try {
+        picker.showPicker();
+      } catch (error) {
+        picker.remove();
+        reject(error);
+      }
+    });
+  },
 };
 
 // The client stopping without a panic: the browser gave it no more memory, or something else

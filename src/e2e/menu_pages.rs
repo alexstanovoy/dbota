@@ -252,10 +252,6 @@ fn avatar_picked_encoded_and_saved_through_the_service_is_what_the_profile_draws
     let service = crate::main_menu::tests::service();
     let mut client = super::menu::signed_up(&service, "avatar_mira");
     act(&mut client, Act::Go(Page::Profile));
-    client
-        .world_mut()
-        .non_send_mut::<MenuCore>()
-        .avatar_backend(true);
     act(&mut client, Act::Avatar(AvatarAction::Open));
     act(&mut client, Act::Avatar(AvatarAction::Upload));
     let Some(AvatarRequest::Pick { token }) = client
@@ -268,7 +264,7 @@ fn avatar_picked_encoded_and_saved_through_the_service_is_what_the_profile_draws
     client
         .world_mut()
         .non_send_mut::<MenuCore>()
-        .avatar_selected(token, Some(AVATAR_TEST_PNG.to_vec()));
+        .avatar_selected(token, Ok(Some(AVATAR_TEST_PNG.to_vec())));
     client.until("the bounded image decode finished", |client| {
         crate::main_menu::tests::avatar_crop_ready(client.world().non_send::<MenuCore>())
     });
@@ -374,10 +370,6 @@ fn the_avatar_dialog_blocks_clicks_on_navigation_beneath_its_scrim() {
     let service = crate::main_menu::tests::service();
     let mut client = super::menu::signed_up(&service, "modal_mira");
     act(&mut client, Act::Go(Page::Profile));
-    client
-        .world_mut()
-        .non_send_mut::<MenuCore>()
-        .avatar_backend(true);
     act(
         &mut client,
         Act::Avatar(crate::main_menu::AvatarAction::Open),
@@ -1144,10 +1136,6 @@ fn the_avatar_edit_button_opens_its_editor_through_the_pointer() {
     use bevy::prelude::*;
     let service = crate::main_menu::tests::service();
     let mut client = super::menu::signed_up(&service, "avatar_pointer");
-    client
-        .world_mut()
-        .non_send_mut::<MenuCore>()
-        .avatar_backend(true);
     act(&mut client, Act::Go(Page::Profile));
     client.hover_ui_with(std::time::Duration::from_secs(20), |client| {
         let world = client.world_mut();
@@ -1199,10 +1187,6 @@ fn leaderboard_player_click_and_keyboard_open_the_served_read_only_profile() {
     let service = crate::main_menu::tests::service();
     let (account, expected) = crate::main_menu::tests::served_leaderboard_profile(&service);
     let mut client = super::menu::signed_up(&service, "profile_viewer");
-    client
-        .world_mut()
-        .non_send_mut::<MenuCore>()
-        .avatar_backend(true);
     act(&mut client, Act::Go(Page::Leaderboard));
     let wanted = format!("leaderboard profile {account}");
     client.until("the service supplies the ranked player row", |client| {
