@@ -31,6 +31,7 @@ def check_avatar_picker_page(directory):
                 const button = document.createElement("button");
                 button.id = "avatar-test";
                 button.textContent = "Choose image";
+                Object.assign(button.style, {position: "fixed", top: "8px", left: "8px", zIndex: "1000"});
                 button.onclick = () => {
                     globalThis.pickedImage = dbota_page.pickAvatar(1 << 20).then(
                         bytes => Array.from(bytes),

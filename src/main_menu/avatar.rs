@@ -389,17 +389,13 @@ impl super::core::MenuCore {
         self.avatar.selected(token, file);
     }
     pub(super) fn update_avatar(&mut self) {
+        let signed_in = self.logged_in();
         let account = self
-            .account
-            .then(|| {
-                self.client
-                    .as_ref()
-                    .and_then(|client| client.me())
-                    .map(|me| me.id.0)
-                    .or_else(|| self.account_profile.as_ref().map(|profile| profile.id.0))
-            })
-            .flatten();
-        self.avatar.backend(account, self.account);
+            .my_id()
+            .or_else(|| self.account_profile.as_ref().map(|profile| profile.id))
+            .map(|id| id.0)
+            .filter(|_| signed_in);
+        self.avatar.backend(account, signed_in);
         self.avatar.poll();
         self.send_avatar_upload();
         self.fetch_own_avatar();
