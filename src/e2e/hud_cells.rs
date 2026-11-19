@@ -337,3 +337,14 @@ fn a_still_hud_builds_nothing_anew_on_the_frames_that_change_nothing() {
         "the panel, the top bar, the ability row or the Glyph built something anew on a still frame"
     );
 }
+
+/// Each side's score in the top bar is white, as the game's, not green and red.
+#[test]
+fn both_scores_of_the_top_bar_are_white() {
+    let (_server, mut client) = hud_of(HeroId::SHADOW_FIEND);
+    for side in ["radiant", "dire"] {
+        let score = named(&mut client, &format!("hud score {side}"));
+        let ink = client.world().get::<TextColor>(score).expect("a score").0;
+        assert_eq!(ink, Color::WHITE, "the {side} score");
+    }
+}

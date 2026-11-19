@@ -1564,12 +1564,9 @@ fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
         .id();
     commands.spawn((
         Readout::Score(Team::Radiant),
-        ui::text(
-            "0",
-            &fonts.bold,
-            SCORE_SIZE,
-            crate::overlay::team_color(Team::Radiant),
-        ),
+        Name::new("hud score radiant"),
+        // White on both sides, as the game's (`#TopBarRadiantScore`, `#TopBarDireScore`).
+        ui::text("0", &fonts.bold, SCORE_SIZE, Color::WHITE),
         ChildOf(clock),
     ));
     let time = commands
@@ -1599,12 +1596,9 @@ fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
     ));
     commands.spawn((
         Readout::Score(Team::Dire),
-        ui::text(
-            "0",
-            &fonts.bold,
-            SCORE_SIZE,
-            crate::overlay::team_color(Team::Dire),
-        ),
+        Name::new("hud score dire"),
+        // White on both sides, as the game's (`#TopBarRadiantScore`, `#TopBarDireScore`).
+        ui::text("0", &fonts.bold, SCORE_SIZE, Color::WHITE),
         ChildOf(clock),
     ));
 }
