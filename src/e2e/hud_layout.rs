@@ -113,7 +113,7 @@ const PARTS: &[Part] = &[
         (Start, Start),
         (0.0, 90.0, 230.0, 60.0),
     ),
-    // The minimap at the foot of the left edge, the glyph at its right.
+    // The minimap at the foot of the left edge, the glyph and the scan at its right.
     part(
         "minimap",
         "minimap",
@@ -126,7 +126,15 @@ const PARTS: &[Part] = &[
         "glyph button",
         Named("hud glyph"),
         (Start, End),
-        (420.0, 1538.0, 75.0, 75.0),
+        (429.0, 1545.0, 66.0, 66.0),
+    ),
+    // The Scan stands in the plate's upper well, 50 of the game's pixels over its foot.
+    part(
+        "minimap",
+        "scan button",
+        Named("hud scan"),
+        (Start, End),
+        (429.0, 1479.0, 66.0, 66.0),
     ),
     // The hero panel at the foot of the middle.
     part(

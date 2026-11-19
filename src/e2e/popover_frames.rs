@@ -716,3 +716,49 @@ pub(super) fn owner_hovered(client: &mut Client) -> bool {
         .iter(world)
         .any(|hovered| hovered.get())
 }
+
+/// At the smallest window and the largest interface scale the menu's context help is still shown
+/// when its control is reached by the keyboard, inside the window, and not over the control it
+/// explains.
+#[test]
+fn context_help_at_1024x600_and_scale_2_is_shown_inside_the_window_and_not_over_its_control() {
+    use super::help_widgets::{button, fonts_ready, tab_to};
+    let mut client = Client::run(&[
+        "--menu-preview",
+        "play",
+        "--window",
+        "1024x600",
+        "--set",
+        "ui_scale=2",
+    ]);
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(10),
+        ));
+    fonts_ready(&mut client);
+    client.mouse(Vec2::ZERO);
+    tab_to(&mut client, "about solo mid");
+    for _ in 0..60 {
+        client.step_frames(1);
+    }
+    let room = window_rect(&mut client);
+    let help = seen::<crate::ui::help::placement::Anchor>(&mut client)
+        .expect("the help of the focused control is shown");
+    let control = button(&mut client, "about solo mid").expect("the control");
+    let at = client.centre_of(control).expect("placed");
+    assert!(
+        !help.rect.contains(at),
+        "the help {:?} covers the control it explains at {at}",
+        help.rect
+    );
+    let over = help.rect.size().cmpgt(room.size());
+    let inside =
+        |low: f32, high: f32, room_high: f32, over: bool| low >= 0.0 && (over || high <= room_high);
+    assert!(
+        inside(help.rect.min.x, help.rect.max.x, room.max.x, over.x)
+            && inside(help.rect.min.y, help.rect.max.y, room.max.y, over.y),
+        "the help {:?} is not inside the window {room:?}",
+        help.rect
+    );
+}
