@@ -432,12 +432,14 @@ fn neutral_attack_sounds(ranged: bool) -> (String, Log) {
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
     let log = audio_log(&mut client);
+    // The neutral may already be mid-swing when the log begins (it engages as the hero walks the
+    // camps): what is waited for is a whole attack heard from its start, the swing for melee.
+    let start = format!("{set}.{}", if ranged { "attack" } else { "preattack" });
     let wanted_event = format!("{set}.attack");
     hears(&mut client, "the neutral's attack sounded", |_| {
-        log.lock()
-            .expect("unpoisoned")
-            .iter()
-            .any(|p| p.event.to_lowercase() == wanted_event)
+        let log = log.lock().expect("unpoisoned");
+        let mut events = log.iter().map(|p| p.event.to_lowercase());
+        events.any(|e| e == start) && (ranged || events.any(|e| e == wanted_event))
     });
     (set, log)
 }
@@ -453,7 +455,11 @@ fn melee_neutrals_whoosh_then_clash_through_their_sound_set() {
             .cloned()
     };
     let swing = first("preattack").expect("a swing sounded");
-    let blow = first("attack").expect("a blow sounded");
+    let blow = events
+        .iter()
+        .find(|p| p.at >= swing.at && p.event.to_lowercase() == format!("{set}.attack"))
+        .cloned()
+        .expect("a blow sounded after the swing");
     assert!(swing.at + FRAME <= blow.at, "{swing:?} {blow:?}");
 }
 
