@@ -79,6 +79,8 @@ fn stashed(window: &str) -> (Server, Client) {
                 == count
         });
     }
+    // The loading cover intercepts the pointer until the HUD is ready.
+    super::hud_layout::on_screen(&mut client);
     (server, client)
 }
 
