@@ -226,7 +226,7 @@ fn a_new_player_lands_on_the_built_in_services_sign_in_which_works_and_signs_up(
         .expect("the service summary is laid out");
     let height = node.size().y * node.inverse_scale_factor();
     assert!(
-        (0.0..30.0).contains(&height) && height > 0.0,
+        (1.0..30.0).contains(&height),
         "the public service summary fits one line, got {height} logical pixels"
     );
     // One quiet line: the address and what the service calls itself are for the Service page.
@@ -824,7 +824,6 @@ fn a_dozen_services_leave_every_control_in_reach(size: &str) {
             break;
         }
         wheel_over(&mut client, edge, -3.0);
-        eprintln!("DEBUG scroll {:?}", list_scroll(&mut client));
     }
     let (at, reach) = list_scroll(&mut client);
     assert!(

@@ -82,10 +82,11 @@ def run_service_page(page_server, endpoint, shots):
 
 
 def capture_service_card(page, failed, shots):
-    # Look for the red error headline on the composited canvas. Logging a refused connection
-    # while the login fields remain in place would leave the audit's failure visible.
-    headline = {"x": 738, "y": 345, "width": 290, "height": 58}
-    red_pixels = """async (encoded) => {
+    # The failed check paints a red headline. A passed check paints a sign-in button that
+    # reaches the right of the card. The narrow CHECK AGAIN button does not reach there.
+    clip = ({"x": 738, "y": 345, "width": 290, "height": 58} if failed else
+            {"x": 1000, "y": 425, "width": 140, "height": 137})
+    pixels_with_status = """async ([encoded, failed]) => {
         const image = new Image();
         image.src = 'data:image/png;base64,' + encoded;
         await image.decode();
@@ -93,20 +94,21 @@ def capture_service_card(page, failed, shots):
         const context = canvas.getContext('2d');
         context.drawImage(image, 0, 0);
         const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-        let red = 0;
+        let count = 0;
         for (let i = 0; i < pixels.length; i += 4) {
-            if (pixels[i] > 170 && pixels[i] > pixels[i + 1] + 55 &&
-                pixels[i] > pixels[i + 2] + 40) red++;
+            const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+            if (failed ? r > 170 && r > g + 55 && r > b + 40
+                       : g > 90 && g > r + 25 && g > b + 24) count++;
         }
-        return red;
+        return count;
     }"""
     deadline = time.monotonic() + 30
     while True:
-        crop = page.screenshot(clip=headline)
-        count = page.evaluate(red_pixels, base64.b64encode(crop).decode("ascii"))
-        if (count >= 40) == failed:
+        crop = page.screenshot(clip=clip)
+        count = page.evaluate(pixels_with_status, [base64.b64encode(crop).decode("ascii"), failed])
+        if count >= (40 if failed else 1000):
             break
-        assert time.monotonic() < deadline, f"service error headline pixels: {count}"
+        assert time.monotonic() < deadline, f"service status pixels: {count}, failure expected: {failed}"
     if shots:
         shots.mkdir(parents=True, exist_ok=True)
         name = "wrong-path" if failed else "sign-in"

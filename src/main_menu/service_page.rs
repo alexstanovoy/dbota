@@ -74,10 +74,9 @@ pub fn works_line(kit: &mut Kit, card: Entity, banner: &ServiceBanner) {
     let row = kit.node(
         card,
         Node {
-            display: Display::Grid,
-            grid_template_columns: vec![GridTrack::flex(1.0), GridTrack::auto()],
             column_gap: px(12),
             align_items: AlignItems::Center,
+            justify_content: JustifyContent::SpaceBetween,
             ..default()
         },
     );
@@ -92,7 +91,12 @@ pub fn works_line(kit: &mut Kit, card: Entity, banner: &ServiceBanner) {
         .insert((
             Name::new("service check summary"),
             Node {
+                width: percent(60),
                 min_width: px(0),
+                ..default()
+            },
+            TextLayout {
+                linebreak: bevy::text::LineBreak::WordOrCharacter,
                 ..default()
             },
         ));
@@ -212,7 +216,12 @@ fn list_viewport(kit: &mut Kit, card: Entity) -> (Entity, Entity) {
     );
     kit.commands
         .entity(list)
-        .insert((ServiceList, ScrollArea, Name::new("service list")));
+        .insert((
+            ServiceList,
+            ScrollArea,
+            Pickable::default(),
+            Name::new("service list"),
+        ));
     (body, list)
 }
 
