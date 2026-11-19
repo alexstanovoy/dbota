@@ -237,8 +237,9 @@ fn a_tower_finish_credits_the_distant_damager_in_the_drawn_score_and_wallet() {
         "the tower's finish credits the sole recent enemy damager"
     );
     assert_eq!(me.assists, 0, "a credited killer is not its own assister");
+    // 7.42: "Hero kill bounty rescaled". The level-one bounty includes 135 First Blood gold.
     assert!(
-        wallet(&client) - passive(&client) - before > 268,
+        wallet(&client) - passive(&client) - before > 245,
         "kill bounty and assist gold both reach the distant killer"
     );
     assert_eq!(
@@ -523,19 +524,21 @@ fn shared_tower_finish(multiple: bool) {
             .kills,
         0
     );
+    // 7.42: "Hero kill bounty rescaled". The level-one bounty is 110. After two
+    // contributors claim First Blood, each receives (110 + 135) / 2 as the bounty.
+    let bounty = if multiple { 122 } else { 110 };
     if multiple {
         assert!(
-            extra > 134,
+            extra > bounty,
             "a shared bounty and assist gold reach each damager: {extra}"
         );
     } else {
         assert_eq!(
-            extra, 133,
+            extra, bounty,
             "an undamaged tower kill pays the only enemy its base bounty, without First Blood"
         );
     }
     assert_wallet_drawn(&server, &mut client);
-    let bounty = if multiple { 134 } else { 133 };
     server.frozen(|| {
         client.until(
             "the shared bounty caption drawn over the visible victim",
