@@ -3404,7 +3404,7 @@ impl MenuCore {
     }
 
     fn select_queue(&mut self, id: RulesetId) {
-        if self.client.is_none() {
+        if !self.logged_in() {
             return;
         }
         let available: Vec<_> = self

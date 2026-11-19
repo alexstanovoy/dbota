@@ -104,11 +104,11 @@ impl MenuCore {
     }
 
     pub(in crate::main_menu) fn menu_rulesets(&self) -> impl Iterator<Item = &RulesetInfo> {
-        let connected = self.client.is_some();
+        let service_known = self.logged_in() || self.client.is_some();
         let kind = self.me().map_or(AccountKind::Human, |me| me.kind);
         self.catalogue
             .iter()
-            .filter(move |r| connected && r.audience.admits(kind))
+            .filter(move |r| service_known && r.audience.admits(kind))
     }
 
     pub(super) fn lobby_catalogue(&self) -> impl Iterator<Item = &RulesetInfo> {

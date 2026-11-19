@@ -794,7 +794,7 @@ impl MenuCore {
     }
 
     fn home(&self) -> PageView {
-        let Some(client) = self.client.as_ref().filter(|_| self.logged_in()) else {
+        if !self.logged_in() {
             return PageView::Home {
                 matches: self.local_history.cards(self.library.records()),
                 hero: self.last_played_hero(),
@@ -802,9 +802,14 @@ impl MenuCore {
                 in_flight: (0, None),
                 cooldown: None,
             };
-        };
-        let searches = client.searches();
-        let in_flight = searches.groups().len() + searches.slot_waits().len() + self.acct.games.len();
+        }
+        let (searches, limit) = self.client.as_ref().map_or((0, None), |client| {
+            let searches = client.searches();
+            (
+                searches.groups().len() + searches.slot_waits().len(),
+                client.limits(None).map(|limits| limits.games_per_account),
+            )
+        });
         PageView::Home {
             matches: self.local_history.cards(self.library.records()),
             hero: self.last_played_hero(),
@@ -826,10 +831,7 @@ impl MenuCore {
                     description: super::play::description(&r.id),
                 })
                 .collect(),
-            in_flight: (
-                in_flight,
-                client.limits(None).map(|limits| limits.games_per_account),
-            ),
+            in_flight: (searches + self.acct.games.len(), limit),
             cooldown: self.cooldown(),
         }
     }
