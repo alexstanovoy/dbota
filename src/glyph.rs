@@ -171,7 +171,10 @@ fn show_charges(
             (Some((radiant, _)), true) => (Some(radiant), ui::HP_FRIEND),
             (Some((_, dire)), false) => (Some(dire), ui::HP_FOE),
             (None, true) => (None, ui::INK),
-            (None, false) => (core.glyph().and_then(|glyph| glyph.charges), ui::INK),
+            (None, false) => (
+                displayed_glyph(core).and_then(|glyph| glyph.charges),
+                ui::INK,
+            ),
         };
         visibility.set_if_neq(ui::visible(charges.is_some()));
         if let Some(charges) = charges
@@ -184,6 +187,16 @@ fn show_charges(
             text_color.set_if_neq(TextColor(color));
         }
     }
+}
+
+fn displayed_glyph(core: &bota_client_core::App) -> Option<GlyphView> {
+    let view = core.view()?;
+    if core.my_slot.is_none()
+        && let Some(team) = view.viewer
+    {
+        return view.glyphs.iter().find(|glyph| glyph.team == team).copied();
+    }
+    core.glyph()
 }
 
 /// The share of a wait of `wait` ticks still to go with `ready_in` left: what the dark sweep
@@ -261,7 +274,7 @@ fn show(
             charges: Some(charges),
             ..
         }),
-    ) = (core.view(), core.glyph())
+    ) = (core.view(), displayed_glyph(core))
     else {
         shown.recharge = Recharge::default();
         frame.set_if_neq(Visibility::Hidden);
@@ -344,7 +357,7 @@ fn click(
 /// The hover popup of the button: Dota's title and description, and the wait while it runs. The
 /// words are the install's; without them the popup says what the Glyph is in this client's own.
 pub fn tip(texts: &crate::dota_text::Texts, core: &bota_client_core::App) -> Option<String> {
-    let ready_in = core.glyph()?.ready_after?;
+    let ready_in = displayed_glyph(core)?.ready_after?;
     let word = |key: &str, own: &str| texts.label(key, &[]).unwrap_or_else(|| own.to_owned());
     let mut lines = format!(
         "{}\n{}",
