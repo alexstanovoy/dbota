@@ -444,16 +444,19 @@ pub enum Extent {
 #[derive(Component, Clone, Copy)]
 pub struct Overhangs;
 
-/// What the HUD's systems built anew (a gradient, a string): counted in the tests, which hold that a
-/// frame that changes nothing builds nothing.
+// What the HUD's systems built anew on this thread (a gradient, a string): counted in the tests,
+// which hold that a frame that changes nothing builds nothing. The systems that count run on the
+// main thread, as the tests' client does.
 #[cfg(test)]
-pub(crate) static REBUILT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+thread_local! {
+    pub(crate) static REBUILT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 /// Notes that a system built something anew for the frame.
 #[inline]
 pub(crate) fn rebuilt() {
     #[cfg(test)]
-    REBUILT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    REBUILT.with(|count| count.set(count.get() + 1));
 }
 
 /// A panel of the in-match interface that stands on its own, not under the HUD's root (the shop's is the

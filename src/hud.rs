@@ -224,6 +224,16 @@ pub struct SeatBox(pub Place);
 #[derive(Component, Clone, Copy)]
 struct SeatRing(Place);
 
+/// The share (in half degrees of the ring) a ring last drew, so that it is built again only when it
+/// moves.
+#[derive(Component, Default, Clone, Copy)]
+struct RingDrawn(Option<u16>);
+
+/// A share of the way round a ring, in half degrees.
+fn ring_angle(share: f32) -> u16 {
+    (share.clamp(0.0, 1.0) * 720.0) as u16
+}
+
 /// Dota's player-colour strip along the top of a seat's portrait
 /// (`#PlayerColor`, 4 pixels), by place.
 #[derive(Component, Clone, Copy)]
@@ -360,6 +370,7 @@ pub(crate) fn xp_share(level: u8, xp: i32) -> f32 {
 
 /// The level ring, gold over the share of the way to the next level.
 pub(crate) fn xp_ring(share: f32) -> BackgroundGradient {
+    ui::rebuilt();
     let gold = LEVEL_GOLD;
     let empty = Color::srgb(0.224, 0.224, 0.224);
     ui::split_disc(share.clamp(0.0, 1.0) * TAU, gold, empty)
@@ -369,12 +380,17 @@ pub(crate) fn xp_ring(share: f32) -> BackgroundGradient {
 /// has no level.
 fn xp(
     session: NonSend<Session>,
+    mut drawn: Local<Option<u16>>,
     mut ring: Single<(&mut BackgroundGradient, &mut Visibility), With<XpRing>>,
 ) {
     let core = &session.0;
     let (seat, unit, _) = subject(core);
     let share = seat.map_or(0.0, |p| xp_share(p.level, p.xp));
-    ring.0.set_if_neq(xp_ring(share));
+    let angle = ring_angle(share);
+    if *drawn != Some(angle) {
+        *drawn = Some(angle);
+        *ring.0 = xp_ring(share);
+    }
     ring.1
         .set_if_neq(ui::visible(unit.is_some_and(|u| u.level > 0)));
 }
@@ -885,6 +901,7 @@ fn spawn_aghs_mark(kit: &mut Spawner, row: Entity) {
 /// the boxes stand a pitch apart that depends on how many there are, as Dota's panels do.
 fn ability_row(
     session: NonSend<Session>,
+    mut applied: Local<Option<usize>>,
     mut row: Single<&mut Node, With<AbilityRow>>,
     mut cells: Query<(&AbilityCell, &mut Node), Without<AbilityRow>>,
     mut aghs: Single<&mut Node, (With<AghsMark>, Without<AbilityRow>, Without<AbilityCell>)>,
@@ -896,6 +913,12 @@ fn ability_row(
         0 => 4,
         count => count.min(6),
     };
+    // What the count sets stays set until the count changes.
+    if *applied == Some(count) {
+        return;
+    }
+    *applied = Some(count);
+    ui::rebuilt();
     let pitch = if count <= 4 {
         ABILITY_PITCH_FEW
     } else {
@@ -1700,6 +1723,7 @@ fn spawn_seat_level(kit: &mut Spawner, card: Entity, seat: Place) {
         .commands
         .spawn((
             SeatRing(seat),
+            RingDrawn::default(),
             Name::new(format!("hud seat level {:?} {}", seat.team, seat.n)),
             Node {
                 position_type: PositionType::Absolute,
@@ -2791,7 +2815,7 @@ fn seats(
     colours: Res<crate::player_colour::PlayerColours>,
     mut cards: Query<(&SeatBox, &mut ImageNode, &mut BorderColor), Without<SeatColour>>,
     mut strips: Query<(&SeatColour, &mut BackgroundColor), Without<SeatBox>>,
-    mut rings: Query<(&SeatRing, &mut BackgroundGradient)>,
+    mut rings: Query<(&SeatRing, &mut RingDrawn, &mut BackgroundGradient)>,
     mut columns: Query<(&SeatColumn, &mut Node)>,
 ) {
     let core = &session.0;
@@ -2814,9 +2838,13 @@ fn seats(
         let colour = seat_of(view, seat.0).map_or(Color::WHITE, |p| colours.of(view, p.slot));
         strip.set_if_neq(BackgroundColor(colour));
     }
-    for (SeatRing(place), mut ring) in &mut rings {
+    for (SeatRing(place), mut drawn, mut ring) in &mut rings {
         let share = seat_of(view, *place).map_or(0.0, |p| xp_share(p.level, p.xp));
-        ring.set_if_neq(xp_ring(share));
+        let angle = ring_angle(share);
+        if drawn.0 != Some(angle) {
+            drawn.0 = Some(angle);
+            *ring = xp_ring(share);
+        }
     }
     for (seat, mut image, mut border) in &mut cards {
         let Some(p) = seat_of(view, seat.0) else {

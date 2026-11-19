@@ -314,3 +314,26 @@ fn the_pointer_over_a_top_bar_level_badge_is_over_the_portrait() {
         "the badges of both seats were tried: {checked}"
     );
 }
+
+/// A frame that changes nothing builds nothing for the HUD's panel, its top bar, its ability row and
+/// its Glyph: the player at 240 Hz in 4K pays for no gradient or string rebuilt for a still panel.
+#[test]
+fn a_still_hud_builds_nothing_anew_on_the_frames_that_change_nothing() {
+    let (_server, mut client) = hud_of(HeroId::SHADOW_FIEND);
+    // Nothing moves in what these show: the hero stands at the start, its experience and its
+    // abilities are as they are, and the Glyph holds both its charges, with no wait running.
+    client.cheat(bota_proto::Cheat::Refresh);
+    client.until("both charges of the Glyph", |c| {
+        c.core().glyph().and_then(|glyph| glyph.charges) == Some(2)
+            && c.core().glyph().and_then(|glyph| glyph.ready_after) == Some(0)
+    });
+    client.frames(30);
+    let built = || crate::ui::REBUILT.with(std::cell::Cell::get);
+    let before = built();
+    client.frames(60);
+    assert_eq!(
+        built(),
+        before,
+        "the panel, the top bar, the ability row or the Glyph built something anew on a still frame"
+    );
+}
