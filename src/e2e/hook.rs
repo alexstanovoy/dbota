@@ -5,7 +5,7 @@
 //! second throw is drawn as the first was. Each test records a real match with the hook thrown
 //! and plays the record through the real client, whose every frame is sampled at a fixed step.
 
-use std::time::Duration;
+use std::{fs, path::Path, time::Duration};
 
 use bevy::prelude::*;
 use bota_client_core::Source;
@@ -33,7 +33,14 @@ const FRAME: Duration = Duration::from_millis(20);
 /// server tells of by a few ticks of its flight.
 const TRAIL: f32 = 130.0;
 /// The rest position of `attach_chain` in righthook.vmdl, in the exported model's metres.
-const HEAD_SOCKET: Vec3 = Vec3::new(-0.012_288_09, 0.005_571_05, -0.553_935_05);
+const HEAD_SOCKET_GLTF: Vec3 = Vec3::new(-0.012_288_09, 0.005_571_05, -0.553_935_05);
+
+fn head_socket(transform: &Transform) -> Vec3 {
+    // The actual glTF scene is turned around Y by the app's loader.
+    source(
+        transform.transform_point(Quat::from_rotation_y(std::f32::consts::PI) * HEAD_SOCKET_GLTF),
+    )
+}
 
 /// One replayed frame: the sim's tick and what is drawn of the hook then, in the particles'
 /// frame (Z up, Dota units).
@@ -44,7 +51,11 @@ struct Frame {
     hand: Option<Vec3>,
     /// The animated chain socket and the hero's scene scale in Source units.
     socket: Option<Vec3>,
+    /// Where the wire's hook is relative to the thrower and the reach of the launch pose.
+    wire_reach: f32,
+    socket_reach: f32,
     hero_scale: Option<f32>,
+    weapon_scale: Option<f32>,
     /// The particle that chases the hook and ends the chain.
     parent: Vec<Vec3>,
     /// The chain's particles, in no order.
@@ -65,9 +76,7 @@ struct Frame {
 impl Frame {
     /// The head: the model drawn at the end of the chain.
     fn head(&self) -> Option<(Vec3, Quat)> {
-        self.models
-            .first()
-            .map(|t| (source(t.transform_point(HEAD_SOCKET)), t.rotation))
+        self.models.first().map(|t| (head_socket(t), t.rotation))
     }
 }
 
@@ -82,6 +91,10 @@ fn record(
     units: Res<crate::units::UnitIndex>,
     attachments: Query<(&crate::units::Attachments, &crate::units::Rig)>,
     transforms: Query<&GlobalTransform>,
+    wearables: Query<(Entity, &GlobalTransform), With<crate::units::Wearable>>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    ground: Res<crate::map::Ground>,
     time: Res<Time>,
     mut frames: ResMut<Frames>,
 ) {
@@ -92,6 +105,7 @@ fn record(
     let chain_looks: Vec<_> = effect
         .defs
         .iter()
+        .filter(|def| def.path.ends_with("/pudge_meathook_chain.vpcf"))
         .flat_map(|def| {
             def.draws.iter().filter_map(|draw| {
                 matches!(
@@ -131,11 +145,58 @@ fn record(
         .map(|t| {
             t.to_scale_rotation_translation().0.abs().max_element() / crate::map::UNITS_PER_METRE
         });
+    let weapon_scale = wearables.iter().find_map(|(root, transform)| {
+        children
+            .iter_descendants(root)
+            .any(|entity| {
+                names
+                    .get(entity)
+                    .is_ok_and(|name| name.as_str() == "models/heroes/pudge/righthook.vmdl_c")
+            })
+            .then(|| {
+                transform
+                    .to_scale_rotation_translation()
+                    .0
+                    .abs()
+                    .max_element()
+            })
+    });
+    let home = hero.map(at);
+    let wire_reach = home.map_or(0.0, |home| {
+        view.projectiles
+            .iter()
+            .filter(|projectile| projectile.inflictor == hook)
+            .map(|projectile| {
+                Vec2::new(projectile.pos.x.to_f32(), projectile.pos.y.to_f32()).distance(home)
+            })
+            .fold(0.0, f32::max)
+    });
+    let socket_reach = home.zip(socket).map_or(0.0, |(home, socket)| {
+        let height = effect.defs[0]
+            .system
+            .operators
+            .iter()
+            .find_map(|operator| {
+                let heatel::particle::Operator::MovementPlaceOnGround(movement) = &operator.class
+                else {
+                    return None;
+                };
+                let heatel::particle::FloatInput::Literal(height) = movement.offset else {
+                    return None;
+                };
+                Some(height)
+            })
+            .expect("the installed hook carrier height");
+        socket.distance(home.extend(ground.at(home.x, home.y) + height))
+    });
     frames.0.push(Frame {
         seconds: time.elapsed_secs(),
         hand,
         socket,
+        wire_reach,
+        socket_reach,
         hero_scale,
+        weapon_scale,
         parent,
         chain,
         chain_drawn: frame.batches.iter().any(|batch| {
@@ -155,7 +216,7 @@ fn record(
             .collect(),
         hook_told: view.projectiles.iter().any(|p| p.inflictor == hook),
         drawn: playing.drawn(effect),
-        pudge: hero.map(at),
+        pudge: home,
         enemies: view
             .units
             .iter()
@@ -328,6 +389,57 @@ fn assert_chain_spans(flight: &[Frame]) {
 
 #[test]
 fn a_flying_hook_head_uses_the_weapon_scale_of_the_drawn_hero() {
+    use heatel::particle::{Field, FloatInput, Initializer, Mapping, Renderer, SetMethod, System};
+
+    let cache = std::path::PathBuf::from(std::env::var_os("DBOTA_ASSETS").expect("test cache"));
+    let particle: serde_json::Value = serde_json::from_slice(
+        &fs::read(cache.join("particles/pudge_meathook.json")).expect("the imported hook"),
+    )
+    .expect("particle graph");
+    let systems = particle["systems"].as_array().expect("particle systems");
+    let (head_system, renderer) = systems
+        .iter()
+        .find_map(|entry| {
+            let system: System = serde_json::from_value(entry["system"].clone()).expect("system");
+            let renderer = system.renderers.iter().find_map(|renderer| {
+                let Renderer::Models(models) = &renderer.class else {
+                    return None;
+                };
+                models.model_input.map(|_| models.clone())
+            })?;
+            Some((system, renderer))
+        })
+        .expect("the flying weapon renderer");
+    let (input, output) = head_system
+        .initializers
+        .iter()
+        .find_map(|initializer| match initializer.class {
+            Initializer::InitFloat {
+                value:
+                    FloatInput::ParticleFloat {
+                        field: Field::RADIUS,
+                        mapping: Mapping::Remap { input, output, .. },
+                        ..
+                    },
+                field: Field::RADIUS,
+                set_method: SetMethod::ScaleInitial,
+                ..
+            } => Some((input, output)),
+            _ => None,
+        })
+        .expect("the installed radius remap");
+    let FloatInput::Literal(radius_scale) = renderer.radius_scale else {
+        panic!("a literal scale for the flying weapon");
+    };
+    let flying_file = particle["models"][0]["file"]
+        .as_str()
+        .expect("the imported weapon");
+    let flying_span = mesh_span(&cache.join(flying_file));
+    let held_span = mesh_span(&cache.join("models/hero/pudge_weapon/pudge_weapon.glb"));
+    assert_eq!(
+        flying_span, held_span,
+        "the same weapon geometry flies and is worn"
+    );
     let file = record_throws(true, 1, MID);
     let frames = play(&file, 0, MID);
     let flight = flights(&frames)[0];
@@ -336,15 +448,62 @@ fn a_flying_hook_head_uses_the_weapon_scale_of_the_drawn_hero() {
         let [head] = frame.models.as_slice() else {
             panic!("one hook head must be drawn at {:.2} s", frame.seconds);
         };
-        // The installed head initializes its radius from the CP7 object, then multiplies it
-        // by its current radius remapped from 0..10 to 0..15.
-        let expected = 1.5 * hero * hero;
-        let actual = head.scale.abs() / crate::map::UNITS_PER_METRE;
+        let [low, high] = input;
+        let [small, large] = output;
+        let t = ((hero - low) / (high - low)).clamp(0.0, 1.0);
+        let remapped = small + t * (large - small);
+        let held_world = held_span
+            * frame
+                .weapon_scale
+                .expect("the mounted weapon's drawn scale");
+        let expected = (flying_span / held_span) * remapped * radius_scale;
+        let actual = flying_span * head.scale.abs().max_element() / held_world;
         assert!(
-            (actual - Vec3::splat(expected)).abs().max_element() < 0.002,
-            "hook head scale {actual:?} disagrees with authored scale {expected:.4} for hero scale {hero:.4}"
+            (actual - expected).abs() < 0.002,
+            "flying-to-held weapon extent {actual:.4} disagrees with the authored ratio {expected:.4}"
         );
     }
+}
+
+/// The widest rest axis of a cached glTF's rendered primitives, in metres.
+fn mesh_span(path: &Path) -> f32 {
+    let bytes = fs::read(path).expect("an imported glTF");
+    assert_eq!(&bytes[..4], b"glTF");
+    let length = u32::from_le_bytes(bytes[12..16].try_into().expect("the JSON length")) as usize;
+    let gltf: serde_json::Value =
+        serde_json::from_slice(&bytes[20..20 + length]).expect("the glTF JSON");
+    let (mut low, mut high) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for mesh in gltf["meshes"].as_array().expect("glTF meshes") {
+        for primitive in mesh["primitives"].as_array().expect("glTF primitives") {
+            let index = primitive["attributes"]["POSITION"]
+                .as_u64()
+                .expect("POSITION") as usize;
+            let accessor = &gltf["accessors"][index];
+            let bound = |name: &str| {
+                Vec3::from(
+                    serde_json::from_value::<[f32; 3]>(accessor[name].clone())
+                        .expect("a position bound"),
+                )
+            };
+            low = low.min(bound("min"));
+            high = high.max(bound("max"));
+        }
+    }
+    (high - low).max_element()
+}
+
+#[test]
+fn a_hook_launch_starts_at_the_animated_weapon_socket() {
+    let file = record_throws(true, 1, MID);
+    let frames = play(&file, 0, MID);
+    let launch = &flights(&frames)[0][0];
+    let socket = launch.socket.expect("the weapon's chain socket");
+    let head = launch.head().expect("the hook head at launch").0;
+    assert!(
+        head.distance(socket) < 0.05,
+        "the hook starts {:.1} units from the weapon socket",
+        head.distance(socket)
+    );
 }
 
 #[test]
@@ -377,7 +536,7 @@ fn the_chain_stays_on_the_hook_head_socket_through_flight_and_return() {
         let [head] = frame.models.as_slice() else {
             panic!("one hook head must be drawn at {:.2} s", frame.seconds);
         };
-        let socket = source(head.transform_point(HEAD_SOCKET));
+        let socket = head_socket(head);
         assert!(
             frame
                 .chain
@@ -441,11 +600,20 @@ fn a_thrown_hook_flies_out_turning_on_a_chain_to_full_range_and_comes_back_empty
         (speed - expected).abs() < expected * 0.1,
         "the head flies at {speed:.0} units a second, the ability's speed is {expected}"
     );
-    // Along the cast line, which runs east from where Pudge stood.
+    // The wire's position can be one tick ahead of the interpolated projectile. Once clear
+    // of the launch socket the head stays on the cast line. The launch itself leaves the
+    // animated socket and closes its measured lateral offset.
+    let one_tick = rules::HOOK_SPEED as f32 / rules::TICKS_PER_SECOND as f32;
     for f in out {
         let head = f.head().expect("a head").0;
+        let lateral_limit = if f.wire_reach > f.socket_reach + one_tick {
+            30.0
+        } else {
+            let socket = f.socket.expect("the launch socket");
+            (socket.y - home.y).abs() + 0.05
+        };
         assert!(
-            (head.y - home.y).abs() < 30.0 && head.x >= home.x - 30.0,
+            (head.y - home.y).abs() < lateral_limit && head.x >= home.x - 30.0,
             "the head at ({:.0}, {:.0}) is off the cast line from {home:?}",
             head.x,
             head.y

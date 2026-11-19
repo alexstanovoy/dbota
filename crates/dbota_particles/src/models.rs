@@ -214,7 +214,9 @@ fn place_particles(
         };
         let matrix = source_matrix(models, &scene, node, i, (radius_scale, roll_scale));
         let mut transform = Transform::from_matrix(to_bevy(matrix, units_per_metre));
-        transform.translation -= transform.rotation * (transform.scale * d.attachment);
+        // The loader turns the glTF scene around Y to make its +Z forward into Bevy's -Z.
+        let socket = Vec3::new(-d.attachment.x, d.attachment.y, -d.attachment.z);
+        transform.translation -= transform.rotation * (transform.scale * socket);
         out.push(Placed { model, transform });
     }
 }

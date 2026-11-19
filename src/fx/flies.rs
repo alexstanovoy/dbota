@@ -44,6 +44,19 @@ fn at(ground: &Ground, flight: &Flight, height: f32) -> Vec3 {
     Vec3::new(flight.x, ground.at(flight.x, flight.y) + height, -flight.y)
 }
 
+/// Start at the attachment as the carrier particle does. Blend to the projectile over the
+/// distance between the socket and the launch origin.
+fn chain_tip(ground: &Ground, height: f32, caster: Vec3, socket: Vec3, tip: Vec3) -> Vec3 {
+    let centre = Vec3::new(caster.x, ground.at(caster.x, -caster.z) + height, caster.z);
+    let offset = socket - centre;
+    let reach = offset.length();
+    if reach <= f32::EPSILON {
+        return tip;
+    }
+    let outside = (tip.distance(centre) / reach).min(1.0);
+    tip + offset * (1.0 - outside)
+}
+
 /// A directly placed chain tip uses the ground offset authored for its root particle.
 fn chain_height(effect: &dbota_particles::Effect) -> f32 {
     effect.defs[0]
@@ -162,6 +175,11 @@ fn flies(
                 Attach::Origin => bodies.launch(unit.id).unwrap_or(tip),
                 attach => attach_point(&ground, &bodies, unit, attach),
             });
+            let caster = source.map(|unit| attach_point(&ground, &bodies, unit, &Attach::Origin));
+            let tip = match (fx.at, caster) {
+                (At::Chain, Some(caster)) => chain_tip(&ground, height, caster, hand, tip),
+                _ => tip,
+            };
             instance.set_control_point(LAUNCH, place_of(hand), Vec3::ZERO, false);
             if fx.at == At::Chain {
                 instance.set_control_point(TIP, place_of(tip), Vec3::ZERO, false);
@@ -169,7 +187,7 @@ fn flies(
                 steer(tip + dir, dir, &mut playing, handle);
             }
             let feeds = Feeds {
-                caster: source.map(|unit| attach_point(&ground, &bodies, unit, &Attach::Origin)),
+                caster,
                 caster_scale: source.map(|unit| bodies.object_scale(unit.id)),
                 flight_tip: tip,
                 flight_speed: dir.length() * bota_core::rules::TICKS_PER_SECOND as f32,
