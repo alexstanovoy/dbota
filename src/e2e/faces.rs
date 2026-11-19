@@ -291,14 +291,21 @@ fn total_change(before: &[f32], after: &[f32]) -> f32 {
 }
 
 /// How a line's clock moved from one drawn frame to the next, when it jumped: a line said on
-/// both moves on by the frame's `step`; one starting is said from its start (or before it, a
-/// line registered ahead).
+/// both moves on by the frame's `step` (or waits at its lead for its sound to begin); one
+/// starting is said from its lead before its start (or earlier, a line registered ahead).
 fn clock_jump(
     before: &Option<(String, f32)>,
     after: &Option<(String, f32)>,
     step: f32,
 ) -> Option<String> {
     match (before, after) {
+        // A line waits at its lead before its first viseme, the face at rest, until its sound
+        // begins: it may hold there.
+        (Some((was, t0)), Some((file, t1)))
+            if was == file && t1 == t0 && *t0 <= -crate::face::PHONEME_FILTER + CLOCK_SLACK =>
+        {
+            None
+        }
         (Some((was, t0)), Some((file, t1))) if was == file => ((t1 - t0 - step).abs()
             > CLOCK_SLACK)
             .then(|| format!("{file}'s clock moved {:.5} s in a {step} s frame", t1 - t0)),
@@ -1012,6 +1019,15 @@ fn check_hero(hero: HeroId) -> Vec<String> {
     let rate = (1.0 / STEP).round().to_string();
     let server = Server::start(1, &["--tick-rate", &rate]);
     let mut client = Client::join(&server, hero, &[]);
+    // The answer's sound plays to an output a device buffer at a time on the client's own clock,
+    // as a player's device takes it: the line's clock must keep the frames' time through it
+    // ([`clock_jump`]), the steps of the reported position never moving it.
+    client
+        .world_mut()
+        .insert_resource(crate::audio_output::DeviceBuffers {
+            buffer: Pacing::Hz60.device_buffer(),
+            ahead: DEVICE_AHEAD as u32,
+        });
     client.cheat(Cheat::StartGame);
     // From the start: 2 ms apart, so the first face drawn is the first one checked.
     let world = client.world_mut();
