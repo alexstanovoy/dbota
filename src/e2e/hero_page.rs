@@ -253,6 +253,32 @@ fn the_hero_page_draws_the_hero_in_the_middle_of_the_scene() {
     );
 }
 
+/// The hero's idle motion is drawn on every frame the page shows it: drawn at a lower rate, it
+/// would hold still and then jump on.
+#[test]
+fn the_hero_page_draws_its_hero_on_every_frame() {
+    let mut client = hero_page();
+    client.until("the hero standing on the stage", |c| {
+        let stage = c.world().resource::<HeroStage>();
+        stage.hero == Some(HERO) && stage.ready()
+    });
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_secs_f64(1.0 / 240.0),
+        ));
+    let drawn: Vec<bool> = (0..24)
+        .map(|_| {
+            client.frames(1);
+            client.world().resource::<HeroStage>().drawing()
+        })
+        .collect();
+    assert!(
+        drawn.iter().all(|d| *d),
+        "drawn on every frame at 240 Hz: {drawn:?}"
+    );
+}
+
 /// The lowest edge of the glyphs of each span of the text, in the window's pixels: for figures,
 /// the line they stand on.
 fn span_bottoms(world: &World, text: Entity) -> Vec<f32> {

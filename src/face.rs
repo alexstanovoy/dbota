@@ -463,6 +463,15 @@ impl Expression {
     }
 }
 
+/// The room [`Rig::weights`] works in: the controllers held in range, the flexes and the
+/// rule machine's stack.
+#[derive(Clone, Debug, Default)]
+pub struct RigScratch {
+    src: Vec<f32>,
+    dest: Vec<f32>,
+    stack: Vec<f32>,
+}
+
 /// One step of a flex rule (see the importer's `face::Op`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Op {
@@ -546,19 +555,23 @@ impl Rig {
         })
     }
 
-    /// The weight of each morph target for `controls`, each controller held within its range.
-    pub fn weights(&self, controls: &Controls, out: &mut [f32]) {
-        let src: Vec<f32> = self
-            .controllers
-            .iter()
-            .map(|&(name, min, max)| controls.get(&name).copied().unwrap_or(0.0).clamp(min, max))
-            .collect();
-        let mut dest = vec![0.0; self.flexes];
-        let mut stack = Vec::with_capacity(8);
+    /// The weight of each morph target for `controls`, each controller held within its range,
+    /// worked out in `scratch`, which keeps its room from one call to the next: a face posed on
+    /// every frame allocates nothing once it has posed once.
+    pub fn weights(&self, controls: &Controls, out: &mut [f32], scratch: &mut RigScratch) {
+        let RigScratch { src, dest, stack } = scratch;
+        src.clear();
+        src.extend(
+            self.controllers.iter().map(|&(name, min, max)| {
+                controls.get(&name).copied().unwrap_or(0.0).clamp(min, max)
+            }),
+        );
+        dest.clear();
+        dest.resize(self.flexes, 0.0);
         for (flex, ops) in &self.rules {
             stack.clear();
             for op in ops {
-                run(*op, &src, &dest, &mut stack);
+                run(*op, src, dest, stack);
             }
             dest[*flex] = stack.first().copied().unwrap_or(0.0);
         }

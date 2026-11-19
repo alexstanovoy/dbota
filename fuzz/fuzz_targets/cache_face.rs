@@ -30,10 +30,11 @@ fuzz_target!(|data: &[u8]| {
         if let Some(line) = &line {
             line.apply(t, &table, &ranges, &mut controls);
             let _ = line.end();
+            let _ = line.lead();
         }
         if let Some(rig) = &rig {
             let mut weights = vec![0.0; 300];
-            rig.weights(&controls, &mut weights);
+            rig.weights(&controls, &mut weights, &mut face::RigScratch::default());
             assert!(weights.iter().all(|w| (0.0..=1.0).contains(w)), "{weights:?}");
         }
     }

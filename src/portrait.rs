@@ -993,6 +993,7 @@ fn aim(
     framings: Res<Framings>,
     bank: Res<ModelBank>,
     ready: Res<crate::warmup::PipelinesReady>,
+    hud: Res<crate::ui::HudShown>,
     mut stage: ResMut<Stage>,
     mut commands: Commands,
     children: Query<&Children>,
@@ -1057,20 +1058,21 @@ fn aim(
     }
     let ready = ready.get();
     stage.rendered = stage.render;
-    stage.render = draw(&mut stage, ready, &mut commands);
+    stage.render = draw(&mut stage, ready, hud.0, &mut commands);
 }
 
 /// Whether the camera draws this frame: a still until its render is whole
 /// (then it is kept and its model leaves the stage), an animated portrait on
-/// every frame, as the panel shows it (a portrait drawn at a lower rate than the
-/// frames holds its face still and then jumps it on).
-fn draw(stage: &mut Stage, ready: bool, commands: &mut Commands) -> bool {
+/// every frame the panel is on screen (`shown`: the HUD, not a menu, a loading
+/// screen or the end of a match over it), as the panel shows it (a portrait
+/// drawn at a lower rate than the frames holds its face still and then jumps it on).
+fn draw(stage: &mut Stage, ready: bool, shown: bool, commands: &mut Commands) -> bool {
     let rendered = stage.rendered;
     let Some(actor) = stage.actor.as_mut() else {
         return false;
     };
     let Some(still) = actor.still.clone() else {
-        return true;
+        return shown;
     };
     // The render drawn last frame counts once nothing was compiling.
     if rendered && ready {
@@ -1092,19 +1094,20 @@ fn draw(stage: &mut Stage, ready: bool, commands: &mut Commands) -> bool {
 /// Moves the face on the stage, on the frames the camera draws: its idle
 /// expression, and the line its hero is saying.
 fn speak(
-    stage: Res<Stage>,
+    mut stage: ResMut<Stage>,
     faces: Res<Faces>,
     mut speech: ResMut<Speech>,
     time: Res<Time<bevy::time::Real>>,
     mut weights: Query<&mut MorphWeights>,
 ) {
-    let Some(face) = stage.actor.as_ref().and_then(|a| a.face.as_ref()) else {
+    let (render, unit) = (stage.render, stage.unit);
+    let Some(face) = stage.actor.as_mut().and_then(|a| a.face.as_mut()) else {
         return;
     };
-    if stage.render {
+    if render {
         let now = time.elapsed_secs();
         speech.settle(now, |line, t| face.line_controls(line, t, &faces));
-        face.pose(now, speech.saying(stage.unit, now), &faces, &mut weights);
+        face.pose(now, speech.saying(unit, now), &faces, &mut weights);
     }
 }
 
@@ -1331,6 +1334,39 @@ fn select_named(
 #[cfg(test)]
 mod tests {
     use super::{parse_line, vertical_fov};
+
+    #[test]
+    fn an_animated_portrait_is_drawn_on_every_frame_the_hud_shows_it_and_on_none_else() {
+        use bevy::prelude::*;
+        let mut world = World::new();
+        let mut stage = super::Stage {
+            subject: None,
+            unit: None,
+            actor: Some(super::spawn_actor(
+                &mut world.commands(),
+                &super::Scenes {
+                    body: Handle::default(),
+                    wearables: Vec::new(),
+                },
+                0,
+                1.0,
+                None,
+                super::LAYER,
+            )),
+            stills: Vec::new(),
+            backdrops: Default::default(),
+            live: Handle::default(),
+            render: false,
+            rendered: false,
+            forced: None,
+        };
+        let mut commands = world.commands();
+        let drawn: Vec<bool> = [true, true, false, false, true]
+            .into_iter()
+            .map(|shown| super::draw(&mut stage, true, shown, &mut commands))
+            .collect();
+        assert_eq!(drawn, [true, true, false, false, true]);
+    }
 
     /// The importer's line for Shadow Fiend, as `dbota import` writes it.
     const NEVERMORE: &str = "hero.nevermore.model 126.07 -14.4 175.18 1.85 172.19 0 33 10000 85 9.68 296.06 \

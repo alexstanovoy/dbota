@@ -29,7 +29,6 @@ const HEIGHT: f32 = 520.0;
 const GROUND: f32 = 770.0;
 const TOP: f32 = 100.0;
 const FOV: f32 = 25.0_f32.to_radians();
-const RATE: f32 = 30.0;
 const SAMPLES: usize = 24;
 // Presentation clearance above the common contact-shadow line.
 const HOVER: &[(bota_proto::HeroId, f32)] = &[(bota_proto::HeroId::SHADOW_FIEND, 32.0)];
@@ -63,7 +62,6 @@ pub(crate) struct HeroStage {
     model: Option<usize>,
     image: Handle<Image>,
     material: Handle<crate::wash::Washed>,
-    next_render: f32,
     framed: bool,
     failed: bool,
     samples: usize,
@@ -76,20 +74,14 @@ pub(crate) struct HeroStage {
 }
 
 impl HeroStage {
+    /// Whether the stage's camera draws the hero this frame.
     pub(crate) fn drawing(&self) -> bool {
         self.render && self.ready()
     }
 
-    pub(crate) fn next_pose(&self, time: &Time<Real>) -> Option<bevy::platform::time::Instant> {
-        (self.model.is_some() && !self.failed).then(|| {
-            if self.framed {
-                time.startup() + std::time::Duration::from_secs_f32(self.next_render)
-            } else {
-                // Scene instantiation and pose preparation advance in the main schedule.
-                bevy::platform::time::Instant::now()
-                    + std::time::Duration::from_secs_f32(1.0 / RATE)
-            }
-        })
+    pub(crate) fn next_pose(&self, _time: &Time<Real>) -> Option<bevy::platform::time::Instant> {
+        // The hero is drawn on every frame while its page shows it, so the next pose is always due now.
+        (self.model.is_some() && !self.failed).then(bevy::platform::time::Instant::now)
     }
 
     pub(crate) fn ready(&self) -> bool {
@@ -444,13 +436,11 @@ fn frame(
                 active.set_seek_time(0.0).resume();
             }
         }
+        // Drawn on every frame while the page shows the hero (its stage exists only then): drawn
+        // at a lower rate, the hero's idle motion would hold still and then jump on.
         let now = time.elapsed_secs();
-        if now < stage.next_render {
-            continue;
-        }
-        stage.next_render = now + 1.0 / RATE;
         stage.render = true;
-        if let Some(face) = stage.actor.as_ref().and_then(|a| a.face.as_ref()) {
+        if let Some(face) = stage.actor.as_mut().and_then(|a| a.face.as_mut()) {
             face.pose(now, crate::talk::Saying::default(), &faces, &mut weights);
         }
     }

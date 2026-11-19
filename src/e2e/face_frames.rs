@@ -494,6 +494,7 @@ fn client(hero: HeroId, buffer: Duration) -> (Server, Client) {
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
             16,
         )));
+    super::hud_layout::on_screen(&mut client);
     client.until("the portrait's face posed", |c| {
         c.world()
             .resource::<Stage>()

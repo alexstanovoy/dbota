@@ -1037,6 +1037,8 @@ fn check_hero(hero: HeroId) -> Vec<String> {
     client.within(Duration::from_secs(120), "the portrait's face posed", |c| {
         drawn_face(c).is_some()
     });
+    // The portrait is drawn while the HUD is on screen, not under the loading screen.
+    super::hud_layout::on_screen(&mut client);
     let name = format!("{hero:?}");
     let (lines, silent) = lines(&client, hero);
     assert!(!lines.is_empty(), "{name}: lines with a lip sync");

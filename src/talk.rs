@@ -14,7 +14,7 @@ use bevy::mesh::morph::{MeshMorphWeights, MorphWeights};
 use bevy::prelude::*;
 use bota_proto::EntityId;
 
-use crate::face::{Controls, Expression, Lipsync, Phonemes, Rig};
+use crate::face::{Controls, Expression, Lipsync, Phonemes, Rig, RigScratch};
 use crate::manifest::Manifest;
 
 /// What faces move by, out of the cache.
@@ -381,6 +381,19 @@ pub struct Face {
     pub began: f32,
     /// Debug: the expression held at this many seconds in.
     pub frozen: Option<f32>,
+    /// The room posing works in, kept from frame to frame so that a face posed on every frame
+    /// allocates nothing once it has posed once.
+    scratch: Scratch,
+}
+
+/// What [`Face::pose`] works in: the controllers, a line's controllers, a mesh's weights and its
+/// rig's room.
+#[derive(Clone, Default)]
+struct Scratch {
+    controls: Controls,
+    line: Controls,
+    out: Vec<f32>,
+    rig: RigScratch,
 }
 
 impl Face {
@@ -441,6 +454,7 @@ impl Face {
             expression,
             began: now,
             frozen: None,
+            scratch: Scratch::default(),
         })
     }
 
@@ -463,22 +477,33 @@ impl Face {
         self.meshes.iter().map(|(node, rig)| (*node, rig.as_ref()))
     }
 
-    /// The controllers of the face as it is at `now`, saying what `saying` says: its idle
-    /// expression, the line added over it, and what is left of the lines before it.
-    pub fn controls(&self, now: f32, saying: Saying, faces: &Faces) -> Controls {
-        let mut controls = Controls::new();
+    /// The controllers of the face as it is at `now`, saying what `saying` says, into
+    /// `controls`: its idle expression, the line added over it, and what is left of the lines
+    /// before it (each worked out in `line`).
+    fn controls(
+        &self,
+        now: f32,
+        saying: Saying,
+        faces: &Faces,
+        (controls, line_room): (&mut Controls, &mut Controls),
+    ) {
+        controls.clear();
         if let Some(scene) = &self.expression {
-            scene.apply(self.frozen.unwrap_or(now - self.began), &mut controls);
+            scene.apply(self.frozen.unwrap_or(now - self.began), controls);
         }
         if let Some((line, t)) = saying.line {
             line.lipsync
-                .apply(t, &faces.phonemes, &self.ranges, &mut controls);
+                .apply(t, &faces.phonemes, &self.ranges, controls);
         }
         let ours = |unit: Option<EntityId>| unit.is_none() || unit == saying.unit;
         for line in saying.leaving.iter().filter(|l| ours(l.unit)) {
             let left = release(saying.now - line.since);
-            for (name, value) in self.line_controls(&line.face, line.at, faces) {
-                *controls.entry(name).or_insert(0.0) += value * left;
+            line_room.clear();
+            line.face
+                .lipsync
+                .apply(line.at, &faces.phonemes, &self.ranges, line_room);
+            for (name, value) in line_room.iter() {
+                *controls.entry(*name).or_insert(0.0) += value * left;
             }
         }
         if let Some(residue) = saying.residue.filter(|r| ours(r.unit)) {
@@ -487,7 +512,6 @@ impl Face {
                 *controls.entry(*name).or_insert(0.0) += value * left;
             }
         }
-        controls
     }
 
     /// The controllers a line adds to the face `t` seconds into it.
@@ -498,24 +522,28 @@ impl Face {
         controls
     }
 
-    /// Moves the face as it is at `now`, saying what `saying` says.
+    /// Moves the face as it is at `now`, saying what `saying` says. Nothing is allocated once
+    /// the face has posed once: it works in room it keeps.
     pub fn pose(
-        &self,
+        &mut self,
         now: f32,
         saying: Saying,
         faces: &Faces,
         weights: &mut Query<&mut MorphWeights>,
     ) {
-        let controls = self.controls(now, saying, faces);
+        let mut room = std::mem::take(&mut self.scratch);
+        self.controls(now, saying, faces, (&mut room.controls, &mut room.line));
         for (node, rig) in self.rigs() {
             if let Ok(mut w) = weights.get_mut(node) {
-                let mut out = w.weights().to_vec();
-                rig.weights(&controls, &mut out);
-                if out != w.weights() {
-                    w.weights_mut().copy_from_slice(&out);
+                room.out.clear();
+                room.out.extend_from_slice(w.weights());
+                rig.weights(&room.controls, &mut room.out, &mut room.rig);
+                if room.out != w.weights() {
+                    w.weights_mut().copy_from_slice(&room.out);
                 }
             }
         }
+        self.scratch = room;
     }
 }
 
