@@ -3,6 +3,7 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
@@ -357,10 +358,10 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 }
 
-/// Measure the production HUD update systems separately from Bevy's renderer and the rest of the
-/// client. An active Scan exercises the minimap rings and the received radar data while paused.
+/// Counts allocations in the HUD readout, Glyph and Scan update schedules with an active Scan
+/// and a stationary replay snapshot. Elapsed time makes the FPS readout change.
 #[test]
-fn the_paused_hud_updates_without_allocating() {
+fn paused_hud_readouts_glyph_and_scan_update_without_allocating() {
     let file = super::scan::recorded_scan();
     let mut client = super::fog_pov::replay_from_side(&file, 0);
     assert!(
@@ -372,11 +373,70 @@ fn the_paused_hud_updates_without_allocating() {
     assert!(
         matches!(&client.core().source, bota_client_core::Source::Replay(player) if player.paused)
     );
+    measure_hud_update(client.world_mut(), "2 fps", "1 fps");
+}
+
+#[test]
+fn waiting_glyph_and_live_hud_readouts_update_without_allocating_on_a_fixed_snapshot() {
+    let (_server, mut client) = hud_of(HeroId::SHADOW_FIEND);
+    let rate = u32::from(client.core().tick_rate());
+    let seconds = client
+        .core()
+        .glyph()
+        .and_then(|glyph| glyph.ready_after)
+        .filter(|wait| *wait > 0)
+        .expect("a waiting Glyph")
+        .div_ceil(rate)
+        .to_string();
+    // Keep the real snapshot and supply reproducible transport timings without pumping it.
+    client.core_mut().source = bota_client_core::Source::Live(Box::new(FixedTimings));
     let world = client.world_mut();
+    measure_hud_update(
+        world,
+        "ping 17 ms   orders 33 ms   2 fps",
+        "ping 17 ms   orders 33 ms   1 fps",
+    );
+    let (text, visibility) = world
+        .query_filtered::<(&Text, &InheritedVisibility), With<crate::glyph::GlyphSeconds>>()
+        .single(world)
+        .expect("the Glyph countdown");
+    assert!(visibility.get(), "the Glyph countdown stays visible");
+    assert_eq!(
+        text.0, seconds,
+        "elapsed UI time leaves the Glyph wait unchanged"
+    );
+}
+
+struct FixedTimings;
+
+impl bota_client_core::LiveLink for FixedTimings {
+    fn poll(&mut self) -> Vec<bota_proto::ServerMsg> {
+        Vec::new()
+    }
+
+    fn send(&mut self, _: &bota_proto::ClientMsg) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn is_closed(&self) -> bool {
+        false
+    }
+
+    fn ping(&self) -> Option<Duration> {
+        Some(Duration::from_millis(17))
+    }
+
+    fn order_latency(&self) -> Option<Duration> {
+        Some(Duration::from_millis(33))
+    }
+}
+
+fn measure_hud_update(world: &mut World, previous_rate: &str, next_rate: &str) {
     assert!(world.resource::<crate::session::MatchKnown>().0);
-    world
-        .resource_mut::<Time<Real>>()
-        .advance_by(std::time::Duration::ZERO);
+    let readout = world
+        .query_filtered::<Entity, With<crate::hud::FrameRate>>()
+        .single(world)
+        .expect("the frame-rate readout");
     let mut schedule = Schedule::default();
     schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::default());
     schedule.add_systems((
@@ -385,14 +445,25 @@ fn the_paused_hud_updates_without_allocating() {
         crate::scan::updates(),
     ));
     for _ in 0..3 {
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(500));
         schedule.run(world);
     }
+    assert_eq!(world.get::<Text>(readout).expect("rate").0, previous_rate);
+    world
+        .resource_mut::<Time<Real>>()
+        .advance_by(Duration::from_secs(1));
     ALLOCATIONS.with(|count| count.set(Some(0)));
     schedule.run(world);
     let allocations = ALLOCATIONS
         .with(|count| count.replace(None))
         .expect("counting enabled");
-    assert_eq!(allocations, 0, "heap allocations in one paused HUD update");
+    assert_eq!(world.get::<Text>(readout).expect("rate").0, next_rate);
+    assert_eq!(
+        allocations, 0,
+        "heap allocations in one HUD readout, Glyph and Scan update"
+    );
 }
 
 /// Each side's score in the top bar is white, as the game's, not green and red.

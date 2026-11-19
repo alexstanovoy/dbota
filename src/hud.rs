@@ -4,6 +4,7 @@
 //! notices.
 
 use std::f32::consts::TAU;
+use std::fmt::Write;
 use std::sync::LazyLock;
 
 use bevy::picking::{events::PointerPress, pointer::PointerButton};
@@ -308,6 +309,8 @@ pub(crate) fn told_ms(text: &str, label: &str) -> Option<u32> {
 /// How often the frame rate is told: the frames over each such span, not
 /// the last frame's, so the figure can be read.
 const FRAME_RATE_SPAN: f32 = 0.5;
+/// Room for both millisecond counters, the FPS value, and their labels, even at their type limits.
+const FRAME_RATE_TEXT_CAPACITY: usize = 128;
 
 /// The sun or the moon beside the clock, as Dota's top bar shows the time
 /// of day.
@@ -1933,7 +1936,12 @@ fn spawn_corner(kit: &mut Spawner, root: Entity) {
     spawn_menu(commands, kit.manifest, kit.server, corner);
     commands.spawn((
         FrameRate,
-        ui::text("", &fonts.regular, 11.0, ui::INK_DIM),
+        ui::text(
+            String::with_capacity(FRAME_RATE_TEXT_CAPACITY),
+            &fonts.regular,
+            11.0,
+            ui::INK_DIM,
+        ),
         Node {
             position_type: PositionType::Absolute,
             right: px(10),
@@ -2200,15 +2208,10 @@ fn frame_rate(
     if drawn.replace(sample) == Some(sample) {
         return;
     }
-    let mut told = String::new();
-    if let Some(ping) = sample.ping {
-        told += &format!("ping {ping} ms   ");
-    }
-    if let Some(orders) = sample.orders {
-        told += &format!("orders {orders} ms   ");
-    }
-    told += &format!("{} fps", sample.fps);
-    text.set_if_neq(Text(told));
+    text.0.clear();
+    sample
+        .write_to(&mut text.0)
+        .expect("writing to a String cannot fail");
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2216,6 +2219,18 @@ struct FrameRateSample {
     fps: u32,
     ping: Option<u128>,
     orders: Option<u128>,
+}
+
+impl FrameRateSample {
+    fn write_to(self, text: &mut String) -> std::fmt::Result {
+        if let Some(ping) = self.ping {
+            write!(text, "ping {ping} ms   ")?;
+        }
+        if let Some(orders) = self.orders {
+            write!(text, "orders {orders} ms   ")?;
+        }
+        write!(text, "{} fps", self.fps)
+    }
 }
 
 /// The game clock, negative before the horn.
