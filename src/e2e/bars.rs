@@ -185,9 +185,9 @@ fn block_widths(client: &Client, id: EntityId) -> Vec<f32> {
         .collect()
 }
 
-/// A creep's attack takes a sixth of a courier's health, a third of one of its two blocks
-/// (Dota: six creep attacks, two ranged hero attacks): the bar keeps its first block whole and
-/// the second two thirds full, as Dota draws a hit-count bar being bitten.
+/// A creep's attack takes a quarter of one of a courier's two pips (Dota 7.42: "Attacks from
+/// illusions and creeps deal 1/4 pip per attack"; a courier holds 8 quarters): the bar keeps its
+/// first pip whole and the second three quarters full, as Dota draws a pip bar being bitten.
 #[test]
 fn a_creeps_attack_on_a_courier_leaves_its_second_block_partly_full() {
     let server = Server::start(1, &[]);
@@ -219,7 +219,7 @@ fn a_creeps_attack_on_a_courier_leaves_its_second_block_partly_full() {
         c.view()
             .unit(courier)
             .and_then(|u| u.hit_health)
-            .is_some_and(|health| health.to_f32() < 6.0)
+            .is_some_and(|health| health.to_f32() < 8.0)
     });
     client.frames(2);
     let health = client
@@ -228,11 +228,11 @@ fn a_creeps_attack_on_a_courier_leaves_its_second_block_partly_full() {
         .and_then(|u| u.hit_health)
         .expect("exact health")
         .to_f32();
-    assert!(health > 3.0, "a creep, not a hero, bit it: {health}");
+    assert!(health > 4.0, "a creep, not a hero, bit it: {health}");
     let widths = block_widths(&client, courier);
     assert_eq!(widths.len(), 2, "two blocks");
     let (full, bitten) = (widths[0], widths[1]);
-    let share = (health - 3.0) / 3.0;
+    let share = (health - 4.0) / 4.0;
     assert!(
         full > 0.0 && (bitten - full * share).abs() < 0.5,
         "{widths:?} at {health}"
@@ -242,9 +242,9 @@ fn a_creeps_attack_on_a_courier_leaves_its_second_block_partly_full() {
 
 /// Owner report: "the ward has many health cells, not 2". A planted Observer Ward's bar is
 /// two blocks, one a hero's attack: an enemy hero's first attack leaves one block standing,
-/// its second brings the ward down (Dota 7.41: a ward is two hits of a hero, ten of anything
-/// else). The enemy hero sees the ward by a Sentry Ward of its own. Before the fix the bar was
-/// ten blocks.
+/// its second brings the ward down (Dota 7.42: a ward is two pips, a hero's attack takes one,
+/// anything else's a quarter). The enemy hero sees the ward by a Sentry Ward of its own. Before
+/// the fix the bar was ten blocks.
 #[test]
 fn an_enemy_heros_two_attacks_take_a_wards_two_blocks_one_each() {
     let server = Server::start(2, &[]);
