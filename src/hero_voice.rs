@@ -203,17 +203,39 @@ pub fn plugin(app: &mut App) {
 /// Queue a resident line through the same mixer and presentation clock that the match uses.
 fn speech_check(
     mut commands: Commands,
+    mut session: NonSendMut<Session>,
     time: Res<Time>,
     real: Res<Time<bevy::time::Real>>,
     voice: Res<HeroVoice>,
-    stage: Res<crate::portrait::Stage>,
+    mut stage: ResMut<crate::portrait::Stage>,
+    mut bank: ResMut<crate::units::ModelBank>,
+    manifest: Res<Manifest>,
+    assets: Res<AssetServer>,
     hud: Res<crate::ui::HudShown>,
     mut mixer: ResMut<Mixer>,
     mut speech: ResMut<Speech>,
     mut queued: Local<bool>,
 ) {
-    if *queued
-        || !hud.0
+    // Keep the subject alive and the background fixed while the test compares its mouth.
+    if session.0.view().is_some()
+        && let bota_client_core::Source::Replay(player) = &mut session.0.source
+    {
+        player.paused = true;
+    }
+    if *queued {
+        return;
+    }
+    let Some(resident) = voice.resident() else {
+        return;
+    };
+    if stage.forced.is_none() {
+        let logical = format!("hero.{}.model", resident.hero);
+        stage.forced = bank.request(&logical, &assets, &manifest);
+        if stage.forced.is_some() {
+            crate::talk::trace_line(format_args!("speech-check: requested the portrait rig"));
+        }
+    }
+    if !hud.0
         || stage
             .actor
             .as_ref()
@@ -222,9 +244,6 @@ fn speech_check(
     {
         return;
     }
-    let Some(resident) = voice.resident() else {
-        return;
-    };
     let Some((index, face)) = resident
         .faces
         .iter()

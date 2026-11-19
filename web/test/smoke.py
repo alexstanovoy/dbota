@@ -1178,7 +1178,7 @@ def check_speech_page(directory):
                 })["result"].get("value")
 
             page.goto(base + "?cache=http&gpu=webgl2")
-            wait_console(page, console, r"speech-check: queued", 120, "a resident voice to queue")
+            wait_console(page, console, r"speech-check: queued", 180, "a resident voice to queue")
             rectangle = wait_console(
                 page, console, r"speech-check: crop ([0-9.]+) ([0-9.]+) ([0-9.]+) ([0-9.]+)",
                 60, "the visible portrait bounds",
@@ -1194,18 +1194,32 @@ def check_speech_page(directory):
             frames = lambda: [match[0] for line in console if (
                 match := re.search(r"face: 0 \S+(?: -?\d+\.\d+)+", line)
             )]
+            def more_frames(count):
+                for _ in range(120):
+                    if len(frames()) >= count:
+                        return
+                    page.wait_for_timeout(50)
+                raise AssertionError(f"expected {count} drawn frames, got {len(frames())}")
+
+            # Give the newly created portrait texture time to reach the browser's canvas.
+            # Check the submitted mouth weights from the moment the voice was queued.
             rest_count = len(frames())
+            more_frames(rest_count + 3)
             still = snapshot()
-            for _ in range(100):
-                if len(frames()) - rest_count >= 3:
-                    break
-                page.wait_for_timeout(50)
-            assert snapshot() == still, "the mouth pixels changed before the first gesture"
+            more_frames(rest_count + 6)
+            before_gesture = snapshot()
             resting = frames()[rest_count:]
-            assert len(resting) >= 2 and len(set(resting)) == 1 and resting[0].startswith("face: 0 - "), (
+            assert len(set(resting)) == 1 and resting[0].startswith("face: 0 - "), (
                 "the drawn mouth moved before the first gesture", resting[-4:]
             )
+            assert audio_state() == "suspended"
             assert not any("speech-check: presented" in line for line in console)
+            if before_gesture != still:
+                import base64
+                scratch = HERE.parent.parent / "temp"
+                (scratch / "speech-before-first.png").write_bytes(base64.b64decode(still))
+                (scratch / "speech-before-second.png").write_bytes(base64.b64decode(before_gesture))
+                raise AssertionError("the mouth pixels changed before the first gesture")
 
             page.mouse.click(1240, 300)
             wait_console(page, console, r"speech-check: presented [0-9.]+", 30, "the first presented audio")

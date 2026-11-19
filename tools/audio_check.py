@@ -101,8 +101,9 @@ def expect_signs(samples):
         word ^= (word << 13) & 0xffffffff
         word ^= word >> 17
         word ^= (word << 5) & 0xffffffff
-        assert abs(sample) > 4096 and (sample > 0) == bool(word & 1), (
-            f"silent, out-of-order, or repeated audio at sample {index}: {sample}"
+        expected = 8192 if word & 1 else -8192
+        assert sample == expected, (
+            f"sample {index} was {sample}, expected {expected}; audio is clipped, missing, or reordered"
         )
 
 
