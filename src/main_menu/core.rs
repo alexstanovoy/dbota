@@ -442,6 +442,25 @@ pub struct Status {
     pub error: bool,
 }
 
+/// What the menu holds for the signed-in account alone: its requests, matches, lobbies and what
+/// the pages show of them. A request queued for one account never goes out for another.
+#[derive(Default)]
+pub(super) struct AccountScope {
+    /// Requests that wait for the link to open and the session to resume.
+    pub(super) outbox: Vec<(ClientMsg, Asked)>,
+    /// A search pressed while the link was reopening, to start when the session has resumed.
+    pub(super) find_held: bool,
+    pub(super) lobbies: Vec<LobbySummary>,
+    pub(super) games: Vec<Game>,
+    pub(super) results: VecDeque<MatchResult>,
+    /// The result the Result page shows.
+    pub(super) shown: Option<MatchId>,
+    pub(super) result_request: Option<crate::postgame::view::View>,
+    /// The account's latest finished matches, from the service.
+    pub(super) history: Vec<MatchResult>,
+    pub(super) account_profile: Option<PublicAccount>,
+}
+
 /// The state of the control connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Conn {
@@ -597,10 +616,13 @@ pub struct MenuCore {
     /// it again). The only record of who is signed in: no page asks the link, which knows
     /// nobody while it reopens.
     signed_in: Option<AccountInfo>,
+    /// Everything the menu holds for the signed-in account and nobody else. Replaced whole when
+    /// another account (or none) is signed in: a thing of the account goes here, never beside it.
+    pub(super) acct: AccountScope,
+    /// Since when the link has been opening without the session resumed.
+    reaching_since: Option<Instant>,
     /// The login or registration to send as soon as the link is open. Held only until then.
     credentials: Option<(ClientMsg, Asked)>,
-    /// Requests that wait for the link to open and the session to resume.
-    outbox: Vec<(ClientMsg, Asked)>,
     /// Since when nothing live has been on the link.
     idle_since: Option<Instant>,
     /// When to reconnect after a lost link that had something live on it.
@@ -617,7 +639,6 @@ pub struct MenuCore {
     pub(super) form: Form,
     pub(super) status: Option<Status>,
     asked: Vec<(u32, Asked)>,
-    pub(super) lobbies: Vec<LobbySummary>,
     pub(super) catalogue: Vec<bota_radovid::proto::RulesetInfo>,
     pub(super) lobby_ui: super::lobby_controls::Controls,
     /// The password dialog of a locked lobby being joined; it has the keyboard while it is up.
@@ -629,10 +650,6 @@ pub struct MenuCore {
     lobby_secret: Option<(LobbyId, String)>,
     /// The lobby sat in, and when it was last told.
     pub(super) lobby: Option<(LobbyState, Instant)>,
-    pub(super) games: Vec<Game>,
-    pub(super) results: VecDeque<MatchResult>,
-    /// The result the Result page shows.
-    pub(super) shown: Option<MatchId>,
     pub(super) on_screen: Option<OnScreen>,
     launch: Option<Launch>,
     pub(super) launching: bool,
@@ -696,7 +713,6 @@ pub struct MenuCore {
     pub(super) history_filter: super::history_page::Selection,
     pub(super) history_picker: Option<super::history_page::Filter>,
     pub(super) history_page: usize,
-    pub(super) result_request: Option<crate::postgame::view::View>,
     pub(super) pending_result_replay: Option<crate::postgame::view::Replay>,
     pub(super) pending_result_replay_since: Option<Instant>,
     after_results: Option<Page>,
@@ -708,9 +724,6 @@ pub struct MenuCore {
     pub(super) keeper: Keeper,
     /// The metadata of the match on screen, fetched for the post-game screen.
     pub(super) meta: super::meta_fetch::MetaFetch,
-    /// The account's latest finished matches, from the service.
-    pub(super) history: Vec<MatchResult>,
-    pub(super) account_profile: Option<PublicAccount>,
     pub(super) profiles: super::player_profile::Reader,
     /// The game server a local lobby starts, when not looked for.
     pub(super) server_binary: Option<std::path::PathBuf>,
@@ -819,7 +832,6 @@ impl MenuCore {
             history_filter: Default::default(),
             history_picker: None,
             history_page: 0,
-            result_request: None,
             pending_result_replay: None,
             pending_result_replay_since: None,
             after_results: None,
@@ -836,8 +848,9 @@ impl MenuCore {
             replay_scope: None,
             delete_form: None,
             signed_in: None,
+            acct: AccountScope::default(),
+            reaching_since: None,
             credentials: None,
-            outbox: Vec::new(),
             idle_since: None,
             retry_at: None,
             retry: true,
@@ -852,16 +865,12 @@ impl MenuCore {
             settings_from: Page::Service,
             status: None,
             asked: Vec::new(),
-            lobbies: Vec::new(),
             catalogue: Vec::new(),
             lobby_ui: Default::default(),
             join_prompt: None,
             moving: None,
             lobby_secret: None,
             lobby: None,
-            games: Vec::new(),
-            results: VecDeque::new(),
-            shown: None,
             on_screen: None,
             launch: None,
             launching: false,
@@ -888,8 +897,6 @@ impl MenuCore {
             shelf: Default::default(),
             keeper: Keeper::default(),
             meta: Default::default(),
-            history: Vec::new(),
-            account_profile: None,
             profiles: Default::default(),
             server_binary: None,
             server_environment: false,
@@ -994,6 +1001,12 @@ impl MenuCore {
         self.store
             .write(Entry::Session, &saved.render())
             .expect("the session file");
+    }
+
+    /// Lets the link be opening for as long as the menu waits for one, without waiting for it.
+    #[cfg(test)]
+    pub(crate) fn test_reach_elapsed(&mut self) {
+        self.reaching_since = Instant::now().checked_sub(lobby_requests::REQUEST_REACH);
     }
 
     /// Lets the link stand idle as long as the menu keeps one open for, without waiting for it:
@@ -1139,7 +1152,7 @@ impl MenuCore {
     /// The account's matches not yet over, as far as the menu knows.
     #[cfg(test)]
     pub fn games_running(&self) -> usize {
-        self.games.len()
+        self.acct.games.len()
     }
 
     /// Whether a link is being opened: the Hello or the sign-in is not yet answered.
@@ -1216,11 +1229,11 @@ impl MenuCore {
             self.tell(text::line(why, text::MESSAGE), true);
         }
         match left {
-            Some(OnScreen::Match(id)) if self.results.iter().any(|r| r.match_id == id) => {
-                self.shown = Some(id);
+            Some(OnScreen::Match(id)) if self.acct.results.iter().any(|r| r.match_id == id) => {
+                self.acct.shown = Some(id);
                 self.page = Page::Result;
             }
-            Some(OnScreen::Match(id)) if self.games.iter().any(|g| g.match_id == id) => {
+            Some(OnScreen::Match(id)) if self.acct.games.iter().any(|g| g.match_id == id) => {
                 self.go(Page::MyGames);
             }
             left => self.page = self.rest_page(left),
@@ -1239,7 +1252,7 @@ impl MenuCore {
         } else {
             self.rest_page(self.on_screen)
         };
-        self.shown = None;
+        self.acct.shown = None;
         if self.in_game() {
             self.leave = true;
             self.after_results = Some(page);
@@ -1310,7 +1323,9 @@ impl MenuCore {
             Err(err) => {
                 self.conn = Conn::Offline;
                 self.credentials = None;
-                self.outbox.clear();
+                self.acct.outbox.clear();
+                self.acct.find_held = false;
+                self.link_lost = self.logged_in();
                 self.tell(
                     format!(
                         "Cannot reach the service: {}",
@@ -1341,13 +1356,13 @@ impl MenuCore {
         } else if !self.logged_in() {
             self.tell("Sign in first".to_owned(), true);
         } else {
-            if self.outbox.len() < MAX_OUTBOX {
+            if self.acct.outbox.len() < MAX_OUTBOX {
                 if lobby_requests::is_lobby_request(&msg) {
                     self.lobby_ui
                         .queued_until
                         .get_or_insert_with(|| Instant::now() + lobby_requests::REQUEST_REACH);
                 }
-                self.outbox.push((msg, asked));
+                self.acct.outbox.push((msg, asked));
             } else if lobby_requests::is_lobby_request(&msg) {
                 self.fail_lobby_request(
                     asked,
@@ -1363,7 +1378,22 @@ impl MenuCore {
     /// Sends a login or registration: the link opens for it now, the typed values stay in the
     /// form, and nothing is held open before.
     fn sign_in(&mut self, msg: ClientMsg, asked: Asked) {
-        self.accepted.clear();
+        if self.logged_in() {
+            let live = self.link_ready();
+            self.clear_account();
+            if live {
+                self.send(ClientMsg::Logout, Asked::Logout);
+            }
+        }
+        // Wait for a logout already on the wire. A connection that was only resuming
+        // the old account can be dropped immediately.
+        let ending = self
+            .asked
+            .iter()
+            .any(|(_, asked)| matches!(asked, Asked::Logout));
+        if self.conn != Conn::Offline && !ending {
+            self.drop_link();
+        }
         self.status = None;
         self.credentials = Some((msg, asked));
         if self.conn == Conn::Offline {
@@ -1446,6 +1476,7 @@ impl MenuCore {
         self.avatars.link_lost();
         self.own_avatar_asked = None;
         self.idle_since = None;
+        self.reaching_since = None;
     }
 
     /// Whether nothing live is on the link: no search or proposal, no lobby, no request or
@@ -1458,14 +1489,14 @@ impl MenuCore {
             && !self.avatar.view.busy
             && self.asked.is_empty()
             && self.lobby_ui.deadlines.is_empty()
-            && self.outbox.is_empty()
+            && self.acct.outbox.is_empty()
             && self.credentials.is_none()
             && self.lobby.is_none()
             && !self.keeper.fetching()
             && !self.meta.fetching()
             && !self.launching
             && !matches!(self.on_screen, Some(OnScreen::Match(_) | OnScreen::Demo(_)))
-            && !(self.page == Page::MyGames && !self.games.is_empty())
+            && !(self.page == Page::MyGames && !self.acct.games.is_empty())
     }
 
     /// Closes a link that has had nothing live on it for a while, and reopens one that was lost
@@ -1481,6 +1512,19 @@ impl MenuCore {
         let since = *self.idle_since.get_or_insert_with(Instant::now);
         if since.elapsed() >= IDLE_HANG_UP {
             self.drop_link();
+        }
+    }
+
+    /// A link that has been opening for as long as a lobby request may wait is given up, and the
+    /// player told: what was held for it is dropped, a press retries.
+    fn bound_reaching(&mut self) {
+        if !(self.connecting() || self.credentials.is_some() && self.conn != Conn::Offline) {
+            self.reaching_since = None;
+            return;
+        }
+        let since = *self.reaching_since.get_or_insert_with(Instant::now);
+        if since.elapsed() >= lobby_requests::REQUEST_REACH {
+            self.lost(ClientError::Timeout);
         }
     }
 
@@ -1529,6 +1573,7 @@ impl MenuCore {
             self.read_summaries();
         }
         self.keep_link();
+        self.bound_reaching();
         #[cfg(test)]
         if self.pause_service_events {
             return;
@@ -1572,7 +1617,9 @@ impl MenuCore {
         let live = was_signed_in && !self.idle();
         self.link_lost = self.logged_in();
         self.credentials = None;
-        self.outbox.clear();
+        self.acct.outbox.clear();
+        self.acct.find_held = false;
+        self.reaching_since = None;
         self.lobby = None;
         self.moving = None;
         self.lobby_ui.deadlines.clear();
@@ -1760,12 +1807,12 @@ impl MenuCore {
                 }
             }
             Reply::Matches { list } if matches!(asked, Asked::History) => {
-                self.history = list.into_iter().take(usize::from(HISTORY_LEN)).collect();
+                self.acct.history = list.into_iter().take(usize::from(HISTORY_LEN)).collect();
             }
             Reply::Account { account }
                 if matches!(asked, Asked::Profile) && self.my_id() == Some(account.id) =>
             {
-                self.account_profile = Some(account)
+                self.acct.account_profile = Some(account)
             }
             Reply::LeaderboardPage { page } => {
                 if let Asked::Leaderboard(generation) = asked {
@@ -1840,18 +1887,15 @@ impl MenuCore {
         activities: bota_radovid::proto::Activities,
         me: AccountInfo,
     ) {
-        self.accepted.resumed(&activities);
-        self.conn = Conn::LoggedIn;
         let first = !self.logged_in();
-        // Another account signed in over this one: nothing of the first stays on screen.
-        if self.signed_in.as_ref().is_some_and(|old| old.id != me.id) {
-            self.forget_account_pages();
-        }
         self.set_history_scope(crate::replays::Scope::account(
             &self.prefs.service,
             me.id.0,
         ));
-        self.signed_in = Some(me);
+        // Another account signed in over this one: nothing of the first stays, nor is sent.
+        self.set_signed_in(Some(me));
+        self.accepted.resumed(&activities);
+        self.conn = Conn::LoggedIn;
         if self.page == Page::Leaderboard {
             self.board.refresh();
         }
@@ -1867,7 +1911,7 @@ impl MenuCore {
         let queued_until = self.lobby_ui.queued_until.take();
         self.ask(ClientMsg::Rulesets, Asked::LobbyCatalogue);
         self.restore_lobby_membership(&activities.lobbies);
-        self.games = activities
+        self.acct.games = activities
             .matches
             .iter()
             .take(MAX_GAMES)
@@ -1879,10 +1923,13 @@ impl MenuCore {
         self.send(ClientMsg::MyMatches, Asked::Other);
         self.keep_signed_in();
         self.lobby_ui.queued_until = queued_until;
-        for (msg, asked) in std::mem::take(&mut self.outbox) {
+        for (msg, asked) in std::mem::take(&mut self.acct.outbox) {
             self.send(msg, asked);
         }
         self.lobby_ui.queued_until = None;
+        if std::mem::take(&mut self.acct.find_held) {
+            self.find_selected();
+        }
         // The sign-in of an account over another is as much the way in as the first.
         if first || matches!(self.page, Page::Login | Page::Register | Page::Service) {
             self.status = None;
@@ -1924,7 +1971,7 @@ impl MenuCore {
                 self.tell(error_text(error), true);
             }
             (Asked::Rejoin(id) | Asked::Watch(id), Error::UnknownMatch) => {
-                self.games.retain(|g| g.match_id != id);
+                self.acct.games.retain(|g| g.match_id != id);
                 self.tell("That match is over".to_owned(), true);
             }
             (Asked::Artifact(id), error) => self.keep_refused(id, error),
@@ -1943,7 +1990,7 @@ impl MenuCore {
             (Asked::Join(lobby), Error::LobbyPasswordRequired) => {
                 // Locked since it was listed.
                 let name = self
-                    .lobbies
+                    .acct.lobbies
                     .iter()
                     .find(|l| l.id == lobby)
                     .map_or_else(String::new, |l| l.name.clone());
@@ -2042,21 +2089,21 @@ impl MenuCore {
         if matches!(&self.reconnect, Some(Launch::Seat(h)) if h.match_id == id) {
             self.reconnect = None;
         }
-        self.games.retain(|g| g.match_id != id);
+        self.acct.games.retain(|g| g.match_id != id);
         // A Demo Hero ends when its player quits it: no result to read, no replay to keep.
         if self.demo_match == Some(id) {
             return;
         }
         self.keep_finished(&result);
         self.meta_finished(&result);
-        if self.results.len() >= MAX_RESULTS {
-            self.results.pop_front();
+        if self.acct.results.len() >= MAX_RESULTS {
+            self.acct.results.pop_front();
         }
-        self.results.push_back(result);
+        self.acct.results.push_back(result);
         if self.on_screen.is_none() && !self.launching {
-            self.shown = Some(id);
+            self.acct.shown = Some(id);
             self.page = Page::Result;
-            self.result_request = self.outcome_result();
+            self.acct.result_request = self.outcome_result();
         }
     }
 
@@ -2211,13 +2258,13 @@ impl MenuCore {
 
     fn note_game(&mut self, handoff: Handoff) {
         if let Some(game) = self
-            .games
+            .acct.games
             .iter_mut()
             .find(|g| g.match_id == handoff.match_id)
         {
             game.handoff = Some(handoff);
-        } else if self.games.len() < MAX_GAMES {
-            self.games.push(Game {
+        } else if self.acct.games.len() < MAX_GAMES {
+            self.acct.games.push(Game {
                 match_id: handoff.match_id,
                 handoff: Some(handoff),
             });
@@ -2886,9 +2933,9 @@ impl MenuCore {
         self.go_form(Page::Login);
     }
 
-    /// Forgets what the pages show of the account that was signed in.
-    fn forget_account_pages(&mut self) {
-        self.account_profile = None;
+    /// Forgets everything the menu held for the account that was signed in, its queued requests
+    /// among it.
+    fn forget_account(&mut self) {
         self.list_cache.clear();
         self.board = Default::default();
         self.profiles.clear();
@@ -2897,27 +2944,34 @@ impl MenuCore {
         self.avatar.backend(None, false);
         self.accepted.clear();
         self.lobby_ui = Default::default();
-        self.catalogue.clear();
-        self.lobbies.clear();
-        self.lobby = None;
         self.moving = None;
         self.lobby_secret = None;
-        self.games.clear();
-        self.history.clear();
-        self.results.clear();
-        self.shown = None;
-        self.result_request = None;
+        self.lobby = None;
+        self.acct = AccountScope::default();
+    }
+
+    /// The one place the signed-in account changes: whoever it was before is forgotten unless it
+    /// is the same account again (its session resumed).
+    fn set_signed_in(&mut self, me: Option<AccountInfo>) {
+        let same = me
+            .as_ref()
+            .zip(self.signed_in.as_ref())
+            .is_some_and(|(new, old)| new.id == old.id);
+        if !same {
+            self.forget_account();
+        }
+        self.signed_in = me;
     }
 
     fn clear_account(&mut self) {
         self.store.remove(Entry::Session);
-        self.signed_in = None;
+        self.set_signed_in(None);
+        self.catalogue.clear();
         self.set_history_scope(crate::replays::Scope::Guest);
         if matches!(self.on_screen, Some(OnScreen::Match(_) | OnScreen::Demo(_))) {
             self.close_private_game();
         }
         self.join_prompt = None;
-        self.forget_account_pages();
         self.meta = Default::default();
         self.pending_result_replay = None;
         self.pending_result_replay_since = None;
@@ -2935,7 +2989,6 @@ impl MenuCore {
         self.confirm = None;
         self.status = None;
         self.asked.clear();
-        self.outbox.clear();
         self.credentials = None;
         self.retry_at = None;
         self.link_lost = false;
@@ -2976,7 +3029,7 @@ impl MenuCore {
 
     fn enter(&mut self, id: MatchId, watch: bool) {
         let handoff = self
-            .games
+            .acct.games
             .iter()
             .find(|g| g.match_id == id)
             .and_then(|g| g.handoff.clone());
@@ -3015,7 +3068,7 @@ impl MenuCore {
     fn join_lobby(&mut self, lobby: LobbyId) {
         self.lobby_ui.uncertain_join = None;
         self.lobby_ui.selected = Some(lobby);
-        match self.lobbies.iter().find(|l| l.id == lobby) {
+        match self.acct.lobbies.iter().find(|l| l.id == lobby) {
             Some(listed) if listed.locked && Some(listed.owner) != self.my_id() => {
                 self.ask_password(lobby, listed.name.clone())
             }
@@ -3374,6 +3427,13 @@ impl MenuCore {
     }
 
     fn find_selected(&mut self) {
+        if self.logged_in() && !self.link_ready() {
+            // The account's limits and cooldown are the service's to tell once its session has
+            // resumed: the press is held until then, never answered from what the link lacks.
+            self.acct.find_held = true;
+            self.ensure_service_link();
+            return;
+        }
         let Some(client) = &self.client else {
             return;
         };
@@ -3398,7 +3458,7 @@ impl MenuCore {
         }
         let in_flight = client.searches().groups().len()
             + client.searches().slot_waits().len()
-            + self.games.len();
+            + self.acct.games.len();
         let cooldown = client.searches().cooldown_left_ms();
         if cooldown > 0 {
             self.tell(
@@ -3674,7 +3734,7 @@ mod result_overlay_tests {
         let meta = bota_replay::meta::decode(&crate::postgame::preview::metadata("match_details"))
             .expect("fixture");
         let summary = std::sync::Arc::new(MatchSummary::from_meta(&meta).expect("summary"));
-        client.world_mut().non_send_mut::<MenuCore>().result_request = Some(View::new(
+        client.world_mut().non_send_mut::<MenuCore>().acct.result_request = Some(View::new(
             summary,
             Context {
                 history: true,
@@ -3718,7 +3778,7 @@ mod identity_alias_tests {
             .menu
             .act(Act::Play(super::super::play::PlayAction::LobbyLink(true)));
 
-        assert!(player.menu.outbox.iter().any(|(message, _)| {
+        assert!(player.menu.acct.outbox.iter().any(|(message, _)| {
             matches!(message, ClientMsg::LobbyCreate { name, .. } if name == "lobby_host's lobby")
         }), "creation is queued with the signed-in name while the link resumes");
     }
@@ -3728,7 +3788,7 @@ mod identity_alias_tests {
         let service = crate::main_menu::tests::service();
         let mut player = crate::main_menu::tests::Player::new(Some(&service));
         player.register("reply_viewer");
-        let original = player.menu.account_profile.clone();
+        let original = player.menu.acct.account_profile.clone();
         let stranger = bota_radovid::proto::PublicAccount {
             id: AccountId(player.menu.my_id().expect("logged in").0 + 1000),
             nickname: "stranger".into(),
@@ -3744,7 +3804,7 @@ mod identity_alias_tests {
             .menu
             .take_reply(u32::MAX, Ok(Reply::Account { account: stranger }));
         assert_eq!(
-            player.menu.account_profile, original,
+            player.menu.acct.account_profile, original,
             "unsolicited visitor data never becomes the own profile"
         );
     }
@@ -3772,7 +3832,7 @@ mod identity_alias_tests {
 #[cfg(test)]
 impl MenuCore {
     pub(crate) fn list_requests_finished_for_test(&self) -> bool {
-        self.asked.is_empty() && self.outbox.is_empty()
+        self.asked.is_empty() && self.acct.outbox.is_empty()
     }
     pub(crate) fn list_clock_for_test(&mut self, now: Instant) {
         self.list_cache.now = Some(now);

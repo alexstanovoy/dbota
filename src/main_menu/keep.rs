@@ -259,7 +259,7 @@ impl MenuCore {
             .library
             .wanted()
             .map(|w| MatchId(w.match_id))
-            .filter(|id| !self.games.iter().any(|g| g.match_id == *id))
+            .filter(|id| !self.acct.games.iter().any(|g| g.match_id == *id))
             .collect();
         for id in ended {
             self.queue_fetch(id, None, false);
@@ -586,9 +586,10 @@ impl MenuCore {
             return;
         }
         let result = self
+            .acct
             .history
             .iter()
-            .chain(&self.results)
+            .chain(&self.acct.results)
             .find(|result| result.match_id == match_id)
             .cloned();
         let Some(result) = result.filter(|_| self.logged_in()) else {

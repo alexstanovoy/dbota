@@ -3231,3 +3231,179 @@ fn a_refused_resume_tells_the_player_why_they_are_on_the_sign_in_page() {
     );
     assert!(!alice.world().non_send::<MenuCore>().logged_in());
 }
+
+/// The press of FIND MATCH while the idle link reopens is held: the account's limits are the
+/// service's to tell once its session has resumed, and the drawer says what it waits for.
+#[test]
+fn find_match_pressed_while_the_link_reopens_is_held_and_searches_when_the_session_resumed() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    let mut alice = signed_up(&service, "alice");
+    let_link_idle(&mut alice);
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_service(true);
+    click(&mut alice, "my games");
+    click(&mut alice, "play tab");
+    alice.frames(5);
+    let texts = alice.shown_texts();
+    assert!(
+        texts.iter().any(|shown| shown == "RECONNECTING"),
+        "the pill says the link is being opened: {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|shown| shown == "Reaching the service"),
+        "the drawer says why searching waits: {texts:?}"
+    );
+    click(&mut alice, "find match");
+    alice.frames(5);
+    let view = alice.world().non_send::<MenuCore>().view();
+    assert!(
+        view.status.is_none(),
+        "the press is held, not answered: {:?}",
+        view.status
+    );
+    assert!(view.searches.is_empty(), "nothing is searched yet");
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_service(false);
+    alice.until("the held search made", |client| {
+        let view = client.world().non_send::<MenuCore>().view();
+        view.searches
+            .iter()
+            .any(|search| search.ruleset == "1x1 Mid Only · ranked")
+    });
+}
+
+/// A link that cannot be opened is given up after the lobby requests' wait, and the player is
+/// told; the pill meanwhile says the link is being opened.
+#[test]
+fn a_link_that_never_opens_is_given_up_with_a_word_after_the_wait() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    let mut alice = signed_up(&service, "alice");
+    let_link_idle(&mut alice);
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_service(true);
+    click(&mut alice, "my games");
+    alice.frames(3);
+    assert!(
+        alice.shown_texts().iter().any(|shown| shown == "RECONNECTING"),
+        "the pill is not green while the link opens"
+    );
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_reach_elapsed();
+    alice.frames(3);
+    let view = alice.world().non_send::<MenuCore>().view();
+    assert_eq!(
+        view.status.map(|status| status.text),
+        Some("Cannot reach the service: timed out".to_owned())
+    );
+    signed_in_chrome(&mut alice, "alice");
+}
+
+/// A second account signs in while the first's requests wait for a link that reopens: they are
+/// the first's, and die with it.
+#[test]
+fn requests_queued_for_one_account_are_not_sent_in_the_session_of_the_next() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    drop(signed_up(&service, "bob"));
+    let mut alice = signed_up(&service, "alice");
+    let_link_idle(&mut alice);
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_service(true);
+    click(&mut alice, "play tab");
+    click(&mut alice, "custom lobbies");
+    click(&mut alice, "create lobby");
+    alice.frames(3);
+    sign_in_over(&mut alice, "bob");
+    alice
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .test_hold_service(false);
+    alice.until("bob on Play", |client| {
+        let menu = client.world().non_send::<MenuCore>();
+        menu.page() == Page::Home && menu.view().account.as_deref() == Some("bob")
+    });
+    act(&mut alice, Act::Go(Page::Lobbies));
+    alice.until("the new account's lobby list returned", |client| {
+        client.world().non_send::<MenuCore>().list_requests_finished_for_test()
+    });
+    assert!(
+        alice.shown_texts().iter().all(|text| !text.contains("'s lobby")),
+        "the service has no lobby created by the previous account's request"
+    );
+}
+
+/// From the sign-in page reached while the link is up (Profile, CHANGE SERVICE, CONTINUE on the
+/// same service), a second account signs in at once.
+#[test]
+fn signing_in_as_a_second_account_while_the_first_link_is_up_goes_through() {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    drop(signed_up(&service, "bob"));
+    let mut alice = signed_up(&service, "alice");
+    act(&mut alice, Act::Go(Page::Profile));
+    alice.frames(20);
+    sign_in_over(&mut alice, "bob");
+    alice.until("bob on Play", |client| {
+        let menu = client.world().non_send::<MenuCore>();
+        menu.page() == Page::Home && menu.view().account.as_deref() == Some("bob")
+    });
+}
+
+/// The sign-in page's form, filled and sent as a person does it.
+fn sign_in_over(client: &mut Client, login: &str) {
+    act(client, Act::Go(Page::Profile));
+    click(client, "change service");
+    click(client, "continue");
+    assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Login);
+    let password = crate::main_menu::tests::PASSWORD;
+    for (at, value) in [login, password].into_iter().enumerate() {
+        act(client, Act::Focus(at));
+        for _ in 0..20 {
+            act(client, Act::Erase);
+        }
+        act(client, Act::Type(value.to_owned()));
+    }
+    act(client, Act::Submit);
+}
+
+
+#[test]
+fn a_lobby_settings_mode_option_is_drawn_over_the_server_and_can_be_clicked() {
+    use bevy::prelude::*;
+    use bevy::ui::ComputedStackIndex;
+
+    let service = crate::main_menu::tests::service_of_the_stand();
+    let mut client = signed_up(&service, "host");
+    let_link_idle(&mut client);
+    click(&mut client, "play tab");
+    click(&mut client, "custom lobbies");
+    click(&mut client, "create lobby");
+    client.until("the lobby room", |client| {
+        client.world().non_send::<MenuCore>().page() == Page::Lobby
+    });
+    click(&mut client, "edit  ✎");
+    click(&mut client, "lobby game mode");
+    let option = "1x1 mid only";
+    let top = |client: &mut Client, label: &str| {
+        let world = client.world_mut();
+        let mut nodes = world.query::<(&Name, &ComputedStackIndex, &InheritedVisibility)>();
+        nodes
+            .iter(world)
+            .filter(|(name, _, visibility)| name.as_str() == label && visibility.get())
+            .map(|(_, stack, _)| stack.0)
+            .max()
+            .unwrap_or_else(|| panic!("{label} is on screen"))
+    };
+    assert!(top(&mut client, option) > top(&mut client, "server"));
+    click(&mut client, option);
+    click(&mut client, "ok");
+    client.until("the selected mode was saved", |c| room(c).settings.mode == "1x1 Mid Only");
+}

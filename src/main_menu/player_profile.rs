@@ -450,7 +450,7 @@ impl MenuCore {
             .as_ref()
             .into_iter()
             .flat_map(|visit| visit.results.iter())
-            .chain(&self.history)
+            .chain(&self.acct.history)
             .find(|result| result.match_id.0 == id)
     }
     pub(super) fn visitor_view(&self) -> PageView {
@@ -595,7 +595,7 @@ mod served_matches_tests {
     fn a_client_never_stamps_local_matchmaker_addresses_from_a_served_result() {
         let service = crate::main_menu::tests::service();
         let played = crate::main_menu::tests::served_postmatch(&service);
-        let result = played.menu.results.front().expect("served result");
+        let result = played.menu.acct.results.front().expect("served result");
         for address in [
             "ws://127.0.0.1:7000",
             "ws://127.1",
@@ -623,7 +623,7 @@ mod served_matches_tests {
         let played = crate::main_menu::tests::served_postmatch(&service);
         let result = played
             .menu
-            .results
+            .acct.results
             .iter()
             .find(|result| result.match_id.0 == played.id)
             .expect("served result")

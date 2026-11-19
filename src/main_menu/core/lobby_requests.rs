@@ -82,7 +82,7 @@ impl MenuCore {
     fn expire_queued_lobby_requests(&mut self, now: Instant) {
         if self.lobby_ui.queued_until.is_some_and(|until| until <= now) {
             let mut expired = Vec::new();
-            self.outbox.retain(|(message, asked)| {
+            self.acct.outbox.retain(|(message, asked)| {
                 if is_lobby_request(message) {
                     expired.push(*asked);
                     false
@@ -96,7 +96,7 @@ impl MenuCore {
             }
         }
         if !self
-            .outbox
+            .acct.outbox
             .iter()
             .any(|(message, _)| is_lobby_request(message))
         {
@@ -146,7 +146,7 @@ impl MenuCore {
             }
             self.asked
                 .retain(|(_, asked)| !matches!(asked, Asked::LobbyUi(r) if r.editor == editor.id));
-            self.outbox
+            self.acct.outbox
                 .retain(|(_, asked)| !matches!(asked, Asked::LobbyUi(r) if r.editor == editor.id));
             self.lobby_ui.deadlines.retain(
                 |(_, _, asked)| !matches!(asked, Asked::LobbyUi(r) if r.editor == editor.id),

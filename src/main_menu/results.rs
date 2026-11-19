@@ -37,7 +37,7 @@ impl MenuCore {
                 structures: Vec::new(),
                 recording: None,
             };
-            self.result_request = Some(View::new(Arc::new(summary), context));
+            self.acct.result_request = Some(View::new(Arc::new(summary), context));
             return;
         }
         let Some(entry) = self.local_history.find(key) else {
@@ -54,7 +54,7 @@ impl MenuCore {
             result_identities(&mut summary, result);
             context.reason = reason(result.reason, summary.winner).to_owned();
         }
-        self.result_request = Some(View::new(Arc::new(summary), context));
+        self.acct.result_request = Some(View::new(Arc::new(summary), context));
     }
 
     fn saved_context(&self, entry: &Saved) -> Context {
@@ -88,24 +88,24 @@ impl MenuCore {
     pub fn take_result_request(&mut self, history_open: bool) -> Option<View> {
         if history_open
             && self
-                .result_request
+                .acct.result_request
                 .as_ref()
                 .is_some_and(|view| !view.context.history)
         {
             return None;
         }
-        self.result_request.take()
+        self.acct.result_request.take()
     }
 
     pub fn result_context(&self, summary: &MatchSummary, owner: Option<SlotId>) -> Context {
         let service = match self.on_screen {
             Some(OnScreen::Match(id)) => Some(id),
             Some(OnScreen::Replay) => None,
-            _ if self.page == Page::Result => self.shown,
+            _ if self.page == Page::Result => self.acct.shown,
             _ => None,
         };
         if let Some(result) =
-            service.and_then(|id| self.results.iter().find(|result| result.match_id == id))
+            service.and_then(|id| self.acct.results.iter().find(|result| result.match_id == id))
         {
             let mut context = self.event_context(result, owner);
             context.replay = self.result_replay(result.match_id.0);
@@ -175,7 +175,7 @@ impl MenuCore {
 
     pub fn outcome_revision(&self) -> Option<(bota_radovid::proto::MatchId, u64)> {
         (self.page == Page::Result)
-            .then_some(self.shown)
+            .then_some(self.acct.shown)
             .flatten()
             .map(|id| (id, self.local_history.revision()))
     }
@@ -188,9 +188,9 @@ impl MenuCore {
             return None;
         }
         let result = self
-            .results
+            .acct.results
             .iter()
-            .find(|result| Some(result.match_id) == self.shown)?;
+            .find(|result| Some(result.match_id) == self.acct.shown)?;
         let entry = self
             .local_history
             .find(&service_key(&self.prefs.service, result.match_id.0));

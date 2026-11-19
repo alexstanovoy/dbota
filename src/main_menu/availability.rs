@@ -16,6 +16,8 @@ pub enum Reason {
     Cooldown,
     Games,
     Selection,
+    /// The link is being opened: a search pressed meanwhile starts when the session has resumed.
+    Reaching,
 }
 impl Reason {
     pub fn text(self) -> &'static str {
@@ -24,6 +26,7 @@ impl Reason {
             Self::Cooldown => "You declined a match",
             Self::Games => "You are in a game already",
             Self::Selection => "Select fewer game modes",
+            Self::Reaching => "Reaching the service",
         }
     }
 }
@@ -36,6 +39,9 @@ pub fn reason(view: &MenuView) -> Option<Reason> {
         || !view.finding().0.is_empty()
     {
         return None;
+    }
+    if matches!(view.connection, super::view::Connection::Lost(_)) {
+        return Some(Reason::Reaching);
     }
     if view.cooldown_left.is_some() {
         return Some(Reason::Cooldown);

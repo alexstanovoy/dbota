@@ -901,7 +901,7 @@ fn both_keep_the_replay(alice: &mut Player, bob: &mut Player) {
     let id = match alice.menu.view().body {
         PageView::Result(_) => alice
             .menu
-            .results
+            .acct.results
             .back()
             .map(|r| r.match_id.0)
             .expect("result"),
@@ -1656,14 +1656,14 @@ fn demo_hero_starts_a_cheat_match_of_the_service_with_the_hero_chosen() {
     assert!(!alice.menu.view().reconnect);
     // The lockstep server takes the leave with the client's next acknowledgement.
     let deadline = Instant::now() + Duration::from_secs(PATIENCE);
-    while !alice.menu.games.is_empty() {
+    while !alice.menu.acct.games.is_empty() {
         assert!(Instant::now() < deadline, "the Demo Hero did not end");
         core.pump(1.0 / 30.0);
         alice.menu.update();
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(alice.menu.page(), Page::DemoHero);
-    assert!(alice.menu.results.is_empty());
+    assert!(alice.menu.acct.results.is_empty());
 }
 
 /// A desktop whose service lists no Demo Hero still offers one, of its own: the sandbox of a local
@@ -1950,7 +1950,7 @@ fn a_late_reply_from_the_old_account_cannot_satisfy_the_new_accounts_same_sequen
     player.menu.history_request_for_test(seq);
     delayed(&mut player.menu);
     assert!(
-        player.menu.history.is_empty(),
+        player.menu.acct.history.is_empty(),
         "Alice's delayed result is ignored"
     );
     let bob = player.menu.deferred_reply(
@@ -1960,7 +1960,7 @@ fn a_late_reply_from_the_old_account_cannot_satisfy_the_new_accounts_same_sequen
         },
     );
     bob(&mut player.menu);
-    assert_eq!(player.menu.history[0].match_id, MatchId(42));
+    assert_eq!(player.menu.acct.history[0].match_id, MatchId(42));
 }
 
 #[test]
@@ -2165,7 +2165,7 @@ fn a_kept_replay_of_an_abandoned_match_is_reached_from_its_finished_row_and_list
         seats: Vec::new(),
         finished_at: UnixMs(0),
     };
-    alice.menu.history = vec![abandoned(99), abandoned(100)];
+    alice.menu.acct.history = vec![abandoned(99), abandoned(100)];
     alice.menu.page = Page::MyGames;
     let PageView::MyGames { finished, kept, .. } = alice.menu.view().body else {
         panic!("the MY GAMES page");
@@ -2787,7 +2787,7 @@ fn play_alone_and_leave(service: &Service) -> Player {
     }
     game.leave_game();
     let deadline = Instant::now() + Duration::from_secs(PATIENCE);
-    while alice.menu.results.is_empty() {
+    while alice.menu.acct.results.is_empty() {
         assert!(Instant::now() < deadline, "the match did not end");
         game.pump(1.0 / 30.0);
         alice.menu.update();
@@ -3142,8 +3142,8 @@ fn squad_lobby() -> (Service, Player, Player) {
     bob.register("bob");
     create_lobby(&mut alice, "Squad", Some(PASSWORD));
     bob.menu.act(Act::Go(Page::Lobbies));
-    settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());
-    let listed = bob.menu.lobbies[0].clone();
+    settle(&mut [&mut bob], |p| !p.menu.acct.lobbies.is_empty());
+    let listed = bob.menu.acct.lobbies[0].clone();
     assert!(
         listed.locked && listed.name == "alice's lobby",
         "{listed:?}"
@@ -3335,8 +3335,8 @@ fn cancelling_or_logging_out_of_a_lobby_password_dialog_clears_its_secret_and_ta
     alice.make_lobby();
     alice.lock_lobby(PASSWORD);
     bob.menu.act(Act::Go(Page::Lobbies));
-    settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());
-    let lobby = bob.menu.lobbies[0].id;
+    settle(&mut [&mut bob], |p| !p.menu.acct.lobbies.is_empty());
+    let lobby = bob.menu.acct.lobbies[0].id;
     bob.menu.act(Act::Focus(0));
     bob.menu.act(Act::Type("alice".to_owned()));
     for close in [Act::LobbyPassword(false), Act::Back] {
@@ -3378,13 +3378,13 @@ fn a_refused_join_says_why_and_lists_the_lobbies_again() {
     bob.register("bob");
     alice.make_lobby();
     bob.menu.act(Act::Go(Page::Lobbies));
-    settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());
-    let lobby = bob.menu.lobbies[0].id;
+    settle(&mut [&mut bob], |p| !p.menu.acct.lobbies.is_empty());
+    let lobby = bob.menu.acct.lobbies[0].id;
     alice.menu.act(Act::LeaveLobby);
     settle(&mut [&mut alice], |p| p.menu.page() != Page::Lobby);
     bob.menu.act(Act::JoinLobby(lobby));
     settle(&mut [&mut bob], |p| {
-        p.menu.view().status.is_some_and(|s| s.error) && p.menu.lobbies.is_empty()
+        p.menu.view().status.is_some_and(|s| s.error) && p.menu.acct.lobbies.is_empty()
     });
     assert_eq!(
         bob.menu.view().status.map(|s| s.text).as_deref(),
@@ -3883,7 +3883,7 @@ pub(crate) fn service_with_two_rated_modes() -> Service {
 
 pub(crate) fn profile_with_only_one_mode(core: &mut MenuCore) {
     use bota_radovid::proto::{AccountId, AccountKind, PublicAccount, Rating, RatingSummary};
-    core.account_profile = Some(PublicAccount {
+    core.acct.account_profile = Some(PublicAccount {
         retired_bot_version: None,
         main_account: None,
         id: AccountId(1),
@@ -4203,7 +4203,7 @@ pub(crate) fn served_leaderboard_profile(service: &Service) -> (u64, String) {
 }
 
 pub(crate) fn own_cached_profile_id(core: &MenuCore) -> Option<u64> {
-    core.account_profile.as_ref().map(|account| account.id.0)
+    core.acct.account_profile.as_ref().map(|account| account.id.0)
 }
 
 pub(crate) fn install_profile_history(menu: &mut MenuCore, metadata: Vec<u8>) {
@@ -4428,7 +4428,7 @@ pub(crate) fn served_postmatch_visibility(
         std::thread::sleep(Duration::from_millis(1));
     }
     opponent.leave_game();
-    while game.over.is_none() || left.menu.results.is_empty() || !left.menu.meta_ready() {
+    while game.over.is_none() || left.menu.acct.results.is_empty() || !left.menu.meta_ready() {
         assert!(
             Instant::now() < deadline,
             "the service delivers the actual result and metadata"
@@ -4931,4 +4931,36 @@ fn no_menu_code_reads_the_account_from_the_link() {
         readers.is_empty(),
         "ask MenuCore::me(), not the link: {readers:#?}"
     );
+}
+
+/// Everything the menu holds for an account is gone when another signs in after it, whatever way
+/// the first left: the list below is every field of the account's state, so a new one cannot be
+/// added without saying here that it is forgotten.
+#[test]
+fn nothing_of_a_signed_out_account_is_left_for_the_next() {
+    use super::core::{AccountScope, Game};
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    alice.menu.acct.games.push(Game {
+        match_id: bota_radovid::proto::MatchId(7),
+        handoff: None,
+    });
+    alice.menu.acct.shown = Some(bota_radovid::proto::MatchId(7));
+    alice.menu.acct.find_held = true;
+    alice.menu.act(Act::Logout);
+    let AccountScope {
+        outbox,
+        find_held,
+        lobbies,
+        games,
+        results,
+        shown,
+        result_request,
+        history,
+        account_profile,
+    } = std::mem::take(&mut alice.menu.acct);
+    assert!(outbox.is_empty() && !find_held && lobbies.is_empty());
+    assert!(games.is_empty() && results.is_empty() && shown.is_none());
+    assert!(result_request.is_none() && history.is_empty() && account_profile.is_none());
 }

@@ -492,7 +492,13 @@ fn footer(
         .filter(|r| view.play.chosen(r, first))
         .count();
     let blocked = super::availability::reason(view);
-    let can = can_search(in_flight, count, cooldown.is_some()) && blocked.is_none();
+    // The limits are the service's to tell: while its link reopens the press is held, not refused.
+    let reaching = blocked == Some(super::availability::Reason::Reaching);
+    let can = if reaching {
+        count > 0 && cooldown.is_none()
+    } else {
+        can_search(in_flight, count, cooldown.is_some()) && blocked.is_none()
+    };
     let (label, action) = if searching {
         ("PLAY", Act::Play(PlayAction::Open(false)))
     } else if lobbies && !online && !view.can_host {

@@ -392,7 +392,7 @@ impl super::core::MenuCore {
         let signed_in = self.logged_in();
         let account = self
             .my_id()
-            .or_else(|| self.account_profile.as_ref().map(|profile| profile.id))
+            .or_else(|| self.acct.account_profile.as_ref().map(|profile| profile.id))
             .map(|id| id.0)
             .filter(|_| signed_in);
         self.avatar.backend(account, signed_in);
@@ -429,7 +429,7 @@ impl super::core::MenuCore {
                 let version = avatar.as_ref().map(|avatar| avatar.version);
                 // The profile and the lists name the avatar by version: the new one is named now.
                 let own = self.my_id();
-                if let (Some(profile), Some(own)) = (self.account_profile.as_mut(), own) {
+                if let (Some(profile), Some(own)) = (self.acct.account_profile.as_mut(), own) {
                     profile.avatar = version;
                     self.avatars.forget(own.0);
                 }
@@ -443,7 +443,7 @@ impl super::core::MenuCore {
     /// The account's own avatar, small, for the card that names the player.
     pub(super) fn own_list_avatar(&self) -> Option<Arc<Pixels>> {
         let own = self.my_id()?.0;
-        let hint = self.account_profile.as_ref()?.avatar;
+        let hint = self.acct.account_profile.as_ref()?.avatar;
         self.avatars.picture(own, hint)
     }
 
@@ -455,7 +455,8 @@ impl super::core::MenuCore {
             return;
         }
         let own = self.my_id().map(|id| id.0).zip(
-            self.account_profile
+            self.acct
+                .account_profile
                 .as_ref()
                 .and_then(|profile| profile.avatar),
         );
@@ -497,7 +498,7 @@ impl super::core::MenuCore {
         let Some(own) = self.my_id() else {
             return;
         };
-        let Some(profile) = self.account_profile.as_ref() else {
+        let Some(profile) = self.acct.account_profile.as_ref() else {
             return;
         };
         let hint = profile.avatar;

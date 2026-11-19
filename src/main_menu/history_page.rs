@@ -983,9 +983,9 @@ mod tests {
         );
         {
             let mut core = client.world_mut().non_send_mut::<MenuCore>();
-            core.shown = Some(MatchId(10432));
+            core.acct.shown = Some(MatchId(10432));
             core.act(Act::Go(Page::Result));
-            core.result_request = Some(ResultView::new(
+            core.acct.result_request = Some(ResultView::new(
                 summary,
                 Context {
                     match_id: Some(10432),
@@ -1005,7 +1005,7 @@ mod tests {
         client
             .world_mut()
             .non_send_mut::<MenuCore>()
-            .results
+            .acct.results
             .push_back(MatchResult {
                 match_id: MatchId(10432),
                 ruleset: RulesetId("all_pick".to_owned()),

@@ -45,7 +45,7 @@ pub(super) fn sanitise_state(mut state: LobbyState) -> Option<LobbyState> {
 
 impl MenuCore {
     pub(super) fn receive_lobby_list(&mut self, list: Vec<LobbySummary>) {
-        self.lobbies = list
+        self.acct.lobbies = list
             .into_iter()
             .take(MAX_LOBBY_LIST)
             .filter_map(|mut row| {
@@ -62,7 +62,7 @@ impl MenuCore {
                 Some(row)
             })
             .collect();
-        self.lobbies.shrink_to_fit();
+        self.acct.lobbies.shrink_to_fit();
         self.lobby_ui.controls_dirty = true;
     }
 

@@ -481,7 +481,7 @@ impl MenuCore {
             return;
         }
         let mut items: Vec<_> = self
-            .lobbies
+            .acct.lobbies
             .iter()
             .filter(|lobby| {
                 crate::main_menu::lobby_controls::includes_lobby(
@@ -896,7 +896,7 @@ impl MenuCore {
 #[cfg(test)]
 impl MenuCore {
     pub(crate) fn test_lobby_list_len(&self) -> usize {
-        self.lobbies.len()
+        self.acct.lobbies.len()
     }
     pub(crate) fn test_lobby_join_buttons(&self) -> Vec<LobbyId> {
         self.form

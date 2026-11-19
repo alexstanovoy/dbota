@@ -113,7 +113,7 @@ fn modal(kit: &mut Kit, root: Entity, width: f32, gap: f32) -> Entity {
     card
 }
 
-fn row(kit: &mut Kit, parent: Entity) -> [Entity; 2] {
+fn row(kit: &mut Kit, parent: Entity, choices_open: bool) -> [Entity; 2] {
     let row = kit.node(
         parent,
         Node {
@@ -121,6 +121,10 @@ fn row(kit: &mut Kit, parent: Entity) -> [Entity; 2] {
             ..default()
         },
     );
+    if choices_open {
+        // The choices extend into other rows. Raise the row, since ZIndex only orders siblings.
+        kit.commands.entity(row).insert(ZIndex(1));
+    }
     std::array::from_fn(|_| {
         kit.node(
             row,
@@ -137,7 +141,10 @@ fn row(kit: &mut Kit, parent: Entity) -> [Entity; 2] {
 
 fn fields(kit: &mut Kit, parent: Entity, controls: &ControlsView, editor: &EditorView) {
     let grid = w::column(kit, parent, 8.0);
-    let [name, mode] = row(kit, grid);
+    if controls.open.is_some() {
+        kit.commands.entity(grid).insert(ZIndex(1));
+    }
+    let [name, mode] = row(kit, grid, controls.open == Some(Choice::EditMode));
     if let Some(field) = editor.fields.first() {
         w::field(kit, name, 0, field, !editor.creating, false);
     }
@@ -153,7 +160,7 @@ fn fields(kit: &mut Kit, parent: Entity, controls: &ControlsView, editor: &Edito
         false,
         false,
     );
-    let [password, server] = row(kit, grid);
+    let [password, server] = row(kit, grid, false);
     if let Some(field) = editor.fields.get(1) {
         w::field(kit, password, 1, field, false, false);
     }
@@ -167,7 +174,7 @@ fn fields(kit: &mut Kit, parent: Entity, controls: &ControlsView, editor: &Edito
         false,
         true,
     );
-    let [audience, _] = row(kit, grid);
+    let [audience, _] = row(kit, grid, controls.open == Some(Choice::Audience));
     let options =
         (controls.open == Some(Choice::Audience)).then(|| controls.choice_list(Choice::Audience));
     w::select(

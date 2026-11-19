@@ -564,7 +564,7 @@ impl MenuCore {
             )
         });
         let service = text::line(service_name(&self.prefs.service), text::NAME);
-        let connection = match (&account, self.reconnecting()) {
+        let connection = match (&account, self.reconnecting() || self.connecting()) {
             (None, _) => Connection::Offline,
             (Some(_), false) => Connection::Online(service),
             (Some(_), true) => Connection::Lost(service),
@@ -713,11 +713,11 @@ impl MenuCore {
             Page::Home => self.home(),
             Page::MyGames => PageView::MyGames {
                 games: self
-                    .games
+                    .acct.games
                     .iter()
                     .map(|g| game_row(g.match_id, g.handoff.is_some()))
                     .collect(),
-                finished: self.history.iter().map(|r| self.finished_row(r)).collect(),
+                finished: self.acct.history.iter().map(|r| self.finished_row(r)).collect(),
                 kept: self.kept_rows(),
                 shelf: self.replay_shelf(),
                 cooldown: self.cooldown(),
@@ -729,7 +729,7 @@ impl MenuCore {
             Page::Leaderboard => self.leaderboard_view(),
             Page::Lobbies => PageView::Lobbies {
                 list: self
-                    .lobbies
+                    .acct.lobbies
                     .iter()
                     .take(bota_radovid::proto::MAX_LOBBY_LIST)
                     .map(|row| lobby_row(row, &self.catalogue))
@@ -740,8 +740,8 @@ impl MenuCore {
                 .lobby_projection()
                 .map_or(PageView::Joining, PageView::Lobby),
             Page::Result => self
-                .shown
-                .and_then(|id| self.results.iter().find(|r| r.match_id == id))
+                .acct.shown
+                .and_then(|id| self.acct.results.iter().find(|r| r.match_id == id))
                 .map_or(PageView::Joining, |r| PageView::Result(self.result_view(r))),
             Page::MatchHistory => PageView::MatchHistory(self.history_view()),
             Page::DemoHero => PageView::DemoHero {
@@ -804,7 +804,7 @@ impl MenuCore {
             };
         };
         let searches = client.searches();
-        let in_flight = searches.groups().len() + searches.slot_waits().len() + self.games.len();
+        let in_flight = searches.groups().len() + searches.slot_waits().len() + self.acct.games.len();
         PageView::Home {
             matches: self.local_history.cards(self.library.records()),
             hero: self.last_played_hero(),
@@ -867,6 +867,7 @@ impl MenuCore {
             .iter()
             .filter(|r| {
                 !self
+                    .acct
                     .history
                     .iter()
                     .any(|result| Some(result.match_id.0) == r.match_id)
@@ -899,7 +900,7 @@ impl MenuCore {
     }
 
     fn profile_view(&self) -> PageView {
-        let name = self.account_profile.as_ref().map_or_else(
+        let name = self.acct.account_profile.as_ref().map_or_else(
             || self.name(),
             |p| {
                 if p.kind == bota_radovid::proto::AccountKind::Bot {
@@ -913,7 +914,7 @@ impl MenuCore {
         let local = self.local_history.cards(self.library.records());
         let mut matches = local.as_ref().clone();
         if let Some(account) = self.my_id() {
-            for result in &self.history {
+            for result in &self.acct.history {
                 let key = super::local_matches::service_key(&self.prefs.service, result.match_id.0);
                 if !matches.iter().any(|row| row.file == key) {
                     matches.push(super::player_profile::public_match(
@@ -927,7 +928,7 @@ impl MenuCore {
         matches.truncate(50);
         PageView::Profile {
             version: self
-                .account_profile
+                .acct.account_profile
                 .as_ref()
                 .and_then(|profile| profile.version.clone()),
             name,
@@ -941,7 +942,7 @@ impl MenuCore {
     }
 
     pub(super) fn profile_ratings(&self) -> Vec<super::account_page::Rating> {
-        self.account_profile
+        self.acct.account_profile
             .as_ref()
             .map_or_else(Vec::new, |profile| {
                 self.menu_rulesets()
