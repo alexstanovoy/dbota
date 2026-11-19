@@ -43,7 +43,7 @@ struct GlyphBadge {
     drawn: Option<u8>,
 }
 
-/// The seconds left, in the middle.
+/// The seconds left before the Glyph can be used.
 #[derive(Component)]
 pub(crate) struct GlyphSeconds;
 
@@ -132,6 +132,11 @@ fn spawn(
         GlyphSeconds,
         ui::text("", &fonts.bold, 16.0, ui::INK),
         ui::shadow(),
+        // Leave room below the three-digit recharge timer for the charge badge.
+        Node {
+            margin: UiRect::bottom(dota(14.0)),
+            ..default()
+        },
         Pickable::IGNORE,
         ChildOf(button),
     ));
