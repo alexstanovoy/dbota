@@ -280,6 +280,7 @@ fn blows_on_hero(own: bool, enemy_hero: bool) -> usize {
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     client.stand_at(MID);
     client.cheat(Cheat::Wtf { on: true });
+    client.cheat(Cheat::AllVision { on: true });
     client
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
@@ -408,7 +409,6 @@ fn neutral_attack_sounds(ranged: bool) -> (String, Log) {
     client.cheat(Cheat::Wtf { on: true });
     client.cheat(Cheat::StartGame);
     client.cheat(Cheat::SpawnNeutrals);
-    client.cheat(Cheat::AllVision { on: true });
     let wanted = |u: &bota_proto::UnitView| {
         u.kind == UnitKind::CreepNeutral
             && u.neutral
