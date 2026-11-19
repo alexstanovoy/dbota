@@ -243,22 +243,59 @@ impl Speech {
         }
     }
 
+    /// Fold only after the departing unit's rig is available. Controller ranges belong to that
+    /// rig, and an earlier spectator target can be selected again while its expression releases.
     pub fn settle(
         &mut self,
-        _unit: Option<EntityId>,
+        unit: Option<EntityId>,
         now: f32,
         mut evaluate: impl FnMut(&LineFace, f32, &mut Controls),
         room: &mut Controls,
     ) {
-        let Some(last) = self.leaving.last() else { return };
-        let mut residue = self.residues.pop().unwrap_or_else(|| Residue {
-            unit: last.unit, controls: Controls::new(), since: now,
-        });
-        residue.unit = last.unit;
+        if self.leaving.is_empty() {
+            return;
+        }
+        self.settle_unit(unit, now, &mut evaluate, room);
+        if unit.is_some() {
+            self.settle_unit(None, now, &mut evaluate, room);
+        }
+    }
+
+    fn settle_unit(
+        &mut self,
+        unit: Option<EntityId>,
+        now: f32,
+        evaluate: &mut impl FnMut(&LineFace, f32, &mut Controls),
+        room: &mut Controls,
+    ) {
+        if !self.leaving.iter().any(|line| line.unit == unit) {
+            return;
+        }
+        let residue = self
+            .residues
+            .iter()
+            .position(|residue| residue.unit == unit);
+        let residue = match residue {
+            Some(index) => &mut self.residues[index],
+            None => {
+                if self.residues.len() == PENDING {
+                    self.residues.remove(0);
+                }
+                self.residues.push(Residue {
+                    unit,
+                    controls: Controls::new(),
+                    since: now,
+                });
+                self.residues.last_mut().expect("residue just inserted")
+            }
+        };
         let left = release(now - residue.since);
-        residue.controls.values_mut().for_each(|value| *value *= left);
+        residue
+            .controls
+            .values_mut()
+            .for_each(|value| *value *= left);
         residue.since = now;
-        for line in self.leaving.drain(..) {
+        for line in self.leaving.extract_if(.., |line| line.unit == unit) {
             room.clear();
             evaluate(&line.face, line.at, room);
             let left = release(now - line.since);
@@ -266,7 +303,6 @@ impl Speech {
                 *residue.controls.entry(name).or_insert(0.0) += value * left;
             }
         }
-        self.residues.push(residue);
     }
 
     /// Debug: holds the line at `t` seconds in.
@@ -668,6 +704,72 @@ pub fn trace(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_releasing_expression_is_resolved_on_its_own_portrait() {
+        let first = EntityId {
+            idx: 1,
+            generation: 0,
+        };
+        let second = EntityId {
+            idx: 2,
+            generation: 0,
+        };
+        let jaw = crate::face::token("jaw");
+        let line = Arc::new(LineFace {
+            lipsync: Lipsync::parse(&format!(
+                "dbota-lipsync 1\nmorph 0 0 {jaw}\nkey 0 1\nkey 1 1\n"
+            ))
+            .expect("a timed jaw"),
+            file: "line".to_owned(),
+        });
+        let face = |open| Face {
+            meshes: vec![],
+            ranges: HashMap::from([(jaw, (0.0, open))]),
+            expression: None,
+            began: 0.0,
+            frozen: None,
+            scratch: Scratch::default(),
+        };
+        let mut first_face = face(1.0);
+        let mut second_face = face(0.25);
+        let faces = Faces::default();
+        let mut speech = Speech::default();
+        speech.say(Some(first), line, None, 0.0);
+        speech.say(
+            Some(second),
+            Arc::new(LineFace {
+                lipsync: Lipsync::default(),
+                file: "other".to_owned(),
+            }),
+            None,
+            0.2,
+        );
+        second_face.settle(&mut speech, Some(second), 0.21, &faces);
+        first_face.settle(&mut speech, Some(first), 0.22, &faces);
+        let mut controls = Controls::new();
+        let mut room = Controls::new();
+        first_face.controls(
+            0.22,
+            speech.saying(Some(first), 0.22),
+            &faces,
+            (&mut controls, &mut room),
+        );
+        assert!(
+            (controls.get(&jaw).copied().unwrap_or(0.0) - (-0.02f32 / RELEASE).exp()).abs() < 1e-5,
+            "the first hero lost its jaw release: {controls:?}"
+        );
+        second_face.controls(
+            0.22,
+            speech.saying(Some(second), 0.22),
+            &faces,
+            (&mut controls, &mut room),
+        );
+        assert_eq!(
+            controls.get(&jaw).copied().unwrap_or(0.0),
+            0.0,
+            "the second hero inherited the jaw"
+        );
+    }
     #[test]
     fn three_audible_lines_preserve_both_outgoing_expressions() {
         let unit = EntityId {
