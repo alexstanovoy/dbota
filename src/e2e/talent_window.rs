@@ -120,8 +120,9 @@ fn with_a_free_point_at_level_ten_the_plus_and_the_button_open_the_window_and_th
 /// With the level-10 tier open, one key learns its talent: the point is spent, the taken side
 /// is marked and the other dimmed, and nothing is open to the keys any more.
 fn one_key_learns_one_side_of_the_open_tier(key: KeyCode, taken: u8, left_alone: u8) {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
+    client.ready_with_match_held(&server);
     client.click_named("talent button");
     assert_eq!(learnable(&client), slots(&[0, 1]));
     let orders = client.record_sent_orders();

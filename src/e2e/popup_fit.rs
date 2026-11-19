@@ -79,8 +79,6 @@ fn stashed(window: &str) -> (Server, Client) {
                 == count
         });
     }
-    // The loading cover intercepts the pointer until the HUD is ready.
-    super::hud_layout::on_screen(&mut client);
     let unavailable = crate::preload::unavailable(client.world());
     assert!(
         unavailable.is_empty(),
