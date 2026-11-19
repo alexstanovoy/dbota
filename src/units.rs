@@ -1668,7 +1668,8 @@ fn collapse(
 }
 
 /// Ages the fallen and lets them go once they have fallen: after the death clip of the model
-/// they are drawn with, and never before [`FALL_SECONDS`].
+/// they are drawn with, and never before [`FALL_SECONDS`]. A model with a ruin to rest in
+/// (`crate::anim::RUIN`) stays, as Dota leaves what is left of a building standing.
 fn fall(
     mut commands: Commands,
     time: Res<Time>,
@@ -1677,11 +1678,13 @@ fn fall(
 ) {
     for (entity, unit, mut d) in &mut dying {
         d.0 += time.delta_secs();
-        let death = unit
-            .model
-            .and_then(|model| bank.0[model].clips.iter().find(|c| c.0 == "death"))
+        let clips = unit.model.map_or(&[][..], |model| &bank.0[model].clips[..]);
+        let death = clips
+            .iter()
+            .find(|c| c.0 == "death")
             .map_or(0.0, |clip| clip.2);
-        if d.0 > death.max(FALL_SECONDS) {
+        let ruin = clips.iter().any(|c| c.0 == crate::anim::RUIN);
+        if d.0 > death.max(FALL_SECONDS) && !ruin {
             commands.entity(entity).despawn();
         }
     }

@@ -14,6 +14,8 @@ pub enum Units {
     Hero(HeroId),
     /// A lane creep, ward, map objective or neutral creep, by its manifest `unit` name.
     Npc(String),
+    /// A side's Ancient: `npc_dota_goodguys_fort`, `npc_dota_badguys_fort`.
+    Ancient(bota_proto::Team),
 }
 
 impl Units {
@@ -22,6 +24,9 @@ impl Units {
         match self {
             Units::Hero(hero) => unit.hero == Some(*hero),
             Units::Npc(name) => crate::units::npc_unit(unit) == Some(name.as_str()),
+            Units::Ancient(team) => {
+                unit.kind == bota_proto::UnitKind::Ancient && unit.team == *team
+            }
         }
     }
 
@@ -33,6 +38,12 @@ impl Units {
                 .find(|(kind, _, name)| kind == "hero" && name == hero)?
                 .1;
             return Some(Units::Hero(HeroId(id)));
+        }
+        for team in [bota_proto::Team::Radiant, bota_proto::Team::Dire] {
+            let ancient = bota_proto::UnitKind::Ancient;
+            if npc == crate::game_names::structure_key(ancient, team, None, None, None) {
+                return Some(Units::Ancient(team));
+            }
         }
         manifest.unit_art(npc).map(|_| Units::Npc(npc.to_owned()))
     }

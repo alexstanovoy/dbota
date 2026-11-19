@@ -180,6 +180,9 @@ fn note_channels(session: NonSend<Session>, mut channels: ResMut<Channels>) {
     });
 }
 
+/// The clip a fallen building's model rests in once its collapse has played: its ruin.
+pub(crate) const RUIN: &str = "ruin";
+
 /// What a unit should be showing: a logical clip and the time into it.
 struct Wanted {
     clip: &'static str,
@@ -255,9 +258,14 @@ fn animate(
             .and_then(|u| u.channel.filter(|_| u.forced.is_none()))
             .and_then(|c| art_of(c.ability).channel.map(|name| (c, name)));
         let wanted = match (dying, live) {
-            (Some(d), _) => Wanted {
-                clip: "death",
-                t: d.0,
+            // A building's collapse comes to rest in the pose its model keeps after it (Dota's
+            // `<death>_end`), held for as long as the ruin stands.
+            (Some(d), _) => match (clip("death"), clip(RUIN)) {
+                (Some(death), Some(_)) if d.0 >= death.2 => Wanted { clip: RUIN, t: 0.0 },
+                _ => Wanted {
+                    clip: "death",
+                    t: d.0,
+                },
             },
             (None, Some(u)) => {
                 let clip = |name: &str| clip(name).map(|c| (c.2, c.3));

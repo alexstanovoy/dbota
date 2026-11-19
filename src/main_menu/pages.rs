@@ -870,8 +870,21 @@ fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
         Some(false) => theme::DIRE_TEXT,
         None => theme::INK_1,
     };
-    kit.bold(column, result.headline.clone(), 56.0, color);
-    kit.text(column, result.detail.clone(), 16.0, theme::INK_4);
+    let header = kit.node(
+        column,
+        Node {
+            width: px(640),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            padding: UiRect::axes(px(16), px(14)),
+            row_gap: px(6),
+            ..default()
+        },
+    );
+    kit.commands.entity(header).insert(BackgroundColor(theme::RESULT_PANEL));
+    kit.bold(header, result.headline.clone(), 56.0, color);
+    let detail = kit.text(header, result.detail.clone(), 18.0, theme::INK_2);
+    kit.commands.entity(detail).insert(Name::new("match result detail"));
     let table = kit.panel(
         column,
         Node {

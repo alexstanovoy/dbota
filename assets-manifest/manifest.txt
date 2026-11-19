@@ -293,13 +293,16 @@ model tree.planted models/props_tree/tree_oak_00.vmdl_c models/tree/tree_oak_00/
 world map.mid maps/dota/world.vwrld_c map/mid/mid.gltf vpk=maps/dota.vpk half_width=13100 v_min=-11800 v_max=11700 layers=textures/ground trees=map/mid/trees.txt lighting=map/mid/lighting.txt ambient=map/mid/ambient.txt soundscapes=map/mid/soundscapes.txt soundscape_omit=radiant_ancient_lp_01,dire_ancient_lp_01
 
 # --- Base buildings (npc_units.txt models; static, no animations). The *.destruction models are
-# what Dota swaps in when the building dies: one-shot collapse animation, then hide.
+# what Dota swaps in when the building dies: one-shot collapse animation, then hide; an Ancient's then rests in
+# its `ruin` (the model's `<death>_end` sequence, which its destroyfx holds once the collapse has played).
 model ancient.radiant.model models/props_structures/radiant_ancient001.vmdl_c models/building/ancient_radiant/ancient_radiant.glb
 model ancient.dire.model models/props_structures/dire_ancient_base001.vmdl_c models/building/ancient_dire/ancient_dire.glb
-model ancient.dire.destruction models/props_structures/dire_ancient_base001_destruction.vmdl_c models/building/ancient_dire_destruction/ancient_dire_destruction.glb anims=dire_ancient_base001_destruction_death
+model ancient.dire.destruction models/props_structures/dire_ancient_base001_destruction.vmdl_c models/building/ancient_dire_destruction/ancient_dire_destruction.glb anims=dire_ancient_base001_destruction_death,dire_ancient_base001_destruction_death_end
 clip ancient.dire.destruction death dire_ancient_base001_destruction_death 11.633
-model ancient.radiant.destruction models/props_structures/radiant_ancient001_rock_destruction.vmdl_c models/building/ancient_radiant_destruction/ancient_radiant_destruction.glb anims=radiant_ancient001_rock_destruction_death
+clip ancient.dire.destruction ruin dire_ancient_base001_destruction_death_end 0.000
+model ancient.radiant.destruction models/props_structures/radiant_ancient001_rock_destruction.vmdl_c models/building/ancient_radiant_destruction/ancient_radiant_destruction.glb anims=radiant_ancient001_rock_destruction_death,radiant_ancient001_rock_destruction_death_end
 clip ancient.radiant.destruction death radiant_ancient001_rock_destruction_death 10.000
+clip ancient.radiant.destruction ruin radiant_ancient001_rock_destruction_death_end 0.000
 model ancient.radiant.destruction_tree models/props_structures/radiant_ancient001_tree_destruction.vmdl_c models/building/ancient_radiant_destruction_tree/ancient_radiant_destruction_tree.glb anims=radiant_ancient001_tree_destruction_death
 clip ancient.radiant.destruction_tree death radiant_ancient001_tree_destruction_death 10.000
 model barracks.radiant.melee.model models/props_structures/radiant_melee_barracks001.vmdl_c models/building/barracks_radiant_melee/barracks_radiant_melee.glb
@@ -446,6 +449,14 @@ particle item.power_treads.buff particles/items_fx/power_treads_buff.vpcf_c part
 particle item.branches.tree particles/items3_fx/ggbranch_tree.vpcf_c particles/ggbranch_tree.json
 # Maelstrom: the flash on each unit a Chain Lightning bolt strikes (its bolt's impact child, as the harpy's is drawn)
 particle item.maelstrom.hit particles/items_fx/chain_lightning_impact.vpcf_c particles/chain_lightning_impact.json
+particle ancient.radiant.destroy.e particles/radiant_fx2/radiant_ancient001_destruction_e.vpcf_c particles/radiant_ancient001_destruction_e.json
+particle ancient.radiant.destroy.g particles/radiant_fx2/radiant_ancient001_destruction_g.vpcf_c particles/radiant_ancient001_destruction_g.json
+particle ancient.dire.destroy.e particles/dire_fx/dire_ancient_base001_destruction_e.vpcf_c particles/dire_ancient_base001_destruction_e.json
+particle ancient.dire.destroy.f particles/dire_fx/dire_ancient_base001_destruction_f.vpcf_c particles/dire_ancient_base001_destruction_f.json
+particle ancient.dire.destroy.g particles/dire_fx/dire_ancient_base001_destruction_g.vpcf_c particles/dire_ancient_base001_destruction_g.json
+particle ancient.dire.destroy.h particles/dire_fx/dire_ancient_base001_destruction_h.vpcf_c particles/dire_ancient_base001_destruction_h.json
+particle ancient.dire.destroy.j particles/dire_fx/dire_ancient_base001_destruction_j.vpcf_c particles/dire_ancient_base001_destruction_j.json
+particle ancient.dire.destroy.l particles/dire_fx/dire_ancient_base001_destruction_l.vpcf_c particles/dire_ancient_base001_destruction_l.json
 # Shadow Fiend: eyes and mouth, Feast of Souls, the head of a Requiem, the debuff of a Shadowraze
 particle hero.nevermore.ambient_eyes particles/units/heroes/hero_nevermore/shadow_fiend_ambient_eyes.vpcf_c particles/shadow_fiend_ambient_eyes.json
 particle hero.nevermore.frenzy particles/units/heroes/hero_nevermore/nevermore_souls.vpcf_c particles/nevermore_souls.json
@@ -671,6 +682,19 @@ fx ability.frogmen_arm_of_the_deep.hit at=unit attach=attach_hitloc particle=neu
 fx ability.frogmen_water_bubble*.worn at=unit attach=attach_hitloc particle=neutral.water_bubble cp1=model_radius
 fx ability.spawnlord_master_stomp.cast at=caster sound=sound.neutral.spawnlord_stomp
 fx ability.spawnlord_master_freeze.cast at=caster sound=sound.neutral.spawnlord_freeze
+# An Ancient's destruction: the map's `destroyfx` of each side's `npc_dota_fort` (maps/dota entities:
+# radiant_fx2/radiant_ancient001_destruction, dire_fx/dire_ancient_base001_destruction), played where it falls. Its
+# children that draw sprites, ropes, trails and lights are named one by one: the others draw the collapse with
+# animated models (the destruction models, the statue's fall, the Dire's crater rubble and blast wave, played by
+# sequence name) that the client does not pose, so the Ancient's own destruction model collapses instead.
+fx unit.npc_dota_goodguys_fort.died at=unit particle=ancient.radiant.destroy.e
+fx unit.npc_dota_goodguys_fort.died at=unit particle=ancient.radiant.destroy.g
+fx unit.npc_dota_badguys_fort.died at=unit particle=ancient.dire.destroy.e
+fx unit.npc_dota_badguys_fort.died at=unit particle=ancient.dire.destroy.f
+fx unit.npc_dota_badguys_fort.died at=unit particle=ancient.dire.destroy.g
+fx unit.npc_dota_badguys_fort.died at=unit particle=ancient.dire.destroy.h
+fx unit.npc_dota_badguys_fort.died at=unit particle=ancient.dire.destroy.j
+fx unit.npc_dota_badguys_fort.died at=unit particle=ancient.dire.destroy.l
 # Neutral creeps' deaths: the sound of each kind
 fx unit.npc_dota_neutral_kobold.died at=unit sound=sound.death.kobold
 fx unit.npc_dota_neutral_kobold_tunneler.died at=unit sound=sound.death.kobold

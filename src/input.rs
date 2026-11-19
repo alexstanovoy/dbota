@@ -270,6 +270,7 @@ pub(crate) fn keys(
     muted: Res<crate::keys::Muted>,
     mut demo: ResMut<crate::demo::DemoPanel>,
     menu: Option<NonSendMut<crate::main_menu::MenuCore>>,
+    finale: Option<ResMut<crate::finale::Finale>>,
 ) {
     let core = &mut session.0;
     // Orders given while Shift is held wait their turn behind what the unit
@@ -280,8 +281,14 @@ pub(crate) fn keys(
     if *typing != Typing::No || typing.is_changed() || *muted != crate::keys::Muted::No {
         return;
     }
+    // Escape while the end is shown leaves for the result, as Dota's end lets a player go on
+    // (its Continue, or a disconnect): the end fades out and is left as when it is over.
     if fired.pressed(Action::Escape) && !demo.cancel_placement() {
-        escape(core, &mut panels, &mut screen, menu, &mut exit);
+        if let Some(mut finale) = finale.filter(|finale| finale.showing()) {
+            finale.skip();
+        } else {
+            escape(core, &mut panels, &mut screen, menu, &mut exit);
+        }
     }
     if fired.pressed(Action::Console) && matches!(core.source, Source::Live(_)) {
         *typing = Typing::Console;

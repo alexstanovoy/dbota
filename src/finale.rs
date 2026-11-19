@@ -2,10 +2,10 @@
 //! takes no more orders, the camera flies to the falling Ancient and turns slowly about it while
 //! its destruction plays, the music pack's stinger plays from the flight, and the caption names
 //! the winner (Dota's `dota_hud_game_end` panel: `RADIANT VICTORY`, `DIRE VICTORY`) as the
-//! announcer does. Two seconds
-//! after the collapse the screen goes dark and the match is left for its result in the menu (a
-//! match of the service, one watched live, a replay opened from the menu); a game with no result
-//! page there (one of this machine, the command line's) shows its post-game screen instead.
+//! announcer does. Ten seconds after the decision (Dota's delay before its end-game panel) the
+//! screen goes dark and the match is left for its result in the menu (a match of the service, one
+//! watched live, a replay opened from the menu); a game with no result page there (one of this
+//! machine, the command line's) shows its post-game screen instead.
 //!
 //! A match that ends with no Ancient falling (given away, stopped, at a time limit) has none of it.
 //!
@@ -32,14 +32,12 @@ pub const CAPTION_SECS: f32 = 2.0;
 const CAPTION_FADE_SECS: f32 = 0.8;
 /// The caption's settling from large to its size: `LabelGrow` (1.8, then 0.92 at a tenth, then 1).
 const CAPTION_GROW_SECS: f32 = 5.1;
-/// How long the end holds after the Ancient's collapse before the match is left.
-pub const HOLD_SECS: f32 = 2.0;
 /// The darkening at the very end, within the hold: Dota's `FadeDown`.
-const FADE_SECS: f32 = 0.6;
-/// The collapse when the destruction model has no clip to time it by: the shorter of the two.
-const COLLAPSE_FALLBACK_SECS: f32 = 10.0;
-/// The longest the whole sequence may last: the Dire Ancient's collapse (11.6 s) and the hold.
-pub const LONGEST_SECS: f32 = 13.7;
+pub const FADE_SECS: f32 = 0.6;
+/// How long the end lasts, from the decision to the match being left: Dota's
+/// `dota_sf_game_end_delay`, the ten seconds before its end-game panel comes. The collapse goes on
+/// under the closing fade where it is longer (the Dire Ancient's 11.6 s).
+pub const LONGEST_SECS: f32 = 10.0;
 
 /// How far the camera turns about the Ancient over the sequence, in degrees.
 const ORBIT_DEGREES: f32 = 40.0;
@@ -59,10 +57,25 @@ const ARC_MAX: f32 = 3000.0;
 /// The least height of the camera above the ground beneath it.
 const CLEARANCE: f32 = 200.0;
 
-/// The caption's size and its glow, at Dota's 1080 lines: `#VictoryLabel` (90 px, a text shadow
-/// of 8 px glowing `#A1FFAC` for the Radiant, black words in `#FF3300` for the Dire).
+/// The screen shakes of each side's destruction (`C_OP_RenderScreenShake` of its `destroyfx`):
+/// amplitude in world units, frequency in hertz, how long it lasts in seconds. The Radiant's
+/// shakes twice (`radiant_ancient001_destruction`: 5 at 60 for 4; its `_f`: 5 at 35 for 8), the
+/// Dire's once while its blast wave is let go (`dire_ancient_base001_destruction_k`: 5 at 10, for
+/// its two seconds of emission). Read from the install's particles by hand: the client's particle
+/// reader does not take the shake renderer yet.
+const SHAKES: [&[(f32, f32, f32)]; 2] = [&[(5.0, 60.0, 4.0), (5.0, 35.0, 8.0)], &[(5.0, 10.0, 2.0)]];
+
+/// The caption at Dota's 1080 lines (`dota_hud_game_end.vcss`): `#VictoryLabel` is 90 px,
+/// centred in a 1024 by 640 `#WinLabelContainer` raised 120 px above the middle of the screen.
 const CAPTION_PX: f32 = 90.0;
+const CONTAINER: Vec2 = Vec2::new(1024.0, 640.0);
+const RAISED_PX: f32 = 120.0;
 const REFERENCE_HEIGHT: f32 = 1080.0;
+/// The label's glow, `text-shadow: 0px 0px 8px 5.0 <colour>`: an eight pixel blur of the letters,
+/// made five times as strong. It is drawn as copies of the words in the glow's colour laid in rings
+/// about them (radius at 1080 lines, copies, opacity of each), which add up to a halo that follows
+/// every letter and fades over its eight pixels.
+const GLOW_RINGS: [(f32, usize, f32); 3] = [(2.0, 8, 0.45), (4.5, 12, 0.22), (7.5, 16, 0.1)];
 
 /// The interface the game draws: its layers up to the chat's (and the loading screen's), and above
 /// the world's own picture (the lowest layer, a scaled render's: `crate::quality`). The menu, the
@@ -89,6 +102,8 @@ pub struct Run {
     pub elapsed: f32,
     /// How long it lasts: the collapse and the hold.
     pub length: f32,
+    /// When it is left: at its length, or sooner when the player goes on.
+    pub ends_at: f32,
     /// The point the camera ends looking at, over the fallen Ancient.
     pub shot: Vec3,
     /// Where the camera was at the decision.
@@ -113,7 +128,14 @@ impl Finale {
     pub fn showing(&self) -> bool {
         self.run
             .as_ref()
-            .is_some_and(|run| run.elapsed < run.length)
+            .is_some_and(|run| run.elapsed < run.ends_at)
+    }
+
+    /// Goes on to what follows the end: it fades out from where it is, then is left.
+    pub fn skip(&mut self) {
+        if let Some(run) = &mut self.run {
+            run.ends_at = run.ends_at.min(run.elapsed + FADE_SECS);
+        }
     }
 }
 
@@ -143,11 +165,22 @@ struct Pose {
     pitch: f32,
 }
 
-/// The caption's parts.
+/// The caption's parts: its box (`#WinLabelContainer`), the ground behind the words, the label
+/// that settles in size, the words and the copies of them its glow is made of (each at its offset
+/// at 1080 lines, and its own opacity).
 #[derive(Component)]
-struct Caption;
+struct CaptionBox;
 #[derive(Component)]
-struct CaptionWords;
+struct Backdrop;
+#[derive(Component)]
+struct CaptionLabel;
+#[derive(Component)]
+struct Words;
+#[derive(Component)]
+struct Glow {
+    offset: Vec2,
+    alpha: f32,
+}
 #[derive(Component)]
 struct Darkening;
 /// The root of what the end draws, which the interface's stepping back leaves alone.
@@ -159,7 +192,12 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, load_sounds)
         // Begun in the frame the end arrives, before anything of that frame draws the match.
         .add_systems(PreUpdate, begin.after(crate::session::pump))
-        .add_systems(Update, (advance, fly).chain().after(crate::camera::Placed))
+        .add_systems(
+            Update,
+            (advance, fly, draw_caption)
+                .chain()
+                .after(crate::camera::Placed),
+        )
         .add_systems(
             PostUpdate,
             step_back.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
@@ -232,26 +270,12 @@ fn viewer_of(core: &bota_client_core::App, winner: Team) -> Viewer {
     }
 }
 
-/// How long the fallen Ancient takes to collapse: its destruction model's clip.
-fn collapse_of(bank: &crate::units::ModelBank, fallen: Team) -> f32 {
-    let name = match fallen {
-        Team::Dire => "ancient.dire.destruction",
-        _ => "ancient.radiant.destruction",
-    };
-    bank.0
-        .iter()
-        .find(|model| model.model.logical == name)
-        .and_then(|model| model.clips.iter().find(|clip| clip.0 == "death"))
-        .map_or(COLLAPSE_FALLBACK_SECS, |clip| clip.2)
-}
-
 /// Starts the end once a fallen Ancient decided the match, and lets it go with the match.
 #[allow(clippy::too_many_arguments)]
 fn begin(
     mut commands: Commands,
     session: NonSend<Session>,
     mut finale: ResMut<Finale>,
-    bank: Res<crate::units::ModelBank>,
     ground: Res<crate::map::Ground>,
     camera: Single<&RtsCamera>,
     settings: Res<crate::config::Settings>,
@@ -285,8 +309,7 @@ fn begin(
     let (x, y) = (ancient.x.to_f32(), ancient.y.to_f32());
     let shot = Vec3::new(x, ground.at(x, y) + SHOT_HEIGHT, -y);
     let viewer = viewer_of(core, winner);
-    // Bounded whatever the install's clip says.
-    let length = (collapse_of(&bank, fallen) + HOLD_SECS).min(LONGEST_SECS);
+    let length = LONGEST_SECS;
     let (cue, stinger) = match viewer {
         Viewer::Loser => (
             format!("sound.music.{}_lose", side_name(fallen)),
@@ -318,6 +341,7 @@ fn begin(
         cue,
         elapsed: 0.0,
         length,
+        ends_at: length,
         shot,
         from: Pose {
             focus: camera.focus,
@@ -346,16 +370,8 @@ pub fn caption_text(winner: Team) -> &'static str {
     }
 }
 
-/// The words' shadow, which keeps their edge on any ground: dark under white words, the glow's
-/// own under black ones.
-fn shadow_of(winner: Team) -> Color {
-    match winner {
-        Team::Dire => Color::srgb_u8(0xFF, 0x33, 0x00),
-        _ => Color::BLACK,
-    }
-}
-
-/// The caption's colours: the words' and their glow's.
+/// The caption's colours: the words' and their glow's (`.DireWin #VictoryLabel`: black words
+/// in an orange glow).
 fn caption_colours(winner: Team) -> (Color, Color) {
     match winner {
         Team::Dire => (Color::BLACK, Color::srgb_u8(0xFF, 0x33, 0x00)),
@@ -363,28 +379,52 @@ fn caption_colours(winner: Team) -> (Color, Color) {
     }
 }
 
-/// What stands behind the words, `shown` of the way in: Dota's `#VictoryBackgroundScene`, a
-/// dark radial wash of the winner's colour; the Dire's black words stand on their orange glow.
-fn halo(winner: Team, shown: f32) -> BackgroundGradient {
-    let (_, glow) = caption_colours(winner);
-    let (centre, middle) = match winner {
-        Team::Dire => (glow.with_alpha(0.85), glow.with_alpha(0.35)),
-        _ => (Color::srgba(0.02, 0.10, 0.08, 0.72), glow.with_alpha(0.16)),
-    };
-    let faded = |colour: Color| colour.with_alpha(colour.alpha() * shown);
+/// How strong the glow is `t` seconds after the caption came in: `LabelGrow` takes the Radiant's
+/// glow from 0x99 to full at a tenth of its 5.1 s and down to 0x11 by its end; `LabelGrowDire`
+/// keeps the Dire's at full once it is there.
+fn glow_strength(winner: Team, t: f32) -> f32 {
+    let knee = CAPTION_GROW_SECS * 0.1;
+    let (first, last) = (0x99 as f32 / 255.0, 0x11 as f32 / 255.0);
+    if t < knee {
+        first + (1.0 - first) * ease(t / knee)
+    } else if winner == Team::Dire {
+        1.0
+    } else {
+        1.0 + (last - 1.0) * ease((t - knee) / (CAPTION_GROW_SECS - knee))
+    }
+}
+
+/// What stands behind the words, `shown` of the way in: `#VictoryBackgroundScene`'s ground, a
+/// radial gradient from black at its middle to nothing at four fifths of its way out. (Its
+/// particle scene, washed in the winner's colour, is not drawn.)
+fn backdrop(shown: f32) -> BackgroundGradient {
     BackgroundGradient::from(RadialGradient::new(
         UiPosition::CENTER,
         RadialGradientShape::Ellipse(Val::Percent(50.0), Val::Percent(50.0)),
         vec![
-            ColorStop::new(faded(centre), Val::Percent(0.0)),
-            ColorStop::new(faded(middle), Val::Percent(55.0)),
-            ColorStop::new(Color::NONE, Val::Percent(100.0)),
+            ColorStop::new(Color::BLACK.with_alpha(shown), Val::Percent(0.0)),
+            ColorStop::new(Color::NONE, Val::Percent(80.0)),
         ],
     ))
 }
 
+/// The offsets of the glow's copies at 1080 lines, and each copy's opacity.
+fn glow_copies() -> impl Iterator<Item = (Vec2, f32)> {
+    GLOW_RINGS.into_iter().flat_map(|(radius, copies, alpha)| {
+        (0..copies).map(move |at| {
+            let turn = std::f32::consts::TAU * (at as f32 + 0.5) / copies as f32;
+            (Vec2::from_angle(turn) * radius, alpha)
+        })
+    })
+}
+
 fn spawn_caption(commands: &mut Commands, fonts: &crate::ui::Fonts, winner: Team) -> Entity {
-    let (words, _) = caption_colours(winner);
+    let (words, glow) = caption_colours(winner);
+    let font = TextFont {
+        font: fonts.face(crate::theme::Face::Display).clone().into(),
+        font_size: FontSize::Px(CAPTION_PX),
+        ..default()
+    };
     commands
         .spawn((
             FinaleUi,
@@ -403,34 +443,55 @@ fn spawn_caption(commands: &mut Commands, fonts: &crate::ui::Fonts, winner: Team
         ))
         .with_children(|root| {
             root.spawn((
-                Caption,
+                CaptionBox,
                 Name::new("finale caption"),
                 Node {
-                    // Dota's label sits a little above the middle of the screen.
-                    margin: UiRect::bottom(Val::Percent(14.0)),
-                    padding: UiRect::axes(Val::Percent(14.0), Val::Percent(5.0)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
                     ..default()
                 },
-                halo(winner, 0.0),
-                UiTransform::IDENTITY,
                 Visibility::Hidden,
                 Pickable::IGNORE,
             ))
-            .with_child((
-                CaptionWords,
-                Text::new(caption_text(winner)),
-                TextFont {
-                    font: fonts.face(crate::theme::Face::Display).clone().into(),
-                    font_size: FontSize::Px(CAPTION_PX),
-                    ..default()
-                },
-                TextColor(words.with_alpha(0.0)),
-                TextShadow {
-                    offset: Vec2::splat(2.0),
-                    color: shadow_of(winner).with_alpha(0.0),
-                },
-                Pickable::IGNORE,
-            ));
+            .with_children(|caption| {
+                caption.spawn((
+                    Backdrop,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    backdrop(0.0),
+                    UiTransform::IDENTITY,
+                    Pickable::IGNORE,
+                ));
+                caption
+                    .spawn((CaptionLabel, Node::default(), UiTransform::IDENTITY, Pickable::IGNORE))
+                    .with_children(|label| {
+                        for (offset, alpha) in glow_copies() {
+                            label.spawn((
+                                Glow { offset, alpha },
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    ..default()
+                                },
+                                Text::new(caption_text(winner)),
+                                font.clone(),
+                                TextColor(glow.with_alpha(0.0)),
+                                Pickable::IGNORE,
+                            ));
+                        }
+                        // Last, so that it is drawn over its glow.
+                        label.spawn((
+                            Words,
+                            Text::new(caption_text(winner)),
+                            font.clone(),
+                            TextColor(words.with_alpha(0.0)),
+                            Pickable::IGNORE,
+                        ));
+                    });
+            });
             root.spawn((
                 Darkening,
                 Node {
@@ -468,10 +529,6 @@ fn advance(
     mut commands: Commands,
     time: Res<Time<Real>>,
     mut finale: ResMut<Finale>,
-    window: Single<&Window, With<bevy::window::PrimaryWindow>>,
-    scale: Res<UiScale>,
-    mut caption: Query<(&mut Visibility, &mut UiTransform, &mut BackgroundGradient), With<Caption>>,
-    mut words: Query<(&mut TextColor, &mut TextShadow, &mut TextFont), With<CaptionWords>>,
     mut dark: Query<&mut BackgroundColor, With<Darkening>>,
     mut tuned: Query<&mut Tuned>,
     menu: Option<NonSendMut<crate::main_menu::MenuCore>>,
@@ -483,32 +540,7 @@ fn advance(
     run.elapsed += time.delta_secs();
     let t = run.elapsed;
     let shown = t >= CAPTION_SECS;
-    let since = t - CAPTION_SECS;
-    let opacity = if shown {
-        ease(since / CAPTION_FADE_SECS)
-    } else {
-        0.0
-    };
-    let (colour, _) = caption_colours(run.winner);
-    let shadow_colour = shadow_of(run.winner);
-    for (mut visibility, mut transform, mut backdrop) in &mut caption {
-        visibility.set_if_neq(crate::ui::visible(shown));
-        let scale = caption_scale(since.max(0.0));
-        transform.scale = Vec2::splat(scale);
-        if shown && since <= CAPTION_FADE_SECS + 0.1 {
-            *backdrop = halo(run.winner, opacity);
-        }
-    }
-    // Dota's 90 pixels at 1080 lines, whatever the window and the interface's scale.
-    let size = CAPTION_PX * window.height() / REFERENCE_HEIGHT / scale.0.max(0.1);
-    for (mut text, mut shadow, mut font) in &mut words {
-        text.0 = colour.with_alpha(opacity);
-        shadow.color = shadow_colour.with_alpha(opacity * 0.8);
-        if font.font_size != FontSize::Px(size) {
-            font.font_size = FontSize::Px(size);
-        }
-    }
-    let darkness = ease((t - (run.length - FADE_SECS)) / FADE_SECS);
+    let darkness = ease((t - (run.ends_at - FADE_SECS)) / FADE_SECS);
     for mut veil in &mut dark {
         veil.0 = Color::BLACK.with_alpha(darkness);
     }
@@ -531,10 +563,83 @@ fn advance(
             ));
         }
     }
-    if t >= run.length && !run.left {
+    if t >= run.ends_at && !run.left {
         run.left = true;
+        // Faded out, the stinger stops with the end rather than play on unheard.
+        if let Some(music) = run.music.take()
+            && let Ok(mut gone) = commands.get_entity(music)
+        {
+            gone.try_despawn();
+        }
         if let Some(mut menu) = menu {
             menu.end_shown();
+        }
+    }
+}
+
+/// Draws the caption as far as the end has come: the box at Dota's size for the window, the
+/// ground behind it fading and growing in, the words fading in and settling from large, their glow
+/// as strong as `LabelGrow` has it.
+#[allow(clippy::type_complexity)]
+fn draw_caption(
+    finale: Res<Finale>,
+    window: Single<&Window, With<bevy::window::PrimaryWindow>>,
+    scale: Res<UiScale>,
+    mut boxes: Query<(&mut Visibility, &mut Node), With<CaptionBox>>,
+    mut backdrops: Query<(&mut UiTransform, &mut BackgroundGradient), (With<Backdrop>, Without<CaptionLabel>)>,
+    mut labels: Query<&mut UiTransform, With<CaptionLabel>>,
+    mut words: Query<(&mut TextColor, &mut TextFont), (With<Words>, Without<Glow>)>,
+    mut glows: Query<(&Glow, &mut TextColor, &mut TextFont, &mut Node), Without<CaptionBox>>,
+) {
+    let Some(run) = finale.run.as_ref() else {
+        return;
+    };
+    let since = run.elapsed - CAPTION_SECS;
+    let shown = since >= 0.0;
+    let opacity = if shown {
+        ease(since / CAPTION_FADE_SECS)
+    } else {
+        0.0
+    };
+    // Dota's sizes at 1080 lines, whatever the window and the interface's scale.
+    let k = window.height() / REFERENCE_HEIGHT / scale.0.max(0.1);
+    let size = FontSize::Px(CAPTION_PX * k);
+    for (mut visibility, mut node) in &mut boxes {
+        visibility.set_if_neq(crate::ui::visible(shown));
+        let (width, height) = (Val::Px(CONTAINER.x * k), Val::Px(CONTAINER.y * k));
+        if node.width != width || node.height != height {
+            node.width = width;
+            node.height = height;
+            node.margin = UiRect::bottom(Val::Px(2.0 * RAISED_PX * k));
+        }
+    }
+    if !shown {
+        return;
+    }
+    // The ground comes in as the words do, grown from a fifth of its size.
+    for (mut transform, mut gradient) in &mut backdrops {
+        transform.scale = Vec2::splat(0.2 + 0.8 * opacity);
+        if since <= CAPTION_FADE_SECS + 0.1 {
+            *gradient = backdrop(opacity);
+        }
+    }
+    for mut transform in &mut labels {
+        transform.scale = Vec2::splat(caption_scale(since));
+    }
+    let (colour, glow) = caption_colours(run.winner);
+    for (mut text, mut font) in &mut words {
+        text.0 = colour.with_alpha(opacity);
+        if font.font_size != size {
+            font.font_size = size;
+        }
+    }
+    let strength = opacity * glow_strength(run.winner, since);
+    for (copy, mut text, mut font, mut node) in &mut glows {
+        text.0 = glow.with_alpha(copy.alpha * strength);
+        if font.font_size != size {
+            font.font_size = size;
+            node.left = Val::Px(copy.offset.x * k);
+            node.top = Val::Px(copy.offset.y * k);
         }
     }
 }
@@ -570,7 +675,22 @@ fn fly(
     let (at, aim) = pose_at(run, t, &ground);
     let (rts, transform) = &mut *camera;
     rts.focus = run.from.focus.lerp(run.shot, ease(t / FLIGHT_SECS));
-    **transform = Transform::from_translation(at).looking_at(aim, Vec3::Y);
+    let shake = shake_at(other(run.winner), run.elapsed);
+    **transform = Transform::from_translation(at + shake).looking_at(aim + shake, Vec3::Y);
+}
+
+/// How far the fall shakes the camera `t` seconds after it: each of the side's shakes, fading to
+/// nothing over its length.
+fn shake_at(fallen: Team, t: f32) -> Vec3 {
+    SHAKES[side(fallen)]
+        .iter()
+        .filter(|(_, _, length)| t < *length)
+        .map(|&(amplitude, frequency, length)| {
+            let phase = std::f32::consts::TAU * frequency * t;
+            let strength = amplitude * (1.0 - t / length);
+            Vec3::new(phase.sin(), (phase * 1.3 + 1.0).sin(), (phase * 0.7 + 2.0).sin()) * strength
+        })
+        .sum()
 }
 
 /// The game's interface steps back while the end is shown: every part of it is hidden, the

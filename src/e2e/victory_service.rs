@@ -37,27 +37,24 @@ fn menu(client: &Client) -> &MenuCore {
     client.world().non_send::<MenuCore>()
 }
 
-#[test]
-fn a_service_match_ends_on_its_result_page_by_itself_with_the_game_left_and_the_account_free() {
-    let service = service_with_cheating_practice();
-    let mut client = signed_up(&service, "alice");
-    act(&mut client, Act::Go(Page::Lobbies));
-    act(&mut client, Act::LobbyUi(LobbyAction::Create));
+fn launch_practice(client: &mut Client) {
+    act(client, Act::Go(Page::Lobbies));
+    act(client, Act::LobbyUi(LobbyAction::Create));
     client.until("the lobby made", |c| {
         menu(c).page() == Page::Lobby && menu(c).view().lobby_ui.editor.is_none()
     });
-    act(&mut client, Act::LobbyUi(LobbyAction::Edit));
+    act(client, Act::LobbyUi(LobbyAction::Edit));
     act(
-        &mut client,
+        client,
         Act::LobbyUi(LobbyAction::EditMode(bota_radovid::proto::RulesetId(
             "practice".to_owned(),
         ))),
     );
-    act(&mut client, Act::LobbyUi(LobbyAction::Save));
+    act(client, Act::LobbyUi(LobbyAction::Save));
     client.until("the practice lobby saved", |c| {
         menu(c).view().lobby_ui.editor.is_none()
     });
-    act(&mut client, Act::ReadyLobby(true));
+    act(client, Act::ReadyLobby(true));
     client.until("the hero on the map", |c| {
         let core = c.core_mut();
         if core.view().is_none() && core.my_slot.is_some() && !core.ready {
@@ -67,6 +64,43 @@ fn a_service_match_ends_on_its_result_page_by_itself_with_the_game_left_and_the_
         core.ears().is_some()
     });
     client.cheat(Cheat::StartGame);
+}
+
+#[test]
+fn leaving_a_service_match_shows_a_readable_result_reason_without_a_finale() {
+    use bevy::prelude::*;
+
+    let service = service_with_cheating_practice();
+    let mut client = signed_up(&service, "leaver");
+    launch_practice(&mut client);
+    client.until("the match may be left", |c| menu(c).view().can_leave_game);
+    act(&mut client, Act::LeaveGame);
+    act(&mut client, Act::Answer(true));
+    client.until("the menu shows the reason for the defeat", |c| {
+        c.shown_texts().iter().any(|text| text.contains("a player left"))
+    });
+    assert_eq!(menu(&client).page(), Page::Result);
+    assert!(client.world().resource::<Finale>().run.is_none());
+    let world = client.world_mut();
+    let mut details = world.query::<(&Name, &Text, &TextColor, &ChildOf)>();
+    let (_, text, color, parent) = details
+        .iter(world)
+        .find(|(name, ..)| name.as_str() == "match result detail")
+        .expect("match reason is drawn in the result header");
+    assert!(text.0.contains("a player left"));
+    assert_eq!(color.0, crate::theme::INK_2);
+    assert_eq!(
+        world.get::<BackgroundColor>(parent.parent()).map(|background| background.0),
+        Some(crate::theme::RESULT_PANEL),
+        "the reason has a solid dark background over the menu artwork"
+    );
+}
+
+#[test]
+fn a_service_match_ends_on_its_result_page_by_itself_with_the_game_left_and_the_account_free() {
+    let service = service_with_cheating_practice();
+    let mut client = signed_up(&service, "alice");
+    launch_practice(&mut client);
     client.cheat(Cheat::AllVision { on: true });
     let ancient = |c: &Client| {
         c.view()
@@ -121,6 +155,134 @@ fn a_service_match_ends_on_its_result_page_by_itself_with_the_game_left_and_the_
         Act::Find(bota_radovid::proto::RulesetId("solo_mid".to_owned())),
     );
     client.until("the account looks for its next match", |c| {
+        menu(c).view().searches.len() == 1
+    });
+}
+
+/// A service whose 1x1 rated mode cheats, so that the test fells a tower instead of playing.
+fn service_with_cheating_solo_mid() -> crate::main_menu::tests::Service {
+    crate::main_menu::tests::start_service(false, |config| {
+        let ruleset = config
+            .find("id = \"solo_mid\"")
+            .expect("the solo mid ruleset");
+        let args = ruleset
+            + config[ruleset..]
+                .find("args = [\"--map\", \"2\",")
+                .expect("its arguments");
+        let mut changed = config.clone();
+        changed.insert_str(args + "args = [".len(), "\"--cheats\", ");
+        changed
+    })
+}
+
+/// Runs a frame of each client, on the frame clock both are given, until `done` holds for both.
+fn both(clients: &mut [&mut Client; 2], what: &str, mut done: impl FnMut(&mut Client) -> bool) {
+    let mut frames = 0u32;
+    loop {
+        let mut all = true;
+        for client in clients.iter_mut() {
+            all &= done(client);
+        }
+        if all {
+            return;
+        }
+        frames += 1;
+        assert!(frames < 30 * 600, "{what}: not reached");
+        for client in clients.iter_mut() {
+            client.step_frames(1);
+        }
+    }
+}
+
+/// Two players of the service play a rated 1x1 to its end: both are shown the end, both land on
+/// the result page by themselves with their rating change on its first frame (the service rates
+/// the match when the game says its result, not when the game server has let them go), and both
+/// may look for their next match at once.
+#[test]
+fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
+    let service = service_with_cheating_solo_mid();
+    let mut alice = signed_up(&service, "alice");
+    let mut bob = signed_up(&service, "bob");
+    let solo = || bota_radovid::proto::RulesetId("solo_mid".to_owned());
+    act(&mut alice, Act::Find(solo()));
+    act(&mut bob, Act::Find(solo()));
+    let mut players = [&mut alice, &mut bob];
+    both(&mut players, "the offer", |c| menu(c).view().offer.is_some());
+    for client in players.iter_mut() {
+        let proposal = menu(client).view().offer.expect("an offer").proposal;
+        act(client, Act::Accept(proposal));
+    }
+    both(&mut players, "both heroes on the map", |c| {
+        let core = c.core_mut();
+        if core.view().is_none() && core.my_slot.is_some() && !core.ready {
+            core.act(Intent::PickHero(HeroId::SHADOW_FIEND.0));
+            core.act(Intent::ToggleReady);
+        }
+        core.ears().is_some()
+    });
+    let radiant = usize::from(players[0].core().my_team() != Some(Team::Radiant));
+    players[radiant].cheat(Cheat::StartGame);
+    players[radiant].cheat(Cheat::AllVision { on: true });
+    let tower = |c: &Client| {
+        c.view()
+            .units
+            .iter()
+            .find(|u| u.kind == UnitKind::Tower && u.team == Team::Dire)
+            .map(|u| u.id)
+    };
+    both(&mut players, "a Dire tower in sight", |c| {
+        c.core().my_team() != Some(Team::Radiant) || tower(c).is_some()
+    });
+    let target = tower(players[radiant]).expect("in sight");
+    players[radiant]
+        .core_mut()
+        .act(Intent::Cheat(Cheat::Destroy {
+            target: Target::Unit(target),
+        }));
+    both(&mut players, "the end shown to both", |c| {
+        c.world().resource::<Finale>().run.is_some()
+    });
+    for client in players.iter_mut() {
+        client
+            .world_mut()
+            .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
+    }
+    let mut changes = Vec::new();
+    both(&mut players, "the result pages", |c| {
+        if menu(c).page() != Page::Result {
+            assert!(
+                c.world().resource::<Finale>().run.is_some() || menu(c).page() == Page::Game,
+                "nothing between the end and the result page"
+            );
+            return false;
+        }
+        if changes.len() < 2 {
+            // The first frame drawn on the page.
+            c.step_frames(1);
+            let rating = c
+                .shown_texts()
+                .into_iter()
+                .find(|text| text.starts_with("Rating "));
+            changes.push((c.core().my_team(), rating));
+        }
+        true
+    });
+    for (team, rating) in &changes {
+        let rating = rating
+            .as_deref()
+            .unwrap_or_else(|| panic!("{team:?}: no rating change on the page's first frame"));
+        let expected = if *team == Some(Team::Radiant) {
+            "Rating +"
+        } else {
+            "Rating -"
+        };
+        assert!(rating.starts_with(expected), "{team:?}: {rating}");
+    }
+    for client in players.iter_mut() {
+        assert_eq!(crate::error_msg::shown(client.world_mut()), None, "no error told");
+        act(client, Act::Find(solo()));
+    }
+    both(&mut players, "both look for their next match", |c| {
         menu(c).view().searches.len() == 1
     });
 }

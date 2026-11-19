@@ -60,6 +60,8 @@ pub struct FogGrid {
     shade: Vec<f32>,
     /// A different viewer must not inherit the old viewer's clear texels, even for one frame.
     clear_veil: bool,
+    /// The match's end lifted the fog: every cell is seen, whatever the units see.
+    lifted: bool,
 }
 
 impl FogGrid {
@@ -88,6 +90,7 @@ impl FogGrid {
         self.shade.fill(if on { 1.0 } else { 0.0 });
         self.stamp = None;
         self.clear_veil = true;
+        self.lifted = false;
     }
 
     /// Whether the fog of the watched side hides a unit, missile or ground
@@ -375,6 +378,17 @@ fn work_out(
         return;
     }
     if !grid.on {
+        return;
+    }
+    // A match a side won ends with the fog lifted for everyone (`App::fog_lifted`): the cells
+    // all come clear, eased in as sight is, and no lighting under way puts it back.
+    if core.fog_lifted() {
+        if !grid.lifted {
+            grid.lifted = true;
+            lighting.task = None;
+            grid.cells.fill(true);
+            grid.stamp = Some((view.tick, team));
+        }
         return;
     }
     // The last lighting worked out, once its task is done.
