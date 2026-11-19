@@ -800,6 +800,7 @@ mod tests {
             UnitKind::Barracks,
             UnitKind::Ward,
             UnitKind::Courier,
+            UnitKind::Banner,
         ];
         let point = 1 << Fixed::FRAC_BITS;
         for kind in kinds {
@@ -809,15 +810,13 @@ mod tests {
                         continue;
                     }
                     for (hp_frac, max_frac) in [(0, point - 1), (point - 1, 0), (point / 2, 0)] {
-                        let held = Fixed {
-                            raw: hp * point + hp_frac,
-                        };
                         let most = Fixed {
                             raw: max_hp * point + max_frac,
                         };
-                        if held > most {
-                            continue;
+                        let held = Fixed {
+                            raw: hp * point + hp_frac,
                         }
+                        .min(most);
                         assert!(
                             bota_core::deniable(kind, held, most),
                             "{kind:?} {hp}/{max_hp}: bota would refuse the deny"
@@ -835,5 +834,8 @@ mod tests {
             "a tower only below 10%"
         );
         assert!(!deny_click(UnitKind::Hero, 10, 550));
+        for kind in [UnitKind::Hero, UnitKind::Courier, UnitKind::Banner] {
+            assert!(!deny_click(kind, 8, 8), "{kind:?} at full health");
+        }
     }
 }
