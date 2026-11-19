@@ -2109,6 +2109,63 @@ fn leaving_a_local_demo_hero_returns_to_the_page_it_was_started_from() {
 /// replay: the server's own file, finished by the server, kept when the game is left, listed
 /// as a local game and opened by the viewer.
 #[test]
+fn a_recording_finished_after_sign_out_belongs_to_the_account_that_started_it() {
+    let service = service();
+    let mut player = Player::new(Some(&service));
+    player.register("alice");
+    let scope = player.menu.library.scope();
+
+    player.menu.act(Act::Go(Page::LocalLobby));
+    let port = player._dir.lease_port().to_string();
+    player.fill_field(0, &port);
+    player.menu.act(Act::Host(false));
+    let Some(Launch::Host {
+        replay: Some(recording),
+        ..
+    }) = player.menu.take_launch()
+    else {
+        panic!("a local host with a recording");
+    };
+    player.menu.game_started();
+    player.menu.set_local_recording_owner(bota_proto::SlotId(0));
+
+    player.menu.act(Act::Logout);
+    assert_eq!(player.menu.library.scope(), crate::replays::Scope::Guest);
+    let (replay, _) = crate::postgame::recorded_match_for_menu();
+    let folder = recording.parent().expect("the recording folder");
+    std::fs::create_dir_all(folder).unwrap();
+    std::fs::copy(replay, &recording).unwrap();
+    player.menu.left_game(None, true);
+    settle(&mut [&mut player], |_| {
+        std::fs::read_to_string(folder.join("index.txt"))
+            .is_ok_and(|index| index.contains(&scope.index_field()))
+    });
+    assert!(
+        player.menu.library.records().is_empty(),
+        "the guest sees no replay"
+    );
+
+    player.menu.act(Act::Go(Page::Login));
+    player.fill(&["alice", PASSWORD]);
+    player.menu.act(Act::Submit);
+    settle(&mut [&mut player], |p| {
+        p.menu.library.records().len() == 1
+            && p.menu.local_history.visible_entries().next().is_some()
+    });
+    assert_eq!(player.menu.library.records()[0].scope, scope);
+    assert_eq!(
+        player
+            .menu
+            .local_history
+            .visible_entries()
+            .next()
+            .unwrap()
+            .scope,
+        scope
+    );
+}
+
+#[test]
 fn a_local_game_left_for_good_leaves_its_replay() {
     let dir = Scratch::new("local-replay");
     let (mut menu, trust) = offline("alice", &dir);

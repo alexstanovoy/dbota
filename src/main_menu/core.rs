@@ -2798,7 +2798,6 @@ impl MenuCore {
         self.shown = None;
         self.result_request = None;
         self.meta = Default::default();
-        self.keep_signed_out();
         self.pending_result_replay = None;
         self.pending_result_replay_since = None;
         self.after_results = None;
@@ -2827,7 +2826,7 @@ impl MenuCore {
         }
         self.history_scope_generation = self.history_scope_generation.wrapping_add(1);
         self.shelf = Default::default();
-        self.clear_browser_replay_state();
+        self.reset_replay_requests();
         self.local_history.set_scope(scope);
         self.library.set_scope(scope);
         self.history_filter = Default::default();
@@ -3361,6 +3360,30 @@ impl MenuCore {
                 })
                 .collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod account_scope_tests {
+    #[test]
+    fn refreshing_the_token_keeps_the_accounts_scope() {
+        let service = super::super::tests::service();
+        let mut player = super::super::tests::Player::new(Some(&service));
+        player.register("alice");
+        let menu = &mut player.menu;
+        let account = menu.my_id().expect("signed in");
+        let scope = menu.library.scope();
+        let generation = menu.history_scope_generation();
+        let old_token = menu.saved_session().expect("saved token").token;
+        let mut next = old_token.0;
+        next[0] ^= 1;
+        let next = bota_radovid::proto::SessionToken(next);
+
+        menu.received_login(account, next, Default::default());
+
+        assert!(menu.saved_session().expect("refreshed token").token == next);
+        assert_eq!(menu.library.scope(), scope);
+        assert_eq!(menu.history_scope_generation(), generation);
     }
 }
 

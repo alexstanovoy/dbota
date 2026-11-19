@@ -229,7 +229,7 @@ impl MenuCore {
         self.keeper.swept = false;
     }
 
-    pub(super) fn keep_signed_out(&mut self) {
+    pub(super) fn reset_replay_requests(&mut self) {
         self.keeper.queue.clear();
         self.keeper.current = None;
         self.keeper.open_match = None;
@@ -238,7 +238,7 @@ impl MenuCore {
         self.clear_browser_replay_state();
     }
 
-    pub(super) fn clear_browser_replay_state(&mut self) {
+    fn clear_browser_replay_state(&mut self) {
         #[cfg(target_arch = "wasm32")]
         {
             self.keeper.open_name = None;
