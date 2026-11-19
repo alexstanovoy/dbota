@@ -291,7 +291,7 @@ impl MatchSummary {
                     assists: seat.assists,
                     last_hits: Some(seat.last_hits),
                     denies: Some(seat.denies),
-                    net_worth: None,
+                    net_worth: Some(seat.current_net_worth),
                     gpm,
                     xpm,
                     hero_damage: Some(seat.hero_damage),

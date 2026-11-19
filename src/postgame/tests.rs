@@ -403,6 +403,7 @@ fn a_match_stopped_before_a_minute_of_play_shows_no_rates() {
             last_hits: 0,
             denies: 0,
             net_worth: 609,
+            current_net_worth: 359,
             hero_damage: 0,
             structure_damage: 0,
         }],
@@ -418,6 +419,7 @@ fn a_match_stopped_before_a_minute_of_play_shows_no_rates() {
         );
     }
     let summary = MatchSummary::from_stats(Team::Neutral, &stats(120), &players, 90 * 30);
+    assert_eq!(summary.rows[0].net_worth, Some(359));
     assert_eq!(summary.rows[0].gpm, Some(609 * 60 / 120));
     assert_eq!(summary.rows[0].xpm, Some(0));
 }
