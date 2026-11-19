@@ -17,7 +17,7 @@ FLAG = "--boot-page"
 ARGUMENTS = (
     (180, ('--boot-page',), dict(type=pathlib.Path, help="any build: every way the start can go wrong ends on a screen")),
 )
-ORDER = 150
+ORDER = 160
 
 
 def run(args):

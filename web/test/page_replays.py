@@ -31,7 +31,7 @@ FLAG = "--replays-page"
 ARGUMENTS = (
     (210, ('--replays-page',), dict(type=pathlib.Path, help="a build without a replay: a match through radovid is kept in OPFS")),
 )
-ORDER = 180
+ORDER = 190
 
 
 def run(args):

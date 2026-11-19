@@ -13,7 +13,7 @@ FLAG = "--pixels-page"
 ARGUMENTS = (
     (200, ('--pixels-page',), dict(type=pathlib.Path, help="a replay build: the canvas drawn at its device pixels")),
 )
-ORDER = 170
+ORDER = 180
 
 
 def run(args):

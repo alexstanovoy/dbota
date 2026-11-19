@@ -14,7 +14,7 @@ FLAG = "--replay-page"
 ARGUMENTS = (
     (10, ('--replay-page',), dict(type=pathlib.Path, help="a build with a packed replay built in")),
 )
-ORDER = 80
+ORDER = 90
 
 
 def run(args):

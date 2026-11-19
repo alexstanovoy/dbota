@@ -26,8 +26,8 @@ import sys
 # (POSITION in the help, flags, add_argument's options) of the options more than one page reads.
 COMMON = (
     (80, ('--server',), dict(help="a bota_server built with the websocket feature, for --replays-page")),
-    (240, ('--radovid',), dict(help="the radovid binary, for --replays-page (with --server)")),
-    (250, ('--shots',), dict(action="store_true", help="save screenshots during the replay or fullscreen check")),
+    (250, ('--radovid',), dict(help="the radovid binary, for --replays-page (with --server)")),
+    (260, ('--shots',), dict(action="store_true", help="save screenshots during the replay or fullscreen check")),
 )
 
 

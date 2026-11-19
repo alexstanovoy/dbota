@@ -17,7 +17,7 @@ ARGUMENTS = (
     (220, ('--services-page',), dict(type=pathlib.Path, help="a build without a replay: checks services before sign-in")),
     (230, ('--service-shots',), dict(type=pathlib.Path, help="write the service check's frames to this directory")),
 )
-ORDER = 90
+ORDER = 100
 
 
 def run(args):
