@@ -914,7 +914,7 @@ fn gives(k: u8, total: f32) -> Vec<(&'static str, String)> {
             ),
             (
                 "intelligence_magic_resist",
-                tenth(total * rules::MAGIC_RESIST_BP_PER_INTELLIGENCE as f32 / 100.0),
+                tenth(total * rules::MAGIC_RESIST_BP_PER_INTELLIGENCE.to_f32() / 100.0),
             ),
         ],
     }

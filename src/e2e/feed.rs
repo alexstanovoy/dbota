@@ -139,7 +139,8 @@ fn a_fallen_tower_is_worded_as_dota_words_it() {
     );
     assert_eq!(
         text.trim(),
-        format!("{destroyer}{side} Top Tier 2 Tower 110each"),
+        // Dota 7.42: "Tier 2 tower gold per player decreased from 110 to 100".
+        format!("{destroyer}{side} Top Tier 2 Tower 100each"),
         "the destroyer's name, the tower, and what its fall pays each seat"
     );
     assert_ne!(
