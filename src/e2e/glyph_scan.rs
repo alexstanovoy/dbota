@@ -228,3 +228,34 @@ fn a_click_on_the_glyph_button_uses_a_charge() {
     client.click(MouseButton::Left);
     client.until("a charge spent", |c| glyph_charges(c) == Some(held - 1));
 }
+
+/// The plate's art is clear above its wells, and a click there is a click on the world: a right
+/// click on the terrain beside the minimap, over the plate's clear upper part, orders a move, at
+/// every interface scale.
+#[test]
+fn a_right_click_on_the_terrain_over_the_plates_clear_part_orders_a_move() {
+    for scale in ["0.5", "1", "2"] {
+        let server = Server::start(2, &[]);
+        quiet_seat(&server, HeroId::SHADOW_FIEND);
+        let setting = format!("ui_scale={scale}");
+        let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--set", &setting]);
+        super::hud_layout::on_screen(&mut client);
+        client.frames(20);
+        let plate = named_rect(&mut client, "hud glyph plate");
+        // A fifth of the plate's way down is far above its wells and its art.
+        let spot = Vec2::new(
+            plate.min.x + 0.3 * plate.width(),
+            plate.min.y + 0.2 * plate.height(),
+        );
+        let sent = client.record_sent_orders();
+        client.point(spot);
+        client.frames(3);
+        let before = sent.get();
+        client.click(MouseButton::Right);
+        client.frames(5);
+        assert!(
+            sent.get() > before,
+            "scale {scale}: a right click at {spot} beside the minimap orders no move"
+        );
+    }
+}

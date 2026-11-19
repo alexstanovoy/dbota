@@ -275,8 +275,10 @@ const CELL_GROUND: Color = Color::srgba(0.102, 0.11, 0.114, 0.533);
 #[derive(Component)]
 pub(crate) struct CellArt;
 
-/// The plate the Glyph and the Scan stand on, its width in Dota's pixels.
+/// The plate the Glyph and the Scan stand on, its width in Dota's pixels, and the shares of its
+/// width and height its art draws (rows 221 to 372 of its 372, columns up to 88 of its 98).
 const GLYPH_PLATE: f32 = 74.0;
+const GLYPH_PLATE_DRAWN: (f32, f32) = (90.0, 41.0);
 
 /// The frame rate at the top right, and on a live link the ping and the time orders take to be
 /// received.
@@ -568,11 +570,25 @@ fn spawn_docks(mut commands: Commands, manifest: Res<Manifest>, server: Res<Asse
                 ..default()
             },
             ui::art(&manifest, &server, "hud.glyph_scan_bg"),
-            Hovered::default(),
-            Blocker,
             ChildOf(left),
         ))
         .id();
+    // The plate's art is clear over its upper 220 of 372 rows and past its slanted edge: only what
+    // is drawn swallows clicks, not the terrain beside the minimap.
+    commands.spawn((
+        Name::new("hud glyph plate solid"),
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            bottom: px(0),
+            width: percent(GLYPH_PLATE_DRAWN.0),
+            height: percent(GLYPH_PLATE_DRAWN.1),
+            ..default()
+        },
+        Hovered::default(),
+        Blocker,
+        ChildOf(minimap_buttons),
+    ));
     let courier = commands.spawn((Node::default(), Pickable::IGNORE)).id();
     commands.insert_resource(Docks {
         minimap,
