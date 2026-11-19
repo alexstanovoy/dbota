@@ -42,6 +42,18 @@ pub const fn text_name(kind: RuneKind) -> &'static str {
     }
 }
 
+/// A kind of rune in a sentence of the client's own, with its article: "a Bounty rune",
+/// "an Arcane rune".
+pub fn with_article(kind: RuneKind) -> String {
+    let name = text_name(kind);
+    let article = if name.starts_with(['A', 'E', 'I', 'O', 'U']) {
+        "an"
+    } else {
+        "a"
+    };
+    format!("{article} {name} rune")
+}
+
 /// The kind of rune whose art has a name.
 pub fn of_art(name: &str) -> Option<RuneKind> {
     RuneKind::ALL.into_iter().find(|kind| art(*kind) == name)
@@ -241,4 +253,24 @@ fn reset(
         commands.entity(body).despawn();
     }
     index.0.clear();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sentence_of_the_clients_own_gives_each_rune_the_article_its_name_takes() {
+        let sentences: Vec<_> = RuneKind::ALL.into_iter().map(with_article).collect();
+        for (sentence, article) in sentences.iter().zip(
+            RuneKind::ALL
+                .into_iter()
+                .map(|kind| matches!(text_name(kind), "Arcane" | "Illusion" | "Invisibility")),
+        ) {
+            let want = if article { "an " } else { "a " };
+            assert!(sentence.starts_with(want), "{sentence}");
+        }
+        assert!(sentences.contains(&"an Arcane rune".to_owned()));
+        assert!(sentences.contains(&"a Water rune".to_owned()));
+    }
 }

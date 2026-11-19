@@ -86,12 +86,6 @@ impl Texts {
         self.styles.get(&name.to_lowercase()).copied()
     }
 
-    /// Whether the cache's labels are read at all: without them the client says what it shows
-    /// in its own words, with them only in Dota's.
-    pub fn has_labels(&self) -> bool {
-        !self.labels.is_empty()
-    }
-
     /// Installed text, then the client's fallback, then the internal key visibly.
     pub fn name<'a>(&'a self, key: &'a str) -> &'a str {
         self.entries

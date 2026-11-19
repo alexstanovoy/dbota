@@ -1,7 +1,7 @@
 //! Runes and the Bottle as Dota shows them, in a match whose server spawns runes (`--runes all`)
 //! and puts one where a test asks (`dota_spawn_rune`): the rune's model and glow where it lies,
 //! the minimap's icon of it kept out of sight, a rune taken by a click
-//! with its sound, its hero's line, its buff and its lines in the chat and the feed, the Bottle's
+//! with its sound, its hero's line, its buff and its banner, the Bottle's
 //! icon by its charges and by the rune it keeps, and an invisible hero drawn see-through.
 
 use std::time::{Duration, Instant};
@@ -32,7 +32,7 @@ const AWAY: (i32, i32) = (4000, 4000);
 pub(super) const SOON: Duration = Duration::from_secs(30);
 
 /// A match of one seat that spawns runes, one's Shadow Fiend on the map and the game begun.
-fn rune_match() -> (Server, Client) {
+pub(super) fn rune_match() -> (Server, Client) {
     let server = Server::start(1, &["--runes", "all"]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     client.cheat(Cheat::StartGame);
@@ -908,9 +908,9 @@ fn opening_river_bounties_and_unseen_water_expire_at_their_server_deadlines() {
 
 /// A right click on a Haste Rune at the river walks the hero
 /// there and takes it: its sound, the hero's line, the buff's loop on the hero, its chip on the
-/// buff bar and the chat line in Dota's words.
+/// buff bar (the chat stays empty: `chat_log` holds that).
 #[test]
-fn a_rune_clicked_is_taken_with_its_sound_line_buff_and_chat() {
+fn a_rune_clicked_is_taken_with_its_sound_line_and_buff() {
     let (_server, mut client) = rune_match();
     let spot = top_spot();
     client.stand_at((spot.0 + 400, spot.1));
@@ -945,13 +945,6 @@ fn a_rune_clicked_is_taken_with_its_sound_line_buff_and_chat() {
                 seen.get() && chip.shown.is_some_and(|s| s.id == EffectId::RUNE_HASTE.0)
             })
     });
-    let name = crate::seat_name::seat_name(
-        client.core(),
-        client.core().my_slot.expect("a seat"),
-        Some(client.world().resource::<crate::dota_text::Texts>()),
-    );
-    let line = label(&client, "DOTA_Chat_Rune_Haste", &[]).replace("%s1", &name);
-    client.within(SOON, "the chat line", |c| shown_spans(c).contains(&line));
 }
 
 /// Dota's rune-spawn toast is for spectators (16 September 2021 update),

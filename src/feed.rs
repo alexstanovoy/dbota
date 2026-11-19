@@ -1189,14 +1189,14 @@ fn localized_text(core: &Core, kind: &FeedKind, texts: Option<&Texts>) -> String
             act,
         } => {
             let who = activator(core, by, team, texts);
-            let rune = crate::runes::text_name(kind);
+            let rune = crate::runes::with_article(kind);
             match act {
                 RuneAct::Activated { gold: Some(gold) } => {
-                    format!("{who} activated a {rune} rune ({gold} gold)")
+                    format!("{who} activated {rune} ({gold} gold)")
                 }
-                RuneAct::Activated { gold: None } => format!("{who} activated a {rune} rune"),
-                RuneAct::Bottled => format!("{who} bottled a {rune} rune"),
-                RuneAct::Denied => format!("{who} denied a {rune} rune"),
+                RuneAct::Activated { gold: None } => format!("{who} activated {rune}"),
+                RuneAct::Bottled => format!("{who} bottled {rune}"),
+                RuneAct::Denied => format!("{who} denied {rune}"),
             }
         }
     }
@@ -1745,14 +1745,14 @@ fn fallback_parts(core: &Core, kind: &FeedKind, texts: Option<&Texts>) -> Vec<Pa
             act,
             ..
         } => {
-            let rune = crate::runes::text_name(kind);
+            let rune = crate::runes::with_article(kind);
             let action = match act {
                 RuneAct::Activated { gold: Some(gold) } => {
-                    format!(" activated a {rune} rune ({gold} gold)")
+                    format!(" activated {rune} ({gold} gold)")
                 }
-                RuneAct::Activated { gold: None } => format!(" activated a {rune} rune"),
-                RuneAct::Bottled => format!(" bottled a {rune} rune"),
-                RuneAct::Denied => format!(" denied a {rune} rune"),
+                RuneAct::Activated { gold: None } => format!(" activated {rune}"),
+                RuneAct::Bottled => format!(" bottled {rune}"),
+                RuneAct::Denied => format!(" denied {rune}"),
             };
             Some((slot, action))
         }

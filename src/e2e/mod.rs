@@ -21,6 +21,7 @@ mod captions;
 mod catalogue;
 mod channels;
 mod chasm;
+mod chat_log;
 mod controls;
 mod courier;
 mod courier_spinner;

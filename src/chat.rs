@@ -13,7 +13,7 @@ use bevy::{
 use bevy::{picking::hover::DirectlyHovered, ui_widgets::Button};
 use bota_client_core::{App as Core, ChatLine};
 use bota_core::{TextFault, rules};
-use bota_proto::{Audience, Body, EventKind, SayRefusal, Speaker};
+use bota_proto::{Audience, Body, SayRefusal, Speaker};
 
 use crate::dota_text::Texts;
 use crate::input::Typing;
@@ -49,21 +49,6 @@ pub struct ChatInput {
     preedit: String,
     /// Why the last line was not sent, and the seconds left to show it.
     fault: Option<(String, f32)>,
-}
-
-/// The game's own lines in the log, as Dota writes them there (a Shrine of
-/// Wisdom gathered), newest last, at most [`ROWS`].
-#[derive(Resource, Default)]
-struct Notices(std::collections::VecDeque<Notice>);
-
-/// One of the game's own lines.
-struct Notice {
-    prefix: String,
-    identity: Option<bota_proto::SeatIdentity>,
-    text: String,
-    event: EventKind,
-    /// Seconds since it came.
-    age: f32,
 }
 
 /// The column of toasts over the chat's lines, which `feed` fills: a building's fall, a rune.
@@ -106,21 +91,15 @@ struct Complaint;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<ChatInput>()
-        .init_resource::<Notices>()
         .add_systems(
             First,
-            (
-                crate::loading::reset::<ChatInput>,
-                crate::loading::reset::<Notices>,
-            )
-                .in_set(crate::loading::Begin),
+            crate::loading::reset::<ChatInput>.in_set(crate::loading::Begin),
         )
         .add_systems(Startup, spawn)
         .add_systems(
             Update,
             (
                 note_heard,
-                notices.before(show_log),
                 show_log,
                 show_input,
                 ime,
@@ -408,8 +387,9 @@ fn spawn_row(commands: &mut Commands, fonts: &Fonts, log: Entity, row: usize) {
             Row(row),
             Node {
                 display: Display::None,
-                flex_wrap: FlexWrap::Wrap,
-                align_items: AlignItems::Center,
+                // The speaker stands at the line's start and the words run on beside it, wrapping
+                // under each other within what is left of the box.
+                align_items: AlignItems::FlexStart,
                 max_width: percent(100),
                 ..default()
             },
@@ -420,6 +400,10 @@ fn spawn_row(commands: &mut Commands, fonts: &Fonts, log: Entity, row: usize) {
         Piece::Tag,
         ui::text("", &fonts.regular, SIZE, ui::INK_DIM),
         ui::shadow(),
+        Node {
+            flex_shrink: 0.0,
+            ..default()
+        },
         ChildOf(root),
     ));
     let label = crate::player_name::inline(
@@ -442,6 +426,10 @@ fn spawn_row(commands: &mut Commands, fonts: &Fonts, log: Entity, row: usize) {
         Piece::Colon,
         ui::text("", &fonts.bold, SIZE, ui::INK),
         ui::shadow(),
+        Node {
+            flex_shrink: 0.0,
+            ..default()
+        },
         ChildOf(root),
     ));
     commands.spawn((
@@ -449,9 +437,12 @@ fn spawn_row(commands: &mut Commands, fonts: &Fonts, log: Entity, row: usize) {
         ui::text("", &fonts.regular, SIZE, ui::INK),
         ui::shadow(),
         Node {
-            max_width: percent(100),
+            // Its width is what the row leaves, not what the words would measure: a measured
+            // width wrapped them into a column a word wide.
+            flex_basis: px(0),
+            flex_grow: 1.0,
+            flex_shrink: 1.0,
             min_width: px(0),
-            flex_shrink: 0.0,
             ..default()
         },
         ChildOf(root),
@@ -507,101 +498,10 @@ fn note_heard(session: NonSend<Session>, mut seen: Local<usize>) {
     }
 }
 
-/// The game's lines the last pump told, in Dota's words when the cache has
-/// them: `DOTA_Chat_Rune_XP` ("%s1 activated a Shrine of Wisdom.") for a
-/// Shrine gathered, naming the gatherer (its side to the other side, which
-/// is not told who); and to a hero's own side (and to whoever watches) a rune
-/// it took into effect or put into its Bottle (`DOTA_Chat_Rune_<rune>`,
-/// `DOTA_Chat_Rune_Bottle_<rune>`; the install has none for a Shield Rune).
-fn notices(
-    sight: crate::fog::EventSight,
-    texts: Option<Res<Texts>>,
-    time: Res<Time>,
-    mut notices: ResMut<Notices>,
-) {
-    let core = sight.core();
-    for notice in &mut notices.0 {
-        notice.age += time.delta_secs();
-    }
-    for event in &core.told {
-        if !sight.allows(event, crate::fog::EventSubject::Event) {
-            continue;
-        }
-        let Some((prefix, identity, text)) = notice_text(core, texts.as_deref(), event) else {
-            continue;
-        };
-        if notices.0.len() == ROWS {
-            notices.0.pop_front();
-        }
-        notices.0.push_back(Notice {
-            prefix,
-            identity,
-            text,
-            event: event.clone(),
-            age: 0.0,
-        });
-    }
-}
-
-/// The log's line of a game's event, if it has one.
-fn notice_text(
-    core: &Core,
-    texts: Option<&Texts>,
-    event: &EventKind,
-) -> Option<(String, Option<bota_proto::SeatIdentity>, String)> {
-    let seat = |hero| core.view()?.unit(hero)?.owner;
-    let (key, own, who) = match *event {
-        EventKind::ShrineActivated { team, by, .. } => {
-            let who = by.and_then(seat).map_or_else(
-                || crate::feed::side_name(team).to_owned(),
-                |slot| crate::seat_name::seat_name(core, slot, texts),
-            );
-            let own = "%s1 activated a Shrine of Wisdom.".to_owned();
-            ("DOTA_Chat_Rune_XP".to_owned(), own, who)
-        }
-        EventKind::RuneActivated { unit, kind, .. } | EventKind::RuneBottled { unit, kind } => {
-            let hero = core.view()?.unit(unit)?;
-            if core.my_team().is_some_and(|mine| mine != hero.team) {
-                return None;
-            }
-            let who = crate::seat_name::seat_name(core, hero.owner?, texts);
-            let name = crate::runes::text_name(kind);
-            match event {
-                EventKind::RuneBottled { .. } => (
-                    format!("DOTA_Chat_Rune_Bottle_{name}"),
-                    format!("%s1 has bottled a {name} rune."),
-                    who,
-                ),
-                _ => (
-                    format!("DOTA_Chat_Rune_{name}"),
-                    format!("%s1 activated a {name} rune."),
-                    who,
-                ),
-            }
-        }
-        _ => return None,
-    };
-    let template = match texts.filter(|texts| texts.has_labels()) {
-        Some(texts) => texts.label(&key, &[])?,
-        None => own,
-    };
-    let slot = match *event {
-        EventKind::ShrineActivated { by, .. } => by.and_then(seat),
-        EventKind::RuneActivated { unit, .. } | EventKind::RuneBottled { unit, .. } => seat(unit),
-        _ => None,
-    };
-    if let Some(identity) = slot.and_then(|slot| core.seat_identity(slot)).cloned()
-        && let Some((prefix, suffix)) = template.split_once("%s1")
-    {
-        return Some((prefix.to_owned(), Some(identity), suffix.to_owned()));
-    }
-    Some((String::new(), None, template.replace("%s1", &who)))
-}
-
-/// One line of the log: a player's, or the game's own.
+/// One line of the log: what a player typed. The game's own events (a rune taken, a building's
+/// fall, a kill) are never lines of it; the feed's banners tell them.
 enum Shown<'a> {
     Heard(&'a ChatLine, &'a str),
-    Notice(&'a Notice),
     Preview(&'static str, Color, &'static str),
 }
 
@@ -609,7 +509,6 @@ impl Shown<'_> {
     fn age(&self) -> f32 {
         match self {
             Shown::Heard(line, _) => line.age,
-            Shown::Notice(notice) => notice.age,
             Shown::Preview(..) => 0.0,
         }
     }
@@ -621,7 +520,6 @@ fn show_log(
     texts: Res<Texts>,
     sight: crate::fog::EventSight,
     typing: Res<Typing>,
-    notices: Res<Notices>,
     preview: Option<Res<crate::main_menu::Preview>>,
     mut rows: Query<(&Row, &mut Node, &Children)>,
     mut pieces: Query<(&Piece, &mut Text, &mut TextColor), Without<Row>>,
@@ -643,7 +541,7 @@ fn show_log(
             .map(|(name, tint, text)| Shown::Preview(name, tint, text))
             .collect()
     } else {
-        log_lines(core, &notices, &sight)
+        log_lines(core, &sight)
     };
     let shown = &shown[shown.len().saturating_sub(ROWS)..];
     for (Row(row), mut node, children) in &mut rows {
@@ -654,7 +552,7 @@ fn show_log(
         let Some(line) = line.filter(|_| alpha > 0.0) else {
             continue;
         };
-        let (tag, name, version, name_tint, words, colon) = chat_words(core, line, &texts);
+        let (tag, name, version, name_tint, words) = chat_words(core, line, &texts);
         for child in children {
             if let Ok((label, mut node)) = labels.get_mut(*child) {
                 node.display = if name.is_empty() {
@@ -681,14 +579,7 @@ fn show_log(
             };
             let (s, c) = match piece {
                 Piece::Tag => (tag.clone(), ui::INK_DIM),
-                Piece::Colon => (
-                    if colon {
-                        ": ".to_owned()
-                    } else {
-                        String::new()
-                    },
-                    name_tint,
-                ),
+                Piece::Colon => (": ".to_owned(), name_tint),
                 Piece::Body => (words.to_owned(), ui::INK),
             };
             if span.0 != s {
@@ -699,11 +590,7 @@ fn show_log(
     }
 }
 
-fn log_lines<'a>(
-    core: &'a Core,
-    notices: &'a Notices,
-    sight: &crate::fog::EventSight,
-) -> Vec<Shown<'a>> {
+fn log_lines<'a>(core: &'a Core, sight: &crate::fog::EventSight) -> Vec<Shown<'a>> {
     let mut shown: Vec<Shown> = core
         .chat_lines()
         .filter(|line| sight.allows_chat(&line.heard))
@@ -711,13 +598,6 @@ fn log_lines<'a>(
             Body::Text(words) => Some(Shown::Heard(line, words.as_str())),
             Body::Ping(_) => None,
         })
-        .chain(
-            notices
-                .0
-                .iter()
-                .filter(|notice| sight.allows(&notice.event, crate::fog::EventSubject::Event))
-                .map(Shown::Notice),
-        )
         .collect();
     // Oldest first, the newest ROWS kept.
     shown.sort_by(|a, b| b.age().total_cmp(&a.age()));
@@ -925,7 +805,7 @@ fn chat_words<'a>(
     core: &Core,
     line: &'a Shown<'a>,
     texts: &Texts,
-) -> (String, String, Option<String>, Color, &'a str, bool) {
+) -> (String, String, Option<String>, Color, &'a str) {
     match line {
         Shown::Heard(line, words) => {
             let (name, version) = match &line.heard.from {
@@ -944,25 +824,10 @@ fn chat_words<'a>(
                 version.map(str::to_owned),
                 name_color(core, line),
                 *words,
-                true,
             )
         }
-        Shown::Notice(notice) => (
-            notice.prefix.clone(),
-            notice
-                .identity
-                .as_ref()
-                .map_or_else(String::new, |identity| identity.name.clone()),
-            notice
-                .identity
-                .as_ref()
-                .and_then(|identity| identity.version.clone()),
-            ui::INK,
-            notice.text.as_str(),
-            false,
-        ),
         Shown::Preview(name, tint, words) => {
-            (String::new(), (*name).to_owned(), None, *tint, *words, true)
+            (String::new(), (*name).to_owned(), None, *tint, *words)
         }
     }
 }
@@ -1028,6 +893,57 @@ pub(crate) fn shown_lines(world: &mut World) -> Vec<String> {
     }
     output.sort_by_key(|(row, _)| *row);
     output.into_iter().map(|(_, line)| line).collect()
+}
+
+/// The boxes of each visible chat row as laid out, in the window's physical pixels: the row's,
+/// its body's and the log's own.
+#[cfg(test)]
+pub(crate) struct RowBoxes {
+    pub row: Rect,
+    pub body: Rect,
+    pub log: Rect,
+}
+
+#[cfg(test)]
+fn boxed(world: &World, node: Entity) -> Rect {
+    let size = world.get::<ComputedNode>(node).expect("laid out").size();
+    let centre = world
+        .get::<bevy::ui::UiGlobalTransform>(node)
+        .expect("placed")
+        .translation;
+    Rect::from_center_size(centre, size)
+}
+
+#[cfg(test)]
+pub(crate) fn shown_boxes(world: &mut World) -> Vec<RowBoxes> {
+    let log = world
+        .query_filtered::<Entity, With<Log>>()
+        .single(world)
+        .expect("the chat log");
+    let log = boxed(world, log);
+    let rows: Vec<_> = world
+        .query::<(Entity, &Row, &Node, &Children, &InheritedVisibility)>()
+        .iter(world)
+        .filter(|(_, _, node, _, shown)| node.display != Display::None && shown.get())
+        .map(|(entity, row, _, children, _)| (row.0, entity, children.to_vec()))
+        .collect();
+    let mut boxes = Vec::new();
+    for (at, row, children) in rows {
+        let body = children
+            .into_iter()
+            .find(|child| world.get::<Piece>(*child) == Some(&Piece::Body))
+            .expect("the body piece of a row");
+        boxes.push((
+            at,
+            RowBoxes {
+                row: boxed(world, row),
+                body: boxed(world, body),
+                log,
+            },
+        ));
+    }
+    boxes.sort_by_key(|(at, _)| *at);
+    boxes.into_iter().map(|(_, boxes)| boxes).collect()
 }
 
 #[cfg(test)]
