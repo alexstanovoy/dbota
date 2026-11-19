@@ -3,7 +3,6 @@
 //! number the rules could change.
 
 use bota_core::rules;
-use bota_proto::Fixed;
 
 /// The template with every `{key}` replaced by its value.
 ///
@@ -42,16 +41,6 @@ fn hundredths(value: i64) -> String {
 pub(super) fn secs(ticks: u32) -> String {
     let rate = i64::from(rules::TICKS_PER_SECOND);
     hundredths((i64::from(ticks) * 100 + rate / 2) / rate)
-}
-
-/// Seconds that `ms` milliseconds last, to the nearest hundredth.
-pub(super) fn millis(ms: u32) -> String {
-    hundredths((i64::from(ms) + 5) / 10)
-}
-
-/// A fixed-point value to the nearest hundredth.
-pub(super) fn fixed(value: Fixed) -> String {
-    hundredths((i64::from(value.raw) * 100 + (1 << (Fixed::FRAC_BITS - 1))) >> Fixed::FRAC_BITS)
 }
 
 /// Per-level whole numbers joined by slashes; one value when all are the same.

@@ -6,7 +6,9 @@
 //! Dota.
 
 use bevy::prelude::*;
-use bota_client_core::{CommandError, CursorUse, PurchaseAvailability, Refused, Undeniable};
+use bota_client_core::{
+    CommandError, CursorUse, PurchaseAvailability, Refused, TalentRefusal, Undeniable,
+};
 use bota_proto::RejectReason;
 
 use crate::dota_text::Texts;
@@ -89,11 +91,14 @@ pub fn told(reason: RejectReason) -> Option<Told> {
         | Why::SeatHeld
         | Why::CatalogueMismatch
         | Why::HoldsRune
-        | Why::ItemRestricted => own,
+        | Why::ItemRestricted
+        // The client turns a talent the hero's view shows closed away itself (with its reason,
+        // see `Refused::Talent`), so one the server refuses is a race with the view.
+        | Why::CannotLearn => own,
         // What the player needs no word for: the hero is dead (its panel
         // says so), the target was gone when the order came, or what the
         // interface never offers (an empty slot, a passive, another's unit,
-        // an item that is not there, a talent shown as closed).
+        // an item that is not there).
         Why::HeroDead
         | Why::UnknownTarget
         | Why::EmptySlot
@@ -101,7 +106,6 @@ pub fn told(reason: RejectReason) -> Option<Told> {
         | Why::NotYourUnit
         | Why::UnknownItem
         | Why::NotInBag
-        | Why::CannotLearn
         // The buyback button is there only for a dead hero of one's own.
         | Why::HeroAlive
         | Why::NotAHero => None,
@@ -163,7 +167,38 @@ pub fn line(refused: &Refused, texts: &Texts) -> Option<String> {
                 .label(undeniable_key(*why), &[])
                 .unwrap_or_else(|| capitalised(undeniable_words(*why))),
         ),
+        Refused::Talent(why) => Some(talent_line(*why, texts)),
         Refused::Command(error) => Some(console_words(error)),
+    }
+}
+
+/// What a talent or the Attribute Bonus asked for too early is told as: Dota's lines for a point
+/// that is missing and a level not reached, the client's own for the rest.
+fn talent_line(why: TalentRefusal, texts: &Texts) -> String {
+    match why {
+        TalentRefusal::NoPoint => texts
+            .label("dota_hud_error_ability_cant_upgrade_no_points", &[])
+            .unwrap_or_else(|| capitalised(talent_words(why).as_str())),
+        TalentRefusal::LevelNotReached(level) => texts
+            .label("dota_hud_error_ability_cant_upgrade_hero_level", &[])
+            .map(|line| line.replace("%s1", &level.to_string()))
+            .unwrap_or_else(|| capitalised(talent_words(why).as_str())),
+        TalentRefusal::HeroDead | TalentRefusal::AlreadyLearned | TalentRefusal::BonusComplete => {
+            capitalised(talent_words(why).as_str())
+        }
+    }
+}
+
+/// The same in plain words.
+fn talent_words(why: TalentRefusal) -> String {
+    match why {
+        TalentRefusal::HeroDead => "you cannot learn while dead".to_string(),
+        TalentRefusal::NoPoint => "no ability upgrade points to spend".to_string(),
+        TalentRefusal::LevelNotReached(level) => {
+            format!("ability upgrade requires hero level {level}")
+        }
+        TalentRefusal::AlreadyLearned => "that talent is learned already".to_string(),
+        TalentRefusal::BonusComplete => "the attribute bonus has every level".to_string(),
     }
 }
 
@@ -192,6 +227,7 @@ pub fn plain(refused: &Refused) -> String {
         Refused::Purchase(availability) => purchase_words(*availability).to_string(),
         Refused::Rule(reason) => plain_words(*reason).to_string(),
         Refused::Undeniable(why) => undeniable_words(*why).to_string(),
+        Refused::Talent(why) => talent_words(*why),
         Refused::Command(error) => console_words(error),
     }
 }

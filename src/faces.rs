@@ -1,15 +1,14 @@
-//! The words of effects and talents, for the tooltips of an entry Dota's own text lacks.
-//!
-//! Effects and talents carry blurb templates, found by the id the wire carries. The numbers in a
-//! blurb are the rules': a template names them and `bota_core` gives them.
+//! Localized talent faces and effect tooltip fallbacks. The rules supply the numbers.
 
 mod blurb;
 mod keys;
 
-use bota_core::{EFFECT_COUNT, EFFECTS as EFFECT_DEFS, Talent, effect_def, hero_def};
+use bota_core::{EFFECT_COUNT, EFFECTS as EFFECT_DEFS, effect_def, hero_def};
 use bota_proto::{EffectId, HeroId, ItemId};
 
 use blurb::fill;
+
+use crate::dota_text::Texts;
 
 /// Installed announcement labels for taking and denying notable ground loot.
 pub fn loot_labels(id: ItemId) -> Option<[&'static str; 2]> {
@@ -172,94 +171,96 @@ pub fn effect(id: u16) -> Option<&'static EffectFace> {
     })
 }
 
-/// One talent of a hero's tree, as the talent panel shows it.
+/// One talent of a hero's tree as it appears in the installed localization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TalentFace {
-    /// What it gives, short, as Dota's tree writes it.
     pub name: String,
-    /// What it does, for the hover popup.
     pub blurb: String,
 }
 
-/// What a talent is called and does, with the rules' numbers in.
-fn talent_face(talent: Talent) -> TalentFace {
-    let (name, blurb) = match talent {
-        Talent::FeastAttackSpeed => (
-            "+{talent_feast_speed} Feast of Souls Attack Speed",
-            "A feast gives {talent_feast_speed} more attack speed.",
-        ),
-        Talent::RazeStackDamage => (
-            "+{talent_raze_stack} Shadowraze Stack Damage",
-            "Each stack of a raze's mark adds {talent_raze_stack} more magic damage.",
-        ),
-        Talent::FeastSoulsPerHero => (
-            "+{talent_feast_souls} Feast of Souls Souls Per Hero",
-            "A feast takes {talent_feast_souls} more souls from every enemy hero.",
-        ),
-        Talent::PresenceArmor => (
-            "+{talent_presence}/{talent_presence_magic}% Presence Armor/Resist Reduction",
-            "The presence takes {talent_presence} more armor and {talent_presence_magic}% more magic resistance from enemies near you.",
-        ),
-        Talent::RequiemFear => (
-            "+{talent_fear}s Requiem Fear/Slow Duration",
-            "A requiem fears and slows {talent_fear} s longer.",
-        ),
-        Talent::NecroSoulCap => (
-            "+{talent_souls} Necromastery Max Souls",
-            "Hold {talent_souls} more souls from kills.",
-        ),
-        Talent::RazeAttackDamage => (
-            "Shadowraze Applies Attack Damage",
-            "A raze also deals your attack damage, as physical damage.",
-        ),
-        Talent::FeastCastSpeed => (
-            "Feast of Souls Grants +{talent_cast_speed}% Cast Speed",
-            "While a feast runs, cast points last {talent_cast_pct}% of their length.",
-        ),
-        Talent::Armor => ("+{talent_armor} Armor", "Gain {talent_armor} armor."),
-        Talent::SpellLifesteal => (
-            "+{talent_spell_lifesteal}% Spell Lifesteal",
-            "Heal for {talent_spell_lifesteal}% of the damage your spells deal.",
-        ),
-        Talent::RotSlow => (
-            "+{talent_rot_slow}% Rot Slow",
-            "Rot slows {talent_rot_slow}% more.",
-        ),
-        Talent::HookDamage => (
-            "+{talent_hook_damage} Meat Hook Damage",
-            "Meat Hook deals {talent_hook_damage} more damage.",
-        ),
-        Talent::HookCooldown => (
-            "-{talent_hook_cooldown}s Meat Hook Cooldown",
-            "Meat Hook is ready {talent_hook_cooldown} s sooner.",
-        ),
-        Talent::DismemberDuration => (
-            "+{talent_dismember_secs}s Dismember Duration",
-            "Dismember holds {talent_dismember_secs} s longer and bites {talent_dismember_bites} more times.",
-        ),
-        Talent::FleshHeapBonuses => (
-            "{talent_heap_factor}x Flesh Heap and Meat Shield Bonuses",
-            "Each Flesh Heap stack gives {talent_heap_factor} times the strength, and Meat Shield blocks {talent_heap_factor} times as much.",
-        ),
-        Talent::FeastHealPerSoul => (
-            "Feast of Souls Heals {talent_feast_heal} HP Per Soul",
-            "Every soul a feast takes heals you for {talent_feast_heal}.",
-        ),
-        Talent::DismemberDamage => (
-            "{talent_dismember_factor}x Dismember Damage/Heal",
-            "Dismember deals {talent_dismember_factor} times its damage a second and {talent_dismember_str_factor} times its share of strength, and heals by as much.",
-        ),
-    };
+/// Resolves the talent slots of the hero reported by the server through the shared rules.
+pub fn talents(
+    hero: u16,
+    texts: &Texts,
+) -> Option<[TalentFace; bota_proto::TalentSlot::COUNT as usize]> {
+    let hero = hero_def(HeroId(hero))?;
+    let abilities: Vec<_> = hero
+        .abilities
+        .iter()
+        .copied()
+        .chain(hero.innate)
+        .filter_map(bota_core::ability_def)
+        .filter_map(|ability| bota_core::ability_data(ability.key))
+        .collect();
+    Some(
+        hero.talents?
+            .map(|talent| talent_face(talent.key(), &abilities, texts)),
+    )
+}
+
+fn talent_face(key: &str, abilities: &[&bota_core::AbilityData], texts: &Texts) -> TalentFace {
+    let numbers = talent_numbers(key, abilities);
+    if key == bota_core::Talent::RequiemFear.key()
+        && let Some(face) = legacy_requiem_face(key, &numbers, texts)
+    {
+        return face;
+    }
     TalentFace {
-        name: fill(name),
-        blurb: fill(blurb),
+        name: texts
+            .talent_name(key, &numbers)
+            .unwrap_or_else(|| "—".to_string()),
+        blurb: texts.talent_description(key, &numbers).unwrap_or_default(),
     }
 }
 
-/// A hero's talent tree by talent slot, if it has one.
-pub fn talents(hero: u16) -> Option<Vec<TalentFace>> {
-    let tree = hero_def(HeroId(hero))?.talents?;
-    Some(tree.iter().copied().map(talent_face).collect())
+/// Older installs describe a per-line increase. The current bonus is applied to the total.
+fn legacy_requiem_face(
+    key: &str,
+    numbers: &[(String, String)],
+    texts: &Texts,
+) -> Option<TalentFace> {
+    let installed = texts.get(key)?;
+    if !installed.name.contains("bonus_requiem_slow_duration") {
+        return None;
+    }
+    let (_, seconds) = numbers
+        .iter()
+        .find(|(key, _)| key == "bonus_requiem_fear_duration")?;
+    let ability = bota_core::ability_def(bota_proto::AbilityId::REQUIEM)?;
+    let ability_name = &texts.get(ability.key)?.name;
+    Some(TalentFace {
+        name: format!("+{seconds}s {ability_name} fear/slow"),
+        blurb: String::new(),
+    })
+}
+
+fn talent_numbers(key: &str, abilities: &[&bota_core::AbilityData]) -> Vec<(String, String)> {
+    if let Some(talent) = bota_core::ability_data(key) {
+        return talent
+            .values
+            .iter()
+            .map(|value| (value.name.to_ascii_lowercase(), talent_number(value.at(0))))
+            .collect();
+    }
+    abilities
+        .iter()
+        .flat_map(|ability| ability.values)
+        .filter_map(|value| {
+            let (_, bonus) = value.bonuses.iter().find(|(talent, _)| *talent == key)?;
+            let number = match bonus {
+                bota_core::Bonus::Add(levels) | bota_core::Bonus::Set(levels) => *levels.first()?,
+                bota_core::Bonus::Times(factor) | bota_core::Bonus::Percent(factor) => *factor,
+                bota_core::Bonus::HeroLevels { .. } => return None,
+            };
+            let name = format!("bonus_{}", value.name.to_ascii_lowercase());
+            Some((name, talent_number(number)))
+        })
+        .collect()
+}
+
+/// Localization supplies the sign (including for cooldown reductions and stronger slows).
+fn talent_number(value: bota_core::Dec) -> String {
+    (f64::from(value.0.unsigned_abs()) / 1000.0).to_string()
 }
 
 #[cfg(test)]
@@ -299,7 +300,8 @@ mod tests {
             assert!(!face.blurb().contains('{'), "effect {}", face.id);
         }
         for (id, hero) in bota_core::HEROES.iter().enumerate() {
-            let tree = talents(id as u16).unwrap_or_else(|| panic!("{} has a tree", hero.key));
+            let tree = talents(id as u16, &Texts::default())
+                .unwrap_or_else(|| panic!("{} has a tree", hero.key));
             assert!(
                 tree.iter()
                     .all(|t| !t.name.contains('{') && !t.blurb.contains('{')),
@@ -307,6 +309,6 @@ mod tests {
                 hero.key
             );
         }
-        assert!(talents(u16::MAX).is_none());
+        assert!(talents(u16::MAX, &Texts::default()).is_none());
     }
 }

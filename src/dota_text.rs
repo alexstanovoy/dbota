@@ -115,6 +115,22 @@ impl Texts {
         self.entries.get(key)
     }
 
+    /// A talent's name as Dota writes it (`+{s:value} Armor`), each variable filled from `numbers`
+    /// (by the variable's name lower-cased) or else from the number of Dota's script; none when
+    /// the cache has not the talent or a variable has no number.
+    pub fn talent_name(&self, key: &str, numbers: &[(String, String)]) -> Option<String> {
+        let entry = self.entries.get(key)?;
+        fill_talent(&entry.name, entry, numbers)
+    }
+
+    /// What Dota says a talent does besides its name, filled as [`Self::talent_name`]; none for a
+    /// talent whose name says it all.
+    pub fn talent_description(&self, key: &str, numbers: &[(String, String)]) -> Option<String> {
+        let entry = self.entries.get(key)?;
+        let text = fill_talent(&entry.description, entry, numbers)?;
+        (!text.trim().is_empty()).then_some(text)
+    }
+
     /// One of Dota's interface labels, its markup dropped and its `{d:name}`
     /// and `{s:name}` variables filled from `values`; none when the cache has
     /// not the label or the label names a value not given.
@@ -279,6 +295,26 @@ fn parts_with_identities(
     }
     push(Part::Text(rest.to_owned()));
     out.retain(|part| !matches!(part, Part::Text(text) if text.is_empty()));
+    Some(out)
+}
+
+/// A talent's text with each `{s:name}` or `{d:name}` replaced by the number `numbers` gives it, or
+/// else the first one of the entry's script values; none when a variable has neither.
+fn fill_talent(text: &str, entry: &Entry, numbers: &[(String, String)]) -> Option<String> {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('{') {
+        out.push_str(&rest[..at]);
+        let end = at + rest[at..].find('}')?;
+        let name = rest[at + 1..end].rsplit(':').next()?.to_lowercase();
+        let given = numbers.iter().find(|(key, _)| key == &name);
+        match given.map(|(_, value)| value) {
+            Some(value) => out.push_str(value),
+            None => out.push_str(entry.values.get(&name)?.first()?),
+        }
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
     Some(out)
 }
 
@@ -494,6 +530,57 @@ mod tests {
                 Token::Break,
                 Token::Text("line"),
             ]
+        );
+    }
+
+    /// A talent's line takes its numbers from the caller first, then from Dota's script, and
+    /// reads as nothing when a variable has neither.
+    #[test]
+    fn a_talents_name_takes_the_numbers_given_before_the_scripts_and_none_without_either() {
+        let entry = Entry {
+            name: "+{s:Bonus_Damage}/{s:bonus_armor}% Both".to_string(),
+            description: "Does {s:bonus_armor}.".to_string(),
+            values: HashMap::from([("bonus_armor".to_string(), vec!["4".to_string()])]),
+            ..Entry::default()
+        };
+        let texts = Texts {
+            entries: HashMap::from([("special_bonus_x".to_string(), entry)]),
+            ..Texts::default()
+        };
+        let given = [("bonus_damage".to_string(), "30".to_string())];
+        assert_eq!(
+            texts.talent_name("special_bonus_x", &given).as_deref(),
+            Some("+30/4% Both"),
+            "the caller's number for the one, the script's for the other"
+        );
+        assert_eq!(
+            texts
+                .talent_name(
+                    "special_bonus_x",
+                    &[
+                        ("bonus_armor".to_string(), "9".to_string()),
+                        given[0].clone()
+                    ]
+                )
+                .as_deref(),
+            Some("+30/9% Both"),
+            "the caller's number wins over the script's"
+        );
+        assert_eq!(
+            texts.talent_name("special_bonus_x", &[]),
+            None,
+            "no number for a variable"
+        );
+        assert_eq!(
+            texts.talent_name("special_bonus_y", &given),
+            None,
+            "no such talent"
+        );
+        assert_eq!(
+            texts
+                .talent_description("special_bonus_x", &given)
+                .as_deref(),
+            Some("Does 4.")
         );
     }
 

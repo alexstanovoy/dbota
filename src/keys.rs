@@ -108,10 +108,17 @@ pub enum Context {
     Play,
     Watch,
     Both,
+    /// Play while the talent window is pinned open: the window's keys take the chord from every
+    /// other binding of it for as long as it is open, so they clash with none of them (Dota's
+    /// `TalentTree` context, first of the key contexts).
+    Talents,
 }
 
 impl Context {
     fn meets(self, other: Context) -> bool {
+        if self == Context::Talents || other == Context::Talents {
+            return self == other;
+        }
         self == Context::Both || other == Context::Both || self == other
     }
 }
@@ -153,6 +160,12 @@ pub enum Action {
     LearnAbilities,
     /// Opens the talent tree, where the Attribute Bonus is learned too.
     LearnStats,
+    /// With the talent window open: learns the left talent of the lowest open tier.
+    TalentLeft,
+    /// With the talent window open: learns the right talent of the lowest open tier.
+    TalentRight,
+    /// With the talent window open: spends a skill point on the Attribute Bonus.
+    TalentAttribute,
     /// Uses one of the six inventory slots, `0..6`.
     Item(u8),
     /// Uses the town portal slot.
@@ -257,13 +270,13 @@ const fn key(code: KeyCode) -> Option<Chord> {
     Some(Chord::key(code))
 }
 
-use Context::{Both, Play, Watch};
+use Context::{Both, Play, Talents, Watch};
 use Group::{Abilities, Camera, Interface, Items, Shop as ShopGroup, Units, Watching};
 
 /// Every action, Dota's default of each (the `dotakeys.lst` command in the
 /// comment; `-` for dbota's own), in the settings screen's order.
 #[rustfmt::skip]
-pub const BINDINGS: [Binding; 59] = [
+pub const BINDINGS: [Binding; 62] = [
     row(Action::Ability(0), "ability_1", "Ability 1", Abilities, Play, key(KeyCode::KeyQ)), // AbilityPrimary1
     row(Action::Ability(1), "ability_2", "Ability 2", Abilities, Play, key(KeyCode::KeyW)), // AbilityPrimary2
     row(Action::Ability(2), "ability_3", "Ability 3", Abilities, Play, key(KeyCode::KeyE)), // AbilityPrimary3
@@ -284,6 +297,9 @@ pub const BINDINGS: [Binding; 59] = [
     row(Action::MoveDirection, "move_direction", "Directional move (held)", Units, Play, None), // HeroMoveDirection (bound in none of the install's templates)
     row(Action::Stop, "stop", "Stop", Units, Play, key(KeyCode::KeyS)), // HeroStop
     row(Action::Hold, "hold", "Hold position", Units, Play, key(KeyCode::KeyH)), // HeroHold
+    row(Action::TalentLeft, "talent_left", "Upgrade Left Talent", Units, Talents, key(KeyCode::Digit1)), // TalentUpgradeStatLeft
+    row(Action::TalentRight, "talent_right", "Upgrade Right Talent", Units, Talents, key(KeyCode::Digit2)), // TalentUpgradeStatRight
+    row(Action::TalentAttribute, "talent_attribute", "Upgrade Attributes", Units, Talents, key(KeyCode::Digit3)), // TalentUpgradeAttribute
     row(Action::SelectHero, "select_hero", "Select hero", Units, Play, key(KeyCode::F1)), // HeroSelect
     row(Action::SelectCourier, "select_courier", "Select courier", Units, Play, key(KeyCode::F2)), // CourierSelect
     row(Action::CourierDeliver, "courier_deliver", "Courier: deliver items", Units, Play, key(KeyCode::F3)), // CourierDeliver
@@ -405,9 +421,15 @@ pub fn over_menus(action: Action) -> bool {
 #[derive(Component, Clone, Copy, Debug)]
 pub struct KeyLabel(pub Action);
 
+/// Whether the talent window is pinned open for one's own hero: its keys fire then, and no other
+/// binding fires on their chords.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TalentKeys(pub bool);
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Fired>()
         .init_resource::<Muted>()
+        .init_resource::<TalentKeys>()
         .add_systems(PreUpdate, deafen.before(bevy::input::InputSystems))
         .add_systems(PreUpdate, fire.after(bevy::input::InputSystems))
         .add_systems(Update, labels);
@@ -461,6 +483,7 @@ pub fn fire(
     mouse: Res<ButtonInput<MouseButton>>,
     settings: Res<crate::config::Settings>,
     muted: Res<Muted>,
+    talent_keys: Res<TalentKeys>,
     mut fired: ResMut<Fired>,
 ) {
     fired.pressed.clear();
@@ -477,9 +500,19 @@ pub fn fire(
         Input::Key(k) => keys.just_pressed(k),
         Input::Mouse(b) => mouse.just_pressed(b),
     };
+    // The window's keys work only while it is open, and then they own their chords.
+    let taken: Vec<Chord> = all()
+        .zip(settings.keys)
+        .filter(|(b, _)| b.context == Context::Talents && talent_keys.0)
+        .filter_map(|(_, chord)| chord)
+        .collect();
     let bound = || {
         all()
             .zip(settings.keys)
+            .filter(|(b, chord)| match b.context {
+                Context::Talents => talent_keys.0,
+                _ => !chord.is_some_and(|chord| taken.contains(&chord)),
+            })
             .filter_map(|(b, chord)| Some((b.action, chord?)))
             .filter(|(action, _)| *muted == Muted::No || over_menus(*action))
             .filter(|(_, chord)| modifiers_held(*chord, mods))
@@ -739,6 +772,50 @@ mod tests {
 
     fn fired(app: &App) -> &Fired {
         app.world().resource::<Fired>()
+    }
+
+    /// Dota's talent keys, 1 2 and 3, are the control groups' chords too: they clash with none
+    /// of them in the settings, they fire only while the window is pinned open, and then they
+    /// take the chord from the group.
+    #[test]
+    fn the_talent_keys_fire_only_with_the_window_open_and_then_alone_on_their_chord() {
+        let settings = Settings::default();
+        let at = |action| index_of(action).expect("bound");
+        assert!(
+            conflicts(&settings.keys, at(Action::TalentLeft)).is_empty(),
+            "the talent keys clash with the groups of the same chord in no setting"
+        );
+        let mut app = app(settings);
+        key(&mut app, KeyCode::Digit1, ButtonState::Pressed);
+        assert!(!fired(&app).pressed(Action::TalentLeft), "window closed");
+        assert!(fired(&app).pressed(Action::ControlGroup(0)));
+        key(&mut app, KeyCode::Digit1, ButtonState::Released);
+        app.insert_resource(TalentKeys(true));
+        key(&mut app, KeyCode::Digit1, ButtonState::Pressed);
+        assert!(fired(&app).pressed(Action::TalentLeft), "window open");
+        assert!(
+            !fired(&app).pressed(Action::ControlGroup(0)),
+            "the group does not fire on the window's chord"
+        );
+        key(&mut app, KeyCode::Digit1, ButtonState::Released);
+        key(&mut app, KeyCode::Digit4, ButtonState::Pressed);
+        assert!(
+            fired(&app).pressed(Action::ControlGroup(3)),
+            "a group on another chord still fires"
+        );
+    }
+
+    #[test]
+    fn two_talent_keys_on_one_chord_clash() {
+        let mut settings = Settings::default();
+        let left = index_of(Action::TalentLeft).expect("bound");
+        let right = index_of(Action::TalentRight).expect("bound");
+        settings.keys[right] = settings.keys[left];
+        assert_eq!(
+            conflicts(&settings.keys, left),
+            vec![Action::TalentRight],
+            "the window's own keys may not share a chord"
+        );
     }
 
     /// A key bound anew drives its action and the old one no longer does;

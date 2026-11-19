@@ -285,7 +285,7 @@ fn pick(
         Some(buff_tip(&look, shown.id, shown.ticks_left, rate))
     } else if let Some((entity, cell)) = hovered(&talent_cells) {
         over = Some(entity);
-        talent_tip(core, cell.0).map(note_tip)
+        talent_tip(&texts, core, cell.0).map(note_tip)
     } else if let Some((entity, slot)) = hovered(&abilities) {
         over = Some(entity);
         ability_tip(&look, core, slot.0, rate)
@@ -294,7 +294,7 @@ fn pick(
         entering_tip(&look, ability.0)
     } else if let Some((entity, hero)) = hovered(&talent_tiles) {
         over = Some(entity);
-        talents_tip(hero.0)
+        talents_tip(&texts, hero.0)
     } else if let Some((entity, slot)) = hovered(&items) {
         over = Some(entity);
         item_tip(&look, core, &bag, slot.0, rate)
@@ -357,7 +357,7 @@ fn pick_pregame(
     let over_talents = talent_tiles.iter().find(|(hover, ..)| hover.get());
     let content = over
         .and_then(|(_, tile, ..)| entering_tip(&look, tile.0))
-        .or_else(|| over_talents.and_then(|(_, tile, ..)| talents_tip(tile.0)));
+        .or_else(|| over_talents.and_then(|(_, tile, ..)| talents_tip(&texts, tile.0)));
     let rect = over
         .map(|(.., node, at)| {
             // The popup stands clear of the tile and of what the page keeps clear with it.
@@ -384,8 +384,8 @@ fn pick_pregame(
 }
 
 /// A hero's talents, a line for each level that opens a pair.
-fn talents_tip(hero: u16) -> Option<Content> {
-    let tree = crate::faces::talents(hero)?;
+fn talents_tip(texts: &Texts, hero: u16) -> Option<Content> {
+    let tree = crate::faces::talents(hero, texts)?;
     let mut lines = vec!["Talent Tree".to_string()];
     for (tier, level) in bota_core::rules::TALENT_LEVELS.iter().enumerate().rev() {
         let (first, second) = (tree.get(2 * tier)?, tree.get(2 * tier + 1)?);
@@ -498,15 +498,20 @@ fn buff_tip(look: &Lookup, id: u16, ticks_left: Option<u32>, rate: u32) -> Conte
     content
 }
 
-fn talent_tip(core: &bota_client_core::App, slot: u8) -> Option<String> {
+fn talent_tip(texts: &Texts, core: &bota_client_core::App, slot: u8) -> Option<String> {
     crate::hud::subject_hero(core)
-        .and_then(|h| crate::faces::talents(h.0))
+        .and_then(|h| crate::faces::talents(h.0, texts))
         .map(|tree| {
             let face = &tree[usize::from(slot)];
             let (level, second) = bota_client_core::talent_levels(TalentSlot(slot));
+            let about = if face.blurb.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", face.blurb)
+            };
             format!(
-                "{}\n{}\nOpens at level {level}; the other of its tier at {second}.",
-                face.name, face.blurb
+                "{}\n{about}Opens at level {level}; the other of its tier at {second}.",
+                face.name
             )
         })
 }

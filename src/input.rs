@@ -349,6 +349,9 @@ fn seat(
     if fired.pressed(Action::LearnStats) {
         panels.talents = !panels.talents;
     }
+    if core.my_slot.is_some() {
+        crate::talents::learn_by_key(core, fired);
+    }
     for group in 0..10u8 {
         if !fired.pressed(Action::ControlGroup(group)) {
             continue;

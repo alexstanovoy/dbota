@@ -730,7 +730,7 @@ fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
             ChildOf(column),
         ))
         .id();
-    crate::talents::spawn_button(kit, row, column);
+    crate::talents::spawn_button(kit, row, bar);
     spawn_innate(kit, row);
     for slot in 0..6u8 {
         spawn_ability_cell(kit, row, slot);

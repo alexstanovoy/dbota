@@ -118,6 +118,8 @@ mod soundscape;
 mod start;
 mod strategy;
 mod talent_glow;
+mod talent_texts;
+mod talent_window;
 mod tip_band;
 mod toasts;
 mod tower_cadence;

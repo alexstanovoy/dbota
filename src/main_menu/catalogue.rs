@@ -619,9 +619,9 @@ fn bar(kit: &mut Kit, column: Entity, label: &str, value: i32, regen: f32, groun
 }
 
 fn talents(kit: &mut Kit, root: Entity, hero: &bota_core::HeroDef, texts: &Texts) {
-    let Some(tree) = hero.talents else {
+    if hero.talents.is_none() {
         return;
-    };
+    }
     let section = kit.node(
         root,
         Node {
@@ -640,7 +640,7 @@ fn talents(kit: &mut Kit, root: Entity, hero: &bota_core::HeroDef, texts: &Texts
             ..default()
         },
     );
-    let Some(fallback) = crate::faces::talents(hero.id.0) else {
+    let Some(faces) = crate::faces::talents(hero.id.0, texts) else {
         return;
     };
     for tier in (0..bota_core::rules::TALENT_LEVELS.len()).rev() {
@@ -658,10 +658,7 @@ fn talents(kit: &mut Kit, root: Entity, hero: &bota_core::HeroDef, texts: &Texts
                 talent_level(kit, row, tier);
             }
             let index = tier * 2 + side;
-            let text = texts
-                .get(tree[index].key())
-                .map_or(fallback[index].name.as_str(), |entry| entry.name.as_str());
-            talent_cell(kit, row, text, side);
+            talent_cell(kit, row, &faces[index].name, side);
         }
     }
 }
