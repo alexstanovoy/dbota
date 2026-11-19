@@ -444,8 +444,8 @@ pub enum Extent {
 #[derive(Component, Clone, Copy)]
 pub struct Overhangs;
 
-/// A panel of the in-match interface that stands on its own, not under the HUD's root (the shop's,
-/// the talents' window): the layout tests (`e2e::hud_bounds`) walk it as they walk the HUD, so a
+/// A panel of the in-match interface that stands on its own, not under the HUD's root (the shop's is the
+/// first): the layout tests (`e2e::hud_bounds`) walk it as they walk the HUD, so a
 /// panel that registers itself here is held inside the window, inside its holders and apart from the
 /// other panels without a line in the tests. Name it: the tests tell their complaints by names.
 #[derive(Component, Clone, Copy)]

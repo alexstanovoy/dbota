@@ -2,7 +2,7 @@
 //! the foot of its portrait (`death_panel_buyback`'s `#BuybackButton`): the word, and under it
 //! the coin with the cost, or a clock's red time while the cooldown runs; dimmed when the seat
 //! cannot buy back, and a click buys back when it can. On the shop button, a gold frame while
-//! the seat has buyback (`#ShopButtonBuybackOverlay`), and over it while Alt is held the
+//! the seat has buyback (the game's buyback overlay of that button), and over it while Alt is held the
 //! header with what the gold leaves over the cost, or the cooldown (`#BuybackHeader`).
 
 use bevy::prelude::*;
@@ -235,7 +235,7 @@ impl BuybackLook {
 }
 
 /// The gold line above and the one below the shop button while the seat has buyback, as Dota
-/// draws `#ShopButtonBuybackOverlay`: a black plate three of Dota's pixels taller than the button
+/// draws its buyback overlay of that button: a black plate three of Dota's pixels taller than the button
 /// on either side, behind it, with a gradient edge (dark gold at the ends, bright in the middle)
 /// along its top and bottom and none at the sides. `left`, `top` (in interface pixels) and `width`
 /// are the button's.
