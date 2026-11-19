@@ -11,7 +11,7 @@ use bevy::{
     picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
     ui_widgets::Button,
 };
-use bota_core::rules::GLYPH_COOLDOWN_TICKS;
+use bota_core::rules::{GLYPH_RECHARGE_TICKS, GLYPH_USE_COOLDOWN_TICKS};
 
 use crate::hud::{Blocker, Docks};
 use crate::manifest::Manifest;
@@ -137,11 +137,11 @@ fn show(
 ) {
     let core = &session.0;
     let rate = u32::from(core.tick_rate()).max(1);
-    // One's own side's Glyph, whose wait the view tells.
-    let Some(ready_in) = core
+    // One's own side's Glyph, whose wait and charges the view tells.
+    let Some((ready_in, charges)) = core
         .my_slot
         .and_then(|_| core.glyph())
-        .and_then(|glyph| glyph.ready_after)
+        .and_then(|glyph| glyph.ready_after.zip(glyph.charges))
     else {
         frame.set_if_neq(Visibility::Hidden);
         return;
@@ -161,7 +161,14 @@ fn show(
         image.color = art_color;
     }
     // Dark over what is still to wait, clear over what has passed.
-    let left = (ready_in as f32 / GLYPH_COOLDOWN_TICKS as f32).clamp(0.0, 1.0);
+    // Since 7.42 the wait is a charge's six minutes when none is held, else the seven seconds
+    // between two uses.
+    let wait = if charges == 0 {
+        GLYPH_RECHARGE_TICKS
+    } else {
+        GLYPH_USE_COOLDOWN_TICKS
+    };
+    let left = (ready_in as f32 / wait as f32).clamp(0.0, 1.0);
     let dark = Color::srgba(0.0, 0.0, 0.0, if waiting { 0.68 } else { 0.0 });
     let wanted = ui::split_disc((1.0 - left) * TAU, Color::NONE, dark);
     if **sweep != wanted {
