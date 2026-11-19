@@ -28,8 +28,9 @@ use bevy::audio::{
     PlaybackSettings, Source, Volume,
 };
 use bevy::prelude::*;
-use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
-use rodio::cpal::StreamError;
+use rodio::Player;
+use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use rodio::cpal::{self, StreamError};
 use rodio::mixer::{Mixer, MixerSource};
 
 mod presentation;
@@ -363,35 +364,119 @@ fn open(failed: Arc<AtomicBool>) -> Option<Stream> {
 }
 
 struct DeviceStream {
-    _sink: MixerDeviceSink,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        expect(dead_code, reason = "owns the output callback")
+    )]
+    stream: cpal::Stream,
     mixer: Mixer,
     presentation: Clock,
+    #[cfg(not(target_arch = "wasm32"))]
+    opened: Instant,
 }
 
 impl DeviceStream {
-    // The stream still delivers audio, but it cannot publish when the samples are heard.
     fn clock_time(&self) -> f64 {
-        0.0
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.opened.elapsed().as_secs_f64()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let cpal::platform::StreamInner::WebAudio(stream) = self.stream.as_inner();
+            let context = stream.audio_context();
+            let read = |object: &wasm_bindgen::JsValue, key: &str| {
+                js_sys::Reflect::get(object, &key.into()).ok()
+            };
+            use wasm_bindgen::JsCast as _;
+            if let Some(time) = read(context.as_ref(), "getOutputTimestamp")
+                .and_then(|method| method.dyn_into::<js_sys::Function>().ok())
+                .and_then(|method| method.call0(context.as_ref()).ok())
+                .and_then(|stamp| read(&stamp, "contextTime"))
+                .and_then(|time| time.as_f64())
+            {
+                return time;
+            }
+            let latency = |key| {
+                read(context.as_ref(), key)
+                    .and_then(|time| time.as_f64())
+                    .unwrap_or(0.0)
+            };
+            (context.current_time() - latency("baseLatency") - latency("outputLatency")).max(0.0)
+        }
     }
 }
 
+/// Preserve the default device's format and the existing buffer sizing policy while keeping
+/// the callback's playback timestamp, which the mixer's decoder position does not include.
 fn open_device(failed: Arc<AtomicBool>) -> Option<DeviceStream> {
-    let mut sink = DeviceSinkBuilder::from_default_device()
-        .and_then(|builder| {
-            builder
-                .with_error_callback(move |error| {
-                    if is_fatal(&error) && !failed.swap(true, Ordering::Release) {
-                        warn!("audio stream error: {error}");
-                    }
-                })
-                .open_stream()
+    let open = || -> Result<DeviceStream, Box<dyn std::error::Error>> {
+        let device = cpal::default_host()
+            .default_output_device()
+            .ok_or("no default output")?;
+        let supported = device.default_output_config()?;
+        let mut config = supported.config();
+        let target = (config.sample_rate / 20).max(1);
+        let upper = target.next_power_of_two();
+        let lower = (upper / 2).max(1);
+        config.buffer_size = cpal::BufferSize::Fixed(if target - lower <= upper - target {
+            lower
+        } else {
+            upper
+        });
+        let channels = NonZero::new(config.channels).ok_or("no output channels")?;
+        let rate = NonZero::new(config.sample_rate).ok_or("zero output sample rate")?;
+        let (mixer, samples) = rodio::mixer::mixer(channels, rate);
+        let presentation = Clock::new(rate);
+        let mut render = Render::new(samples, presentation.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let opened = Instant::now();
+        let error = move |error| {
+            if is_fatal(&error) && !failed.swap(true, Ordering::Release) {
+                warn!("audio stream error: {error}");
+            }
+        };
+        macro_rules! open_format {
+            ($($format:ident => $sample:ty),+ $(,)?) => {
+                match supported.sample_format() {
+                    $(cpal::SampleFormat::$format => device.build_output_stream(
+                        &config,
+                        move |data: &mut [$sample], info| {
+                            let stamp = info.timestamp();
+                            #[cfg(not(target_arch = "wasm32"))]
+                            let at = opened.elapsed().as_secs_f64()
+                                + stamp.playback.duration_since(&stamp.callback)
+                                    .map_or(0.0, |latency| latency.as_secs_f64());
+                            #[cfg(target_arch = "wasm32")]
+                            let at = stamp.playback.max(stamp.callback)
+                                .duration_since(&cpal::StreamInstant::new(0, 0))
+                                .map_or(0.0, |time| time.as_secs_f64());
+                            render.fill(data, at);
+                        },
+                        error,
+                        None,
+                    )?,)+
+                    _ => return Err("unsupported output sample format".into()),
+                }
+            }
+        }
+        let stream = open_format!(
+            F32 => f32, F64 => f64,
+            I8 => i8, I16 => i16, I24 => cpal::I24, I32 => i32, I64 => i64,
+            U8 => u8, U16 => u16, U24 => cpal::U24, U32 => u32, U64 => u64,
+        );
+        stream.play()?;
+        Ok(DeviceStream {
+            stream,
+            mixer,
+            presentation,
+            #[cfg(not(target_arch = "wasm32"))]
+            opened,
         })
+    };
+    open()
         .inspect_err(|error| warn!("no audio device: {error}"))
-        .ok()?;
-    sink.log_on_drop(false);
-    let mixer = sink.mixer().clone();
-    let presentation = Clock::new(sink.config().sample_rate());
-    Some(DeviceStream { _sink: sink, mixer, presentation })
+        .ok()
 }
 
 /// How long a loop takes to rise when it starts and to fall when it ends: a few hundred samples,
