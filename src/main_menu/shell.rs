@@ -602,12 +602,9 @@ fn keyboard(
 struct DemoStart {
     epoch: u32,
     picked: bool,
-    begun: bool,
 }
 
-/// Dota's Demo Hero starts at once: the hero chosen is picked and readied,
-/// and once the match stands the game clock goes to the horn and the lane
-/// creeps wait for the panel's Creeps (as Dota's demo has them off).
+/// Readies the chosen hero on the demo server. The map starts its own waves and clock.
 fn demo_start(
     core: Option<NonSend<MenuCore>>,
     mut session: NonSendMut<Session>,
@@ -629,15 +626,6 @@ fn demo_start(
         game.act(bota_client_core::Intent::PickHero(hero.0));
         if !game.ready {
             game.act(bota_client_core::Intent::ToggleReady);
-        }
-    }
-    if !state.begun && game.my_standing_hero().is_some() {
-        state.begun = true;
-        for cheat in [
-            bota_proto::Cheat::StartGame,
-            bota_proto::Cheat::CreepSpawning { on: false },
-        ] {
-            game.act(bota_client_core::Intent::Cheat(cheat));
         }
     }
 }

@@ -1,146 +1,132 @@
-//! Dota's Demo Hero panel (the install's `hud_hero_demo`: a 280-pixel
-//! column at the left, its categories SPAWN, UNITS and GLOBAL, Dota's
-//! colours and its own words): every button sends one cheat, so the panel
-//! does nothing a typed `-command` could not. It shows only in a Demo Hero
-//! game.
-//!
-//! What lands at a spot (the creeps there, a teleport) waits for a click on
-//! the ground; a right click lets it go.
+//! The in-match cheat panel. Hero actions address the selected hero; world actions are
+//! sent from the player's seat. Placement waits for a world click.
 
+use bevy::input::keyboard::Key;
+use bevy::picking::{events::PointerPress, hover::Hovered, pointer::PointerButton};
 use bevy::prelude::*;
-use bevy::{
-    picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
-    ui_widgets::Button,
-};
-use bota_client_core::{App as Core, Intent, world_vec};
-use bota_proto::{Cheat, HeroId, Vec2};
+use bevy::ui_widgets::Button;
+use bota_client_core::{App as Core, Source, world_vec};
+use bota_proto::{Cheat, EntityId, HeroId, ItemId, Order, Vec2};
 
 use crate::dota_text::Texts;
 use crate::hud::Blocker;
+use crate::input::Typing;
 use crate::main_menu::{Act, MenuCore};
 use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::ui::{self, Fonts, dota};
 
-/// Gold one click of the panel gives, and its bigger button.
-const GOLD_STEPS: [i32; 2] = [1_000, 10_000];
-/// How far in front of one's hero a spawned hero stands, in world units:
-/// clear of the fountain's reach when the hero stands at it.
-const SPAWN_AHEAD: i32 = 1_600;
-/// Items the search shows at most.
-const FOUND_ITEMS: usize = 12;
-/// The panel's measures, in Dota's pixels: its width (`.ControlPanelContainer`), the padding round
-/// its contents, a button's height, the space over and under a row of buttons and between the
-/// buttons of one, and the sizes of the words on it.
 const WIDTH: f32 = 280.0;
-const PADDING: (f32, f32) = (9.5, 6.0);
-const BUTTON_HEIGHT: f32 = 26.0;
-const ROW_SPACE: f32 = 5.0;
-const BUTTON_GAP: f32 = 2.0;
-const HEADER_SIZE: f32 = 14.0;
-const BUTTON_SIZE: f32 = 13.0;
-/// How far the panel stands under the screen's top, in interface pixels, and the room it leaves over
-/// the minimap.
+const THUMB: f32 = 24.0;
 const TOP: f32 = 129.5;
-const MINIMAP_ROOM: f32 = 10.0;
+const ROW_HEIGHT: f32 = 26.0;
+const GAP: f32 = 4.0;
+const FOUND_ITEMS: usize = 6;
+const SEARCH_BYTES: usize = 32;
 
-/// What waits for a click on the ground.
+const BODY: Color = Color::srgb_u8(32, 37, 40);
+const BUTTON: Color = Color::srgb_u8(61, 66, 70);
+const EDGE: Color = Color::srgb_u8(80, 86, 90);
+const ACCENT: Color = Color::srgb_u8(65, 86, 109);
+const ALLY: Color = Color::srgb_u8(51, 86, 64);
+const ENEMY: Color = Color::srgb_u8(108, 53, 51);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Placing {
-    /// Enemy creeps at the spot.
+enum Placement {
+    Hero { hero: HeroId, enemy: bool },
     Creeps,
-    /// One's hero to the spot.
-    Teleport,
+    Teleport(EntityId),
 }
 
-/// The panel's state: its toggles as last sent, the hero to spawn, what
-/// waits for a click, and the item search.
-#[derive(Resource, Debug, Clone, PartialEq, Eq)]
-pub struct DemoPanel {
-    /// Shown, or folded away (Dota's slide thumb).
-    pub open: bool,
-    pub spawn_hero: u16,
-    pub placing: Option<Placing>,
-    pub free_spells: bool,
-    /// Lane creeps spawn on their clock: off as Demo Hero starts.
-    pub creeps: bool,
-    pub all_vision: bool,
-    pub invulnerable: bool,
-    /// The item search as typed, and whether the keyboard is in it.
-    pub search: String,
-    pub typing: bool,
-}
-
-impl Default for DemoPanel {
-    fn default() -> DemoPanel {
-        DemoPanel {
-            open: true,
-            spawn_hero: HeroId::PUDGE.0,
-            placing: None,
-            free_spells: false,
-            creeps: false,
-            all_vision: false,
-            invulnerable: false,
-            search: String::new(),
-            typing: false,
+impl Placement {
+    fn order(self, at: Vec2) -> (Option<EntityId>, Cheat) {
+        match self {
+            Self::Hero { hero, enemy } => (None, Cheat::CreateHero { hero, enemy, at }),
+            Self::Creeps => (None, Cheat::CreateCreeps { enemy: true, at }),
+            Self::Teleport(hero) => (Some(hero), Cheat::Teleport { at }),
         }
     }
 }
 
-/// A press of the panel.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-enum Press {
-    Fold,
-    SpawnHero(u16),
-    SpawnAlly,
-    SpawnEnemy,
-    LevelUp,
-    LevelMax,
-    Invulnerable,
-    Reset,
-    LevelEnemies,
-    Respawn,
-    Teleport,
-    Gold(i32),
-    FreeSpells,
-    Creeps,
-    Night,
-    AllVision,
-    CreepWave,
-    CreepsAt,
-    Neutrals,
-    Refresh,
-    Search,
-    Grant(u16),
-    Quit,
+#[derive(Resource, Debug, Default)]
+pub struct DemoPanel {
+    open: Option<bool>,
+    spawn_hero: Option<HeroId>,
+    placing: Option<Placement>,
+    pub search: String,
+    typing: bool,
+    scroll: f32,
 }
 
-impl Press {
-    /// The name a script clicks it by: `demo levelmax`, `demo gold(1000)`.
-    fn name(self) -> String {
-        format!("demo {self:?}").to_lowercase()
+impl DemoPanel {
+    /// Called by world input before it interprets a click as a selection or order.
+    pub fn world_click(
+        &mut self,
+        core: &mut Core,
+        buttons: &ButtonInput<MouseButton>,
+        ground: (f32, f32),
+    ) -> bool {
+        let Some(placement) = self.placing else {
+            return false;
+        };
+        if buttons.just_pressed(MouseButton::Right) {
+            self.placing = None;
+            return true;
+        }
+        if buttons.just_pressed(MouseButton::Left) {
+            self.placing = None;
+            let (hero, cheat) = placement.order(world_vec(ground));
+            send(core, hero, cheat);
+            return true;
+        }
+        false
     }
+}
+
+#[derive(Component, Clone, Copy)]
+enum Press {
+    Fold,
+    SpawnKind(HeroId),
+    Spawn(bool),
+    CreepsHere,
+    Move,
+    World(Cheat),
+    Hero(Cheat),
+    Search,
+    Grant(ItemId),
+    Quit,
 }
 
 #[derive(Component)]
 struct PanelRoot;
 
+#[derive(Component)]
+struct PanelBody;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<DemoPanel>()
         .add_systems(Startup, spawn_root)
-        .add_systems(PreUpdate, place.after(bevy::input::InputSystems))
+        .add_systems(
+            First,
+            crate::loading::reset::<DemoPanel>.in_set(crate::loading::Begin),
+        )
         .add_observer(presses)
-        .add_systems(Update, draw);
+        .add_systems(Update, draw.in_set(ui::WidgetBuild))
+        .add_systems(Update, (paint, scroll).in_set(ui::WidgetPaint));
 }
 
 fn spawn_root(mut commands: Commands) {
     commands.spawn((
         PanelRoot,
+        ui::HudPanel,
+        Name::new("demo controls"),
         Node {
             position_type: PositionType::Absolute,
             left: px(0),
             top: px(TOP),
-            bottom: px(crate::minimap::SIDE + MINIMAP_ROOM),
+            bottom: px(crate::minimap::SIDE + ui::BAR_MARGIN),
+            width: dota(WIDTH + THUMB),
+            align_items: AlignItems::Center,
             ..default()
         },
         Pickable::IGNORE,
@@ -148,678 +134,131 @@ fn spawn_root(mut commands: Commands) {
     ));
 }
 
-/// The hero of the Demo Hero game on screen, if one is.
-fn demo_on_screen(menu: Option<&MenuCore>) -> bool {
-    menu.is_some_and(|menu| menu.demo_hero().is_some() && menu.shows_game())
+fn allowed(core: &Core) -> bool {
+    matches!(core.source, Source::Live(_))
+        && core.my_slot.is_some()
+        && core.view().is_some()
+        && core.over.is_none()
+        && !core.lost
+        && core
+            .statics()
+            .is_some_and(|statics| statics.metadata().cheats)
 }
 
-/// Sends one cheat.
-fn cheat(core: &mut Core, cheat: Cheat) {
-    core.act(Intent::Cheat(cheat));
+fn is_demo(core: &Core, menu: Option<&MenuCore>) -> bool {
+    core.statics()
+        .is_some_and(|statics| statics.metadata().map == bota_core::HERO_DEMO_ID)
+        || menu.is_some_and(|menu| menu.demo_hero().is_some())
 }
 
-/// The spot `SPAWN_AHEAD` in front of one's hero, towards the enemy's
-/// fountain: where Dota's demo stands a spawned hero.
-fn ahead_of_hero(core: &Core) -> Option<Vec2> {
-    let hero = core
-        .my_hero()
-        .and_then(|id| core.known(id))
-        .map(|(u, _)| u.pos)?;
-    let session = core.session()?;
-    let toward = bota_core::fountain_pos(session.map(), session.enemy());
-    let (dx, dy) = ((toward.x - hero.x).to_f32(), (toward.y - hero.y).to_f32());
-    let length = (dx * dx + dy * dy).sqrt().max(1.0);
-    let ahead = SPAWN_AHEAD as f32 / length;
-    Some(world_vec((
-        hero.x.to_f32() + dx * ahead,
-        hero.y.to_f32() + dy * ahead,
-    )))
+fn spawn_kind(panel: &DemoPanel, core: &Core) -> HeroId {
+    panel
+        .spawn_hero
+        .or_else(|| selected_hero(core).map(|(_, hero, _)| hero))
+        .unwrap_or(HeroId::PUDGE)
 }
 
-/// Whether it is night in the view now.
-fn night(core: &Core) -> bool {
-    crate::daylight::night(core).unwrap_or(false)
+fn selected_hero(core: &Core) -> Option<(EntityId, HeroId, bool)> {
+    let selected = core.commanded()?;
+    let seat = core
+        .view()?
+        .players
+        .iter()
+        .find(|seat| seat.unit == Some(selected))?;
+    let created = core.created_seat(seat.slot);
+    (Some(seat.slot) == core.my_slot || created).then_some((selected, seat.hero, created))
 }
 
-/// The panel's buttons, pressed.
+fn send(core: &mut Core, hero: Option<EntityId>, cheat: Cheat) {
+    if allowed(core) {
+        core.send_order_to(hero, Order::Cheat { cheat });
+    }
+}
+
 fn presses(
     event: On<PointerPress>,
     mut session: NonSendMut<Session>,
     mut menu: Option<NonSendMut<MenuCore>>,
     mut panel: ResMut<DemoPanel>,
     buttons: Query<&Press>,
-    mut typing: ResMut<crate::input::Typing>,
+    mut typing: ResMut<Typing>,
+    shown: Res<ui::HudShown>,
 ) {
-    if event.button != PointerButton::Primary || !demo_on_screen(menu.as_deref()) {
+    let core = &mut session.0;
+    if event.button != PointerButton::Primary || !shown.0 || !allowed(core) {
         return;
     }
-    let core = &mut session.0;
-    if let Ok(&press) = buttons.get(event.entity) {
-        match press {
-            Press::Fold => panel.open = !panel.open,
-            Press::SpawnHero(hero) => panel.spawn_hero = hero,
-            Press::SpawnAlly | Press::SpawnEnemy => {
-                if let Some(at) = ahead_of_hero(core) {
-                    let hero = HeroId(panel.spawn_hero);
-                    let enemy = press == Press::SpawnEnemy;
-                    cheat(core, Cheat::CreateHero { hero, enemy, at });
-                }
-            }
-            Press::LevelUp => cheat(core, Cheat::Levels { count: 1 }),
-            Press::LevelMax => cheat(
-                core,
-                Cheat::Levels {
-                    count: bota_core::rules::HERO_MAX_LEVEL,
-                },
-            ),
-            Press::Invulnerable => {
-                panel.invulnerable = !panel.invulnerable;
-                let on = panel.invulnerable;
-                cheat(core, Cheat::Invulnerable { on });
-            }
-            Press::Reset => cheat(core, Cheat::ResetHero),
-            Press::LevelEnemies => cheat(core, Cheat::LevelBots { count: 1 }),
-            Press::Respawn => cheat(core, Cheat::Respawn),
-            Press::Teleport => panel.placing = Some(Placing::Teleport),
-            Press::Gold(amount) => cheat(core, Cheat::Gold { amount }),
-            Press::FreeSpells => {
-                panel.free_spells = !panel.free_spells;
-                let on = panel.free_spells;
-                cheat(core, Cheat::Wtf { on });
-            }
-            Press::Creeps => {
-                panel.creeps = !panel.creeps;
-                let on = panel.creeps;
-                cheat(core, Cheat::CreepSpawning { on });
-            }
-            Press::Night => {
-                let night = !night(core);
-                cheat(core, Cheat::TimeOfDay { night });
-            }
-            Press::AllVision => {
-                panel.all_vision = !panel.all_vision;
-                let on = panel.all_vision;
-                cheat(core, Cheat::AllVision { on });
-            }
-            Press::CreepWave => cheat(core, Cheat::SpawnCreeps),
-            Press::CreepsAt => panel.placing = Some(Placing::Creeps),
-            Press::Neutrals => cheat(core, Cheat::SpawnNeutrals),
-            Press::Refresh => cheat(core, Cheat::Refresh),
-            Press::Search => {
-                panel.typing = true;
-                *typing = crate::input::Typing::DemoSearch;
-            }
-            Press::Grant(item) => cheat(
-                core,
-                Cheat::Item {
-                    item: bota_proto::ItemId(item),
-                },
-            ),
-            Press::Quit => {
-                if let Some(menu) = menu.as_mut() {
-                    menu.act(Act::Disconnect);
-                }
+    let Ok(&press) = buttons.get(event.entity) else {
+        return;
+    };
+    panel.typing = matches!(press, Press::Search);
+    if panel.typing {
+        *typing = Typing::DemoSearch;
+    } else if *typing == Typing::DemoSearch {
+        *typing = Typing::No;
+    }
+    match press {
+        Press::Fold => {
+            panel.open = Some(!panel.open.unwrap_or(is_demo(core, menu.as_deref())));
+            panel.placing = None;
+        }
+        Press::SpawnKind(hero) => panel.spawn_hero = Some(hero),
+        Press::Spawn(enemy) => {
+            panel.placing = Some(Placement::Hero {
+                hero: spawn_kind(&panel, core),
+                enemy,
+            })
+        }
+        Press::CreepsHere => panel.placing = Some(Placement::Creeps),
+        Press::Move => {
+            panel.placing = selected_hero(core).map(|(id, _, _)| Placement::Teleport(id));
+        }
+        Press::World(order) => send(core, None, order),
+        Press::Hero(order) => send_to_selected(core, order),
+        Press::Grant(item) => send_to_selected(core, Cheat::Item { item }),
+        Press::Search => {}
+        Press::Quit => {
+            if let Some(menu) = &mut menu {
+                menu.act(Act::Disconnect);
             }
         }
     }
 }
 
-/// A click on the ground for what waits for one; a right click lets it go.
-/// The click is the panel's: the world never sees it.
-fn place(
-    mut session: NonSendMut<Session>,
-    menu: Option<NonSend<MenuCore>>,
-    mut panel: ResMut<DemoPanel>,
-    mut mouse: ResMut<ButtonInput<MouseButton>>,
-    cursor: Res<crate::camera::CursorGround>,
-    over: Res<crate::input::OverHud>,
-) {
-    let Some(placing) = panel.placing else {
-        return;
-    };
-    if !demo_on_screen(menu.as_deref()) {
-        panel.placing = None;
-        return;
-    }
-    if mouse.just_pressed(MouseButton::Right) {
-        mouse.clear_just_pressed(MouseButton::Right);
-        panel.placing = None;
-        return;
-    }
-    if over.0 || !mouse.just_pressed(MouseButton::Left) {
-        return;
-    }
-    let Some(at) = cursor.0.map(|p| world_vec((p.x, -p.z))) else {
-        return;
-    };
-    mouse.clear_just_pressed(MouseButton::Left);
-    panel.placing = None;
-    let core = &mut session.0;
-    match placing {
-        Placing::Creeps => cheat(core, Cheat::CreateCreeps { enemy: true, at }),
-        Placing::Teleport => cheat(core, Cheat::Teleport { at }),
+fn send_to_selected(core: &mut Core, cheat: Cheat) {
+    if let Some((id, _, created)) = selected_hero(core)
+        && (cheat != Cheat::RemoveHero || created)
+    {
+        send(core, Some(id), cheat);
     }
 }
 
-/// What the panel draws, to tell when it must be built again.
-#[derive(Clone, PartialEq)]
-struct Shown {
-    panel: DemoPanel,
-    night: bool,
-    found: Vec<u16>,
-}
-
-/// Builds the panel again when what it shows changed; hides it outside a
-/// Demo Hero game.
-#[allow(clippy::too_many_arguments)]
-fn draw(
-    mut commands: Commands,
-    session: NonSend<Session>,
-    menu: Option<NonSend<MenuCore>>,
-    panel: Res<DemoPanel>,
-    texts: Res<Texts>,
-    manifest: Res<Manifest>,
-    catalog: Res<crate::shop::Catalog>,
-    fonts: Res<Fonts>,
-    server: Res<AssetServer>,
-    root: Single<Entity, With<PanelRoot>>,
-    mut drawn: Local<Option<Shown>>,
-) {
-    let core = &session.0;
-    if !demo_on_screen(menu.as_deref()) {
-        if drawn.take().is_some() {
-            commands.entity(*root).despawn_children();
-        }
-        return;
-    }
-    let look = crate::tip_content::Lookup {
-        texts: &texts,
-        manifest: &manifest,
-        rates: Default::default(),
-    };
-    let found: Vec<u16> = catalog
-        .search(&look, &panel.search)
+pub fn item_results(
+    catalog: &crate::shop::Catalog,
+    look: &crate::tip_content::Lookup,
+    search: &str,
+) -> impl Iterator<Item = ItemId> + use<> {
+    catalog
+        .search(look, search)
         .into_iter()
-        .filter(|id| bota_core::item_def(bota_proto::ItemId(*id)).is_some())
+        .map(ItemId)
+        .filter(|&id| bota_core::item_def(id).is_some())
         .take(FOUND_ITEMS)
-        .collect();
-    let shown = Shown {
-        panel: panel.clone(),
-        night: night(core),
-        found,
-    };
-    if drawn.as_ref() == Some(&shown) {
-        return;
-    }
-    commands.entity(*root).despawn_children();
-    let mut kit = Kit {
-        commands: &mut commands,
-        fonts: &fonts,
-        texts: &texts,
-        manifest: &manifest,
-        server: &server,
-    };
-    build(&mut kit, *root, &shown);
-    *drawn = Some(shown);
 }
 
-/// What the builders need.
-struct Kit<'a, 'w, 's> {
-    commands: &'a mut Commands<'w, 's>,
-    fonts: &'a Fonts,
-    texts: &'a Texts,
-    manifest: &'a Manifest,
-    server: &'a AssetServer,
-}
-
-/// The panel's colours: Dota's `hud_hero_demo` and `DemoButton`.
-const PANEL_FROM: Color = Color::srgb(
-    0x20 as f32 / 255.0,
-    0x25 as f32 / 255.0,
-    0x27 as f32 / 255.0,
-);
-const PANEL_TO: Color = Color::srgb(
-    0x20 as f32 / 255.0,
-    0x22 as f32 / 255.0,
-    0x24 as f32 / 255.0,
-);
-const BUTTON: Color = Color::srgb(
-    0x3e as f32 / 255.0,
-    0x41 as f32 / 255.0,
-    0x44 as f32 / 255.0,
-);
-const BUTTON_EDGE: Color = Color::srgb(
-    0x4e as f32 / 255.0,
-    0x51 as f32 / 255.0,
-    0x55 as f32 / 255.0,
-);
-const BUTTON_INK: Color = Color::srgb(
-    0xd8 as f32 / 255.0,
-    0xda as f32 / 255.0,
-    0xde as f32 / 255.0,
-);
-const RULE: Color = Color::srgba(
-    0x4e as f32 / 255.0,
-    0x51 as f32 / 255.0,
-    0x55 as f32 / 255.0,
-    0.6,
-);
-const LIT: Color = Color::srgb(
-    0x7e as f32 / 255.0,
-    0x94 as f32 / 255.0,
-    0xb1 as f32 / 255.0,
-);
-const ALLY: Color = Color::srgb(0.16, 0.42, 0.18);
-const ENEMY: Color = Color::srgb(0.48, 0.13, 0.1);
-
-impl Kit<'_, '_, '_> {
-    /// One of the demo's words from the install (`addon_english`), else this
-    /// client's own.
-    fn word(&self, key: &str, own: &str) -> String {
-        self.texts.label(key, &[]).unwrap_or_else(|| own.to_owned())
-    }
-
-    fn node(&mut self, parent: Entity, node: Node) -> Entity {
-        self.commands
-            .spawn((node, Pickable::IGNORE, ChildOf(parent)))
-            .id()
-    }
-
-    fn text(&mut self, parent: Entity, text: impl Into<String>, size: f32, color: Color) {
-        self.commands.spawn((
-            ui::text(text, &self.fonts.bold, size, color),
-            Pickable::IGNORE,
-            ChildOf(parent),
-        ));
-    }
-
-    /// A category's header (`.CategoryHeader`).
-    fn header(&mut self, parent: Entity, text: String) {
-        let line = self.node(
-            parent,
-            Node {
-                margin: UiRect::bottom(dota(4.0)),
-                ..default()
-            },
-        );
-        self.text(
-            line,
-            text.to_uppercase(),
-            HEADER_SIZE * ui::DOTA,
-            Color::srgb(0.96, 0.96, 0.96),
-        );
-    }
-
-    /// A row of buttons sharing its width (`.Row`).
-    fn row(&mut self, parent: Entity) -> Entity {
-        self.node(
-            parent,
-            Node {
-                width: percent(100),
-                column_gap: dota(BUTTON_GAP),
-                margin: UiRect::vertical(dota(ROW_SPACE)),
-                ..default()
-            },
-        )
-    }
-
-    /// One of the demo's buttons (`.DemoButton`), lit while what it toggles
-    /// is on, in a side's colour for spawning.
-    fn button(&mut self, parent: Entity, label: String, press: Press, fill: Color) -> Entity {
-        let button = self
-            .commands
-            .spawn((
-                press,
-                Button,
-                Hovered::default(),
-                Blocker,
-                Name::new(press.name()),
-                Node {
-                    height: dota(BUTTON_HEIGHT),
-                    flex_grow: 1.0,
-                    flex_basis: px(0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border: UiRect::all(px(1)),
-                    ..default()
-                },
-                BackgroundColor(fill),
-                BorderColor::all(BUTTON_EDGE),
-                ChildOf(parent),
-            ))
-            .id();
-        self.commands.spawn((
-            ui::text(
-                label.to_uppercase(),
-                &self.fonts.regular,
-                BUTTON_SIZE * ui::DOTA,
-                BUTTON_INK,
-            ),
-            TextLayout::justify(Justify::Center),
-            Pickable::IGNORE,
-            ChildOf(button),
-        ));
-        button
-    }
-
-    /// A toggle (`.DemoToggleButton`): lit while on.
-    fn toggle(&mut self, parent: Entity, label: String, press: Press, on: bool) {
-        self.button(parent, label, press, if on { LIT } else { BUTTON });
-    }
-
-    fn rule(&mut self, parent: Entity) {
-        self.commands.spawn((
-            Node {
-                width: percent(100),
-                height: px(1),
-                margin: UiRect::vertical(dota(5.0)),
-                ..default()
-            },
-            BackgroundColor(RULE),
-            Pickable::IGNORE,
-            ChildOf(parent),
-        ));
-    }
-}
-
-/// The whole panel.
-fn build(kit: &mut Kit, root: Entity, shown: &Shown) {
-    let panel = &shown.panel;
-    let column = kit
-        .commands
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::FlexStart,
-                max_height: percent(100),
-                ..default()
-            },
-            Pickable::IGNORE,
-            ChildOf(root),
-        ))
-        .id();
-    if panel.open {
-        let body = kit
-            .commands
-            .spawn((
-                Blocker,
-                Hovered::default(),
-                Name::new("hud demo panel"),
-                Node {
-                    width: dota(WIDTH),
-                    max_height: percent(100),
-                    flex_direction: FlexDirection::Column,
-                    padding: UiRect::axes(dota(PADDING.0), dota(PADDING.1)),
-                    border: UiRect::all(px(1)),
-                    overflow: Overflow::scroll_y(),
-                    ..default()
-                },
-                ScrollPosition::default(),
-                BackgroundGradient::from(LinearGradient::to_left(vec![
-                    PANEL_FROM.into(),
-                    PANEL_TO.into(),
-                ])),
-                BorderColor::all(Color::BLACK),
-                ChildOf(column),
-            ))
-            .id();
-        contents(kit, body, shown);
-    }
-    // Dota's slide thumb folds the panel away and back.
-    let thumb = kit
-        .commands
-        .spawn((
-            Press::Fold,
-            Button,
-            Hovered::default(),
-            Blocker,
-            Name::new("demo fold"),
-            Node {
-                width: px(25),
-                height: px(120),
-                align_self: AlignSelf::Center,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::right(px(10)),
-                ..default()
-            },
-            BackgroundGradient::from(LinearGradient::to_right(vec![
-                Color::srgb(0.07, 0.07, 0.07).into(),
-                Color::srgb(0.23, 0.23, 0.23).into(),
-            ])),
-            ChildOf(column),
-        ))
-        .id();
-    kit.text(thumb, if panel.open { "‹" } else { "›" }, 20.0, BUTTON_INK);
-}
-
-fn contents(kit: &mut Kit, body: Entity, shown: &Shown) {
-    let panel = &shown.panel;
-    // SPAWN: the hero to spawn, and on which side.
-    let spawn = kit.word("SpawnUnits_ButtonCategory", "Spawn");
-    kit.header(body, spawn);
-    let picker = kit
-        .commands
-        .spawn((
-            Node {
-                column_gap: px(6),
-                padding: UiRect::all(px(4)),
-                border: UiRect::all(px(1)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
-            BorderColor::all(RULE),
-            Pickable::IGNORE,
-            ChildOf(body),
-        ))
-        .id();
-    for (id, hero) in bota_core::HEROES.iter().enumerate() {
-        let Ok(id) = u16::try_from(id) else {
-            continue;
-        };
-        let chosen = panel.spawn_hero == id;
-        let card = kit
-            .commands
-            .spawn((
-                Press::SpawnHero(id),
-                Button,
-                Hovered::default(),
-                Blocker,
-                Name::new(format!(
-                    "demo hero {}",
-                    kit.texts.name(hero.key).to_lowercase()
-                )),
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    flex_grow: 1.0,
-                    border: UiRect::all(px(1)),
-                    ..default()
-                },
-                BorderColor::all(if chosen { Color::WHITE } else { Color::NONE }),
-                BackgroundGradient::from(LinearGradient::to_bottom(vec![
-                    Color::srgb_u8(0x37, 0x3f, 0x43).into(),
-                    Color::srgb_u8(0x21, 0x27, 0x2a).into(),
-                ])),
-                ChildOf(picker),
-            ))
-            .id();
-        if let Some(path) = kit.manifest.portrait(id) {
-            kit.commands.spawn((
-                Node {
-                    width: px(116),
-                    height: px(64),
-                    ..default()
-                },
-                ImageNode::new(kit.server.load(path)),
-                Pickable::IGNORE,
-                ChildOf(card),
-            ));
-        }
-        kit.text(
-            card,
-            kit.texts.name(hero.key).to_uppercase(),
-            12.0,
-            BUTTON_INK,
-        );
-    }
-    let row = kit.row(body);
-    let ally = kit.word("SpawnAllyHero_Button", "Ally");
-    kit.button(row, ally, Press::SpawnAlly, ALLY);
-    let enemy = kit.word("SpawnEnemyHero_Button", "Enemy");
-    kit.button(row, enemy, Press::SpawnEnemy, ENEMY);
-    let row = kit.row(body);
-    let wave = kit.word("SpawnCreepWave_Button", "+ Creep wave");
-    kit.button(row, wave, Press::CreepWave, BUTTON);
-    let at = if panel.placing == Some(Placing::Creeps) {
-        "Click the ground…".to_owned()
-    } else {
-        "Creeps here".to_owned()
-    };
-    kit.button(row, at, Press::CreepsAt, ENEMY);
-    let row = kit.row(body);
-    let neutrals = kit.word("Neutrals_ButtonCategory", "Neutrals");
-    kit.button(row, neutrals, Press::Neutrals, BUTTON);
-    kit.rule(body);
-
-    // UNITS: one's own hero, and the enemies'.
-    let units = kit.word("EditUnits_ButtonCategory", "Units");
-    kit.header(body, units);
-    let row = kit.row(body);
-    let up = kit.word("LevelUpSelectedHeroes_Button", "Level up");
-    kit.button(row, up, Press::LevelUp, BUTTON);
-    let max = kit.word("MaxLevelUpSelectedHeroes_Button", "Level max");
-    kit.button(row, max, Press::LevelMax, BUTTON);
-    let row = kit.row(body);
-    let invuln = kit.word("Invuln_Button", "Invulnerable");
-    kit.toggle(row, invuln, Press::Invulnerable, panel.invulnerable);
-    let reset = kit.word("Reset_Button", "Reset");
-    kit.button(row, reset, Press::Reset, BUTTON);
-    let row = kit.row(body);
-    kit.button(row, "Respawn".to_owned(), Press::Respawn, BUTTON);
-    let teleport = if panel.placing == Some(Placing::Teleport) {
-        "Click the ground…".to_owned()
-    } else {
-        "Teleport".to_owned()
-    };
-    kit.button(row, teleport, Press::Teleport, BUTTON);
-    let row = kit.row(body);
-    let enemies = kit.word("LevelUpEnemy_Button", "Level up enemy");
-    kit.button(row, enemies, Press::LevelEnemies, BUTTON);
-    let row = kit.row(body);
-    for amount in GOLD_STEPS {
-        kit.button(row, format!("+{amount} gold"), Press::Gold(amount), BUTTON);
-    }
-    // Items: typed into, the matches shown to grant.
-    let search = kit
-        .commands
-        .spawn((
-            Press::Search,
-            Button,
-            Hovered::default(),
-            Blocker,
-            Name::new("demo items"),
-            Node {
-                height: px(28),
-                margin: UiRect::vertical(px(3)),
-                padding: UiRect::horizontal(px(8)),
-                align_items: AlignItems::Center,
-                border: UiRect::all(px(1)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
-            BorderColor::all(if panel.typing { LIT } else { BUTTON_EDGE }),
-            ChildOf(body),
-        ))
-        .id();
-    let typed = match (panel.search.is_empty(), panel.typing) {
-        (true, false) => "Items: type to search".to_owned(),
-        (_, true) => format!("{}|", panel.search),
-        (false, false) => panel.search.clone(),
-    };
-    kit.text(search, typed, 14.0, BUTTON_INK);
-    let grid = kit.node(
-        body,
-        Node {
-            flex_wrap: FlexWrap::Wrap,
-            column_gap: px(3),
-            row_gap: px(3),
-            ..default()
-        },
-    );
-    for &item in &shown.found {
-        let icon = kit.manifest.item_icon(item);
-        let mut cell = kit.commands.spawn((
-            Press::Grant(item),
-            Button,
-            Hovered::default(),
-            Blocker,
-            Name::new(format!("demo item {item}")),
-            Node {
-                width: px(40),
-                height: px(30),
-                border: UiRect::all(px(1)),
-                ..default()
-            },
-            BorderColor::all(BUTTON_EDGE),
-            ChildOf(grid),
-        ));
-        match icon {
-            Some(path) => {
-                cell.insert(ImageNode::new(kit.server.load(path)));
-            }
-            None => {
-                cell.insert(BackgroundColor(BUTTON));
-            }
-        }
-    }
-    kit.rule(body);
-
-    // GLOBAL: the match's own switches.
-    let global = kit.word("Global_ButtonCategory", "Global");
-    kit.header(body, global);
-    let row = kit.row(body);
-    let free = kit.word("FreeSpells_Button", "Free spells");
-    kit.toggle(row, free, Press::FreeSpells, panel.free_spells);
-    let creeps = kit.word("SpawnCreeps_Button", "Creeps");
-    kit.toggle(row, creeps, Press::Creeps, panel.creeps);
-    let row = kit.row(body);
-    let night = kit.word("NightEnable_Button", "Night");
-    kit.toggle(row, night, Press::Night, shown.night);
-    let vision = kit.word("AllVision_Button", "All vision");
-    kit.toggle(row, vision, Press::AllVision, panel.all_vision);
-    let row = kit.row(body);
-    let refresh = kit.word("Refresh_Button", "Refresh");
-    kit.button(row, refresh, Press::Refresh, BUTTON);
-    kit.rule(body);
-    let row = kit.row(body);
-    let quit = kit.word("QuitDemo_Button", "Quit");
-    kit.button(row, quit, Press::Quit, ENEMY);
-}
-
-/// The item search's keys while it has the keyboard: typing, Backspace,
-/// Enter to grant the first match, Escape to let go.
 pub fn search_key(
     core: &mut Core,
     panel: &mut DemoPanel,
-    key: &bevy::input::keyboard::Key,
-    first: Option<u16>,
+    key: &Key,
+    first: Option<ItemId>,
 ) -> bool {
-    use bevy::input::keyboard::Key;
     match key {
-        Key::Enter => {
-            if let Some(item) = first {
-                cheat(
-                    core,
-                    Cheat::Item {
-                        item: bota_proto::ItemId(item),
-                    },
-                );
+        Key::Enter | Key::Escape => {
+            if *key == Key::Enter
+                && let Some(item) = first
+            {
+                send_to_selected(core, Cheat::Item { item });
             }
-            panel.typing = false;
-            true
-        }
-        Key::Escape => {
             panel.typing = false;
             true
         }
@@ -827,14 +266,503 @@ pub fn search_key(
             panel.search.pop();
             false
         }
-        Key::Space => {
-            panel.search.push(' ');
-            false
-        }
-        Key::Character(typed) if panel.search.len() < 24 => {
+        Key::Character(typed) if panel.search.len() + typed.len() <= SEARCH_BYTES => {
             panel.search.push_str(typed);
             false
         }
+        Key::Space if panel.search.len() < SEARCH_BYTES => {
+            panel.search.push(' ');
+            false
+        }
         _ => false,
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct Shown {
+    open: bool,
+    quit: bool,
+    spawn: HeroId,
+    placing: Option<Placement>,
+    selected: Option<(EntityId, HeroId, bool)>,
+    search: String,
+    typing: bool,
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+struct Art<'w> {
+    texts: Res<'w, Texts>,
+    manifest: Res<'w, Manifest>,
+    catalog: Res<'w, crate::shop::Catalog>,
+    fonts: Res<'w, Fonts>,
+    server: Res<'w, AssetServer>,
+}
+
+fn draw(
+    mut commands: Commands,
+    session: NonSend<Session>,
+    menu: Option<NonSend<MenuCore>>,
+    panel: Res<DemoPanel>,
+    hud: Res<ui::HudShown>,
+    art: Art,
+    root: Single<Entity, With<PanelRoot>>,
+    mut drawn: Local<Option<Shown>>,
+) {
+    let core = &session.0;
+    if !hud.0 || !allowed(core) {
+        if drawn.take().is_some() {
+            commands.entity(*root).despawn_children();
+        }
+        return;
+    }
+    let shown = Shown {
+        open: panel.open.unwrap_or(is_demo(core, menu.as_deref())),
+        quit: menu.is_some_and(|menu| menu.demo_hero().is_some()),
+        spawn: spawn_kind(&panel, core),
+        placing: panel.placing,
+        selected: selected_hero(core),
+        search: panel.search.clone(),
+        typing: panel.typing,
+    };
+    if drawn.as_ref() != Some(&shown) {
+        commands.entity(*root).despawn_children();
+        let mut kit = Kit {
+            commands: &mut commands,
+            art: &art,
+        };
+        kit.build(*root, &shown, panel.scroll);
+        *drawn = Some(shown);
+    }
+}
+
+#[derive(Component)]
+struct Fill(Color);
+
+fn paint(mut buttons: Query<(&Hovered, &Fill, &mut BackgroundColor), Changed<Hovered>>) {
+    for (hovered, fill, mut background) in &mut buttons {
+        background.0 = if hovered.get() {
+            fill.0.lighter(0.07)
+        } else {
+            fill.0
+        };
+    }
+}
+
+fn scroll(
+    wheel: Res<bevy::input::mouse::AccumulatedMouseScroll>,
+    mut bodies: Query<(&Hovered, &mut ScrollPosition), With<PanelBody>>,
+    mut panel: ResMut<DemoPanel>,
+) {
+    let Ok((hovered, mut position)) = bodies.single_mut() else {
+        return;
+    };
+    if !hovered.get() || wheel.delta.y == 0.0 {
+        return;
+    }
+    let step = match wheel.unit {
+        bevy::input::mouse::MouseScrollUnit::Line => wheel.delta.y * ROW_HEIGHT,
+        bevy::input::mouse::MouseScrollUnit::Pixel => wheel.delta.y,
+    };
+    panel.scroll = (position.y - step).max(0.0);
+    position.y = panel.scroll;
+}
+
+struct Kit<'a, 'w, 's, 'r> {
+    commands: &'a mut Commands<'w, 's>,
+    art: &'a Art<'r>,
+}
+
+#[derive(Clone, Copy)]
+struct Cell<'a> {
+    name: &'a str,
+    label: &'a str,
+    press: Press,
+    fill: Color,
+    icon: Option<&'a str>,
+}
+
+impl<'a> Cell<'a> {
+    const fn new(name: &'a str, label: &'a str, press: Press) -> Self {
+        Self {
+            name,
+            label,
+            press,
+            fill: BUTTON,
+            icon: None,
+        }
+    }
+
+    fn icon(mut self, path: Option<&'a str>) -> Self {
+        self.icon = path;
+        self
+    }
+
+    const fn fill(mut self, fill: Color) -> Self {
+        self.fill = fill;
+        self
+    }
+}
+
+impl Kit<'_, '_, '_, '_> {
+    fn text(&mut self, parent: Entity, label: &str, size: f32, ink: Color) {
+        self.commands.spawn((
+            ui::text(label, &self.art.fonts.bold, size * ui::DOTA, ink),
+            TextLayout::no_wrap(),
+            Pickable::IGNORE,
+            ChildOf(parent),
+        ));
+    }
+
+    fn button(&mut self, parent: Entity, cell: Cell, node: Node) -> Entity {
+        let button = self
+            .commands
+            .spawn((
+                Name::new(format!("demo {}", cell.name.to_lowercase())),
+                cell.press,
+                Button,
+                Blocker,
+                Hovered::default(),
+                Fill(cell.fill),
+                BackgroundColor(cell.fill),
+                BorderColor::all(EDGE),
+                node,
+                ChildOf(parent),
+            ))
+            .id();
+        if let Some(icon) = cell.icon {
+            self.commands.spawn((
+                Node {
+                    width: dota(25.0),
+                    height: dota(16.0),
+                    margin: UiRect::right(dota(GAP)),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                ImageNode::new(self.art.server.load(icon.to_owned())),
+                Pickable::IGNORE,
+                ChildOf(button),
+            ));
+        }
+        self.text(button, cell.label, 12.0, ui::INK);
+        button
+    }
+
+    fn row(&mut self, parent: Entity, cells: &[Cell]) {
+        let row = self
+            .commands
+            .spawn((
+                Node {
+                    display: Display::Grid,
+                    grid_template_columns: RepeatedGridTrack::flex(cells.len() as u16, 1.0),
+                    grid_template_rows: vec![GridTrack::px(ROW_HEIGHT * ui::DOTA)],
+                    column_gap: dota(GAP),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                ChildOf(parent),
+            ))
+            .id();
+        for &cell in cells {
+            self.button(
+                row,
+                cell,
+                Node {
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(px(1)),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+            );
+        }
+    }
+
+    fn label(&mut self, body: Entity, text: &str, ink: Color) {
+        let row = self
+            .commands
+            .spawn((
+                Node {
+                    height: dota(20.0),
+                    flex_shrink: 0.0,
+                    align_items: AlignItems::Center,
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                Pickable::IGNORE,
+                ChildOf(body),
+            ))
+            .id();
+        self.text(row, text, 13.0, ink);
+    }
+
+    fn build(&mut self, root: Entity, shown: &Shown, scroll: f32) {
+        if shown.open {
+            let body = self
+                .commands
+                .spawn((
+                    Name::new("hud demo panel"),
+                    PanelBody,
+                    Blocker,
+                    Hovered::default(),
+                    Node {
+                        align_self: AlignSelf::FlexStart,
+                        width: dota(WIDTH),
+                        max_height: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        flex_shrink: 0.0,
+                        padding: UiRect::all(dota(9.0)),
+                        row_gap: dota(GAP),
+                        overflow: Overflow::scroll_y(),
+                        ..default()
+                    },
+                    ScrollPosition(bevy::math::Vec2::new(0.0, scroll)),
+                    BackgroundGradient::from(LinearGradient::to_right(vec![
+                        BODY.into(),
+                        Color::srgb_u8(27, 30, 32).into(),
+                    ])),
+                    ChildOf(root),
+                ))
+                .id();
+            self.spawn_controls(body, shown);
+            self.hero_controls(body, shown);
+            self.world_controls(body, shown);
+        }
+        self.button(
+            root,
+            Cell::new("fold", if shown.open { "‹" } else { "›" }, Press::Fold),
+            Node {
+                width: dota(THUMB),
+                height: dota(88.0),
+                max_height: percent(100),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                border_radius: BorderRadius::right(dota(6.0)),
+                ..default()
+            },
+        );
+    }
+
+    fn spawn_controls(&mut self, body: Entity, shown: &Shown) {
+        self.label(body, "SPAWN", ui::INK);
+        let heroes: Vec<_> = bota_core::HEROES
+            .iter()
+            .enumerate()
+            .map(|(index, hero)| {
+                let id = HeroId(index as u16);
+                (
+                    id,
+                    self.art.texts.name(hero.key).to_uppercase(),
+                    self.art.manifest.portrait(id.0),
+                )
+            })
+            .collect();
+        let cells: Vec<_> = heroes
+            .iter()
+            .map(|(id, name, icon)| {
+                Cell::new(name, name, Press::SpawnKind(*id))
+                    .icon(icon.as_deref())
+                    .fill(if *id == shown.spawn { ACCENT } else { BUTTON })
+            })
+            .collect();
+        self.row(body, &cells);
+        self.row(
+            body,
+            &[
+                Cell::new("spawnally", "ALLY", Press::Spawn(false)).fill(ALLY),
+                Cell::new("spawnenemy", "ENEMY", Press::Spawn(true)).fill(ENEMY),
+            ],
+        );
+        self.row(
+            body,
+            &[
+                Cell::new("creepwave", "CREEP WAVE", Press::World(Cheat::SpawnCreeps)),
+                Cell::new("creepsat", "CREEPS HERE", Press::CreepsHere),
+                Cell::new("neutrals", "NEUTRALS", Press::World(Cheat::SpawnNeutrals)),
+            ],
+        );
+        let instruction = if shown.placing.is_some() {
+            "CLICK GROUND · RIGHT CLICK TO CANCEL"
+        } else {
+            "UNITS"
+        };
+        self.label(body, instruction, ui::INK);
+    }
+
+    fn hero_controls(&mut self, body: Entity, shown: &Shown) {
+        use Press::Hero;
+        let selected = shown
+            .selected
+            .and_then(|(_, id, _)| bota_core::hero_def(id));
+        let name = selected.map_or_else(
+            || "Select a hero".to_owned(),
+            |hero| self.art.texts.name(hero.key).to_owned(),
+        );
+        self.label(body, &name, ui::INK_DIM);
+        self.row(
+            body,
+            &[
+                Cell::new("levelup", "LEVEL UP", Hero(Cheat::Levels { count: 1 })),
+                Cell::new(
+                    "levelmax",
+                    "LEVEL MAX",
+                    Hero(Cheat::Levels {
+                        count: bota_core::rules::HERO_MAX_LEVEL,
+                    }),
+                ),
+                Cell::new("reset", "RESET HERO", Hero(Cheat::ResetHero)),
+            ],
+        );
+        self.row(
+            body,
+            &[
+                Cell::new("learn max", "LEARN MAX", Hero(Cheat::MaxAbilities)),
+                Cell::new("unlearn", "UNLEARN", Hero(Cheat::UnlearnAbilities)),
+            ],
+        );
+        self.row(
+            body,
+            &[
+                Cell::new("teleport", "MOVE HERE", Press::Move),
+                Cell::new("respawn", "RESPAWN", Hero(Cheat::Respawn)),
+                Cell::new("remove", "REMOVE", Hero(Cheat::RemoveHero)),
+            ],
+        );
+        self.row(
+            body,
+            &[
+                Cell::new(
+                    "invulnerable on",
+                    "INVULNERABLE",
+                    Hero(Cheat::Invulnerable { on: true }),
+                ),
+                Cell::new(
+                    "invulnerable off",
+                    "VULNERABLE",
+                    Hero(Cheat::Invulnerable { on: false }),
+                ),
+            ],
+        );
+        self.row(
+            body,
+            &[
+                Cell::new(
+                    "gold(1000)",
+                    "+1,000 GOLD",
+                    Hero(Cheat::Gold { amount: 1000 }),
+                ),
+                Cell::new(
+                    "gold(10000)",
+                    "+10,000 GOLD",
+                    Hero(Cheat::Gold { amount: 10_000 }),
+                ),
+            ],
+        );
+        let query = if shown.typing {
+            format!("{}|", shown.search)
+        } else {
+            shown.search.clone()
+        };
+        let label = if query.is_empty() {
+            "FREE ITEMS · SEARCH"
+        } else {
+            &query
+        };
+        self.row(
+            body,
+            &[
+                Cell::new("items", label, Press::Search).fill(if shown.typing {
+                    ACCENT
+                } else {
+                    BUTTON
+                }),
+            ],
+        );
+        let look = crate::tip_content::Lookup {
+            texts: &self.art.texts,
+            manifest: &self.art.manifest,
+            rates: Default::default(),
+        };
+        let results: Vec<_> = item_results(&self.art.catalog, &look, &shown.search).collect();
+        for items in results.chunks(2) {
+            let names: Vec<_> = items
+                .iter()
+                .map(|item| {
+                    (
+                        format!("item {}", item.0),
+                        look.item_name(item.0).unwrap_or_default(),
+                        self.art.manifest.item_icon(item.0),
+                    )
+                })
+                .collect();
+            let cells: Vec<_> = items
+                .iter()
+                .zip(&names)
+                .map(|(&item, (name, label, icon))| {
+                    Cell::new(name, label, Press::Grant(item)).icon(icon.as_deref())
+                })
+                .collect();
+            self.row(body, &cells);
+        }
+    }
+
+    fn world_controls(&mut self, body: Entity, shown: &Shown) {
+        use Press::World;
+        self.label(body, "GLOBAL", ui::INK);
+        self.row(
+            body,
+            &[
+                Cell::new(
+                    "all vision",
+                    "ALL VISION",
+                    World(Cheat::AllVision { on: true }),
+                ),
+                Cell::new(
+                    "normal vision",
+                    "NORMAL VISION",
+                    World(Cheat::AllVision { on: false }),
+                ),
+            ],
+        );
+        self.row(
+            body,
+            &[
+                Cell::new(
+                    "creeps on",
+                    "CREEPS ON",
+                    World(Cheat::CreepSpawning { on: true }),
+                ),
+                Cell::new(
+                    "creeps off",
+                    "CREEPS OFF",
+                    World(Cheat::CreepSpawning { on: false }),
+                ),
+            ],
+        );
+        self.row(
+            body,
+            &[
+                Cell::new("free spells", "FREE SPELLS", World(Cheat::Wtf { on: true })),
+                Cell::new(
+                    "normal spells",
+                    "NORMAL SPELLS",
+                    World(Cheat::Wtf { on: false }),
+                ),
+            ],
+        );
+        self.row(
+            body,
+            &[
+                Cell::new("day", "DAY", World(Cheat::TimeOfDay { night: false })),
+                Cell::new("night", "NIGHT", World(Cheat::TimeOfDay { night: true })),
+                Cell::new("refresh", "REFRESH ALL", World(Cheat::Refresh)),
+            ],
+        );
+        if shown.quit {
+            self.row(
+                body,
+                &[Cell::new("quit", "QUIT DEMO", Press::Quit).fill(ENEMY)],
+            );
+        }
     }
 }

@@ -16,6 +16,8 @@ use crate::layers::Family;
 use crate::manifest::Manifest;
 use crate::terrain::{self, CELL};
 
+mod demo;
+
 /// How bright the baked terrain is against the lighting: Dota doubles its
 /// terrain's light, the rest of the scene does not.
 pub(crate) const TERRAIN_GAIN: f32 = 1.6;
@@ -126,9 +128,27 @@ fn height_in(points: &[[f32; 3]], t: [u32; 3], x: f32, y: f32) -> Option<f32> {
 #[derive(Resource)]
 pub struct TerrainMaterial(pub AssetId<StandardMaterial>);
 
+#[derive(Component)]
+pub(crate) struct DemoTerrain;
+
 /// The map while it loads, read and merged by `mapfile`; let go once spawned.
 #[derive(Resource)]
 struct MapFile(Handle<crate::mapfile::MapGeometry>);
+
+#[derive(Component)]
+struct MainTerrain;
+
+#[derive(Resource, Default)]
+struct MapScenes {
+    main_requested: bool,
+    main: Option<Ground>,
+    sandbox: Option<std::sync::Arc<bota_client_core::MatchStatic>>,
+    show_sandbox: bool,
+}
+
+pub(crate) fn sandbox_map(id: bota_proto::MapId) -> bool {
+    matches!(id, bota_core::DEMO_ID | bota_core::HERO_DEMO_ID)
+}
 
 pub fn plugin(app: &mut App) {
     let stream = crate::mapfile::MapStream::default();
@@ -137,6 +157,7 @@ pub fn plugin(app: &mut App) {
         .init_asset::<crate::mapfile::MapGeometry>()
         .register_asset_loader(loader)
         .init_resource::<Ground>()
+        .init_resource::<MapScenes>()
         .insert_resource(GlobalAmbientLight {
             color: Color::srgb(0.72, 0.80, 1.0),
             brightness: 330.0,
@@ -144,8 +165,7 @@ pub fn plugin(app: &mut App) {
         })
         .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.04)))
         .add_systems(Startup, spawn_sun)
-        .add_systems(Update, spawn_map.run_if(crate::loading::requested))
-        .add_systems(Update, prepare_map)
+        .add_systems(Update, (choose_map, prepare_sandbox, prepare_map).chain())
         .add_systems(PostUpdate, report.in_set(crate::loading::Report));
 }
 
@@ -190,14 +210,86 @@ pub(crate) fn map_transform() -> Transform {
         .with_scale(Vec3::splat(UNITS_PER_METRE))
 }
 
-fn spawn_map(mut commands: Commands, server: Res<AssetServer>, manifest: Res<Manifest>) {
-    let Some(path) = &manifest.map else {
+fn choose_map(
+    mut commands: Commands,
+    session: NonSend<crate::session::Session>,
+    menu: Option<NonSend<crate::main_menu::MenuCore>>,
+    loading: Res<crate::loading::Loading>,
+    server: Res<AssetServer>,
+    manifest: Res<Manifest>,
+    mut scenes: ResMut<MapScenes>,
+    mut ground: ResMut<Ground>,
+    mut main: Query<&mut Visibility, With<MainTerrain>>,
+) {
+    if !loading.started() || menu.as_ref().is_some_and(|menu| !menu.in_game()) {
+        return;
+    }
+    let statics = session.0.statics();
+    let show_sandbox = statics.map_or_else(
+        || menu.is_some_and(|menu| menu.demo_hero().is_some()),
+        |statics| sandbox_map(statics.metadata().map),
+    );
+    if show_sandbox != scenes.show_sandbox {
+        scenes.show_sandbox = show_sandbox;
+        for mut visibility in &mut main {
+            *visibility = main_visibility(show_sandbox);
+        }
+        *ground = Ground::default();
+        if !show_sandbox && let Some(main_ground) = &scenes.main {
+            *ground = main_ground.clone();
+        }
+    }
+    if !show_sandbox && !scenes.main_requested {
+        scenes.main_requested = true;
+        if let Some(path) = &manifest.map {
+            commands.insert_resource(MapFile(server.load(path.clone())));
+        }
+    }
+}
+
+fn prepare_sandbox(
+    mut commands: Commands,
+    session: NonSend<crate::session::Session>,
+    mut scenes: ResMut<MapScenes>,
+    mut ground: ResMut<Ground>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    old: Query<Entity, With<DemoTerrain>>,
+) {
+    let statics = session
+        .0
+        .statics()
+        .filter(|statics| sandbox_map(statics.metadata().map));
+    if match (&scenes.sandbox, statics) {
+        (Some(current), Some(next)) => std::sync::Arc::ptr_eq(current, next),
+        (None, None) => true,
+        _ => false,
+    } {
+        return;
+    }
+    for entity in &old {
+        commands.entity(entity).despawn();
+    }
+    scenes.sandbox = statics.cloned();
+    let Some(statics) = statics else {
         return;
     };
-    // Read and merged by dbota's own loader: no glTF scene, no mesh or
-    // node asset of each of its pieces.
-    let file = server.load::<crate::mapfile::MapGeometry>(path.clone());
-    commands.insert_resource(MapFile(file));
+    *ground = demo::ground(statics);
+    let mesh = demo::mesh(statics, &ground);
+    let bounds = bevy::camera::primitives::MeshAabb::get_aabb(&mesh);
+    // Vertex colours let the terrain draw on the first frame without waiting for the image cache.
+    let material = materials.add(terrain_material_with(None));
+    let mut terrain = commands.spawn((
+        DemoTerrain,
+        Name::new("sandbox terrain"),
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(material),
+        bevy::light::NotShadowCaster,
+        crate::fog::Fogged,
+    ));
+    if let Some(bounds) = bounds {
+        terrain.insert(bounds);
+    }
 }
 
 /// Spawns the map's merged meshes as its loader finishes each chunk; once
@@ -210,6 +302,7 @@ fn prepare_map(
     mut geometries: ResMut<Assets<crate::mapfile::MapGeometry>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut ground: ResMut<Ground>,
+    mut scenes: ResMut<MapScenes>,
     mut count: Local<usize>,
 ) {
     let done: Vec<Batch> = stream
@@ -219,7 +312,7 @@ fn prepare_map(
         .unwrap_or_default();
     *count += done.len();
     for batch in done {
-        spawn_batch(&mut commands, &mut meshes, batch);
+        spawn_batch(&mut commands, &mut meshes, batch, scenes.show_sandbox);
     }
     let Some(file) = file else {
         return;
@@ -230,16 +323,22 @@ fn prepare_map(
     commands.remove_resource::<MapFile>();
     *count += map.batches.len();
     for batch in map.batches {
-        spawn_batch(&mut commands, &mut meshes, batch);
+        spawn_batch(&mut commands, &mut meshes, batch, scenes.show_sandbox);
     }
-    *ground = map.ground;
+    if !scenes.show_sandbox {
+        *ground = map.ground.clone();
+    }
     commands.insert_resource(TerrainMaterial(map.terrain.id()));
+    let floor = floor(&map.ground, 30.0, Some(&map.field));
+    scenes.main = Some(map.ground);
     if let Some(layers) = map.layers {
         commands.insert_resource(layers);
     }
     // A floor under the map wherever the map has a hole.
     commands.spawn((
-        Mesh3d(meshes.add(floor(&ground, 30.0, Some(&map.field)))),
+        MainTerrain,
+        main_visibility(scenes.show_sandbox),
+        Mesh3d(meshes.add(floor)),
         MeshMaterial3d(map.terrain),
         bevy::light::NotShadowCaster,
         crate::fog::Fogged,
@@ -254,9 +353,24 @@ fn prepare_map(
 
 /// One merged mesh of the map, drawn only: its vertices leave the CPU once
 /// on the GPU.
-fn spawn_batch(commands: &mut Commands, meshes: &mut Assets<Mesh>, mut batch: Batch) {
+fn main_visibility(show_sandbox: bool) -> Visibility {
+    if show_sandbox {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    }
+}
+
+fn spawn_batch(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mut batch: Batch,
+    show_sandbox: bool,
+) {
     batch.mesh.asset_usage = RenderAssetUsages::RENDER_WORLD;
     let mut entity = commands.spawn((
+        MainTerrain,
+        main_visibility(show_sandbox),
         Mesh3d(meshes.add(batch.mesh)),
         MeshMaterial3d(batch.material),
         Transform::IDENTITY,
@@ -1122,12 +1236,13 @@ fn report(
     ground: Res<Ground>,
     manifest: Res<Manifest>,
     file: Option<Res<MapFile>>,
+    scenes: Res<MapScenes>,
     mut parts: ResMut<crate::loading::Parts>,
 ) {
     // Asked for once its file is (let go once read), whole once read.
-    if ground.known() || manifest.map.is_none() {
+    if ground.known() || (!scenes.show_sandbox && manifest.map.is_none()) {
         parts.set("world", 1, 1);
-    } else if file.is_some() {
+    } else if file.is_some() || scenes.show_sandbox {
         parts.set("world", 0, 1);
     }
 }

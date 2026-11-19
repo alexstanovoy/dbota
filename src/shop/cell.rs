@@ -335,7 +335,7 @@ fn stock(
 /// session shows rather than once for each of the hundreds of icons drawn.
 #[derive(Default)]
 struct Buyable {
-    stamp: Option<(u32, i32, bool)>,
+    stamp: Option<(u32, i32, bool, Option<bota_proto::SlotId>)>,
     /// What the queue held when the answers were worked out: the same length and the same cost
     /// can still be another set of parts.
     queue: Vec<u16>,
@@ -349,6 +349,7 @@ impl Buyable {
             core.view().map_or(0, |view| view.tick),
             core.spendable_gold(),
             core.in_tactical_phase(),
+            core.buyer_slot(),
         );
         if self.stamp != Some(stamp) || self.queue != core.queued_buys {
             self.stamp = Some(stamp);

@@ -824,7 +824,7 @@ kind = "local"
 binary = "{binary}"
 public_url = "ws://127.0.0.1:{port}"
 version_probe = ["--wire-fingerprint"]
-args = ["--map", "0", "--cheats", "--match-id", "{match_id}", "--bind", "127.0.0.1",
+args = ["--map", "3", "--cheats", "--match-id", "{match_id}", "--bind", "127.0.0.1",
         "--port", "0", "--ws-port", "{port}", "--abandon-unjoined", "--empty-after-secs", "60",
         "--tactical-secs", "0"]
 env = { BOTA_SEATS = "{seats_with_versions}" }
@@ -933,8 +933,8 @@ fn demo_hero_plays_a_hero_with_every_cheat() {
         &scratch,
         "wait:1;shot:demo-menu.png;click:demo hero;await:game;await:horn;\
          await:button:demo levelmax;wait:3;shot:demo-panel.png;click:demo levelmax;\
-         await:level:30;say:-gold 20000;await:gold:20000;click:demo freespells;\
-         click:demo spawnenemy;click:demo creepwave;wait:3;shot:demo-cheats.png;\
+         await:level:30;say:-gold 20000;await:gold:20000;click:demo free spells;\
+         click:demo spawnenemy;mouse:0.56,0.44;lclick;click:demo creepwave;wait:3;shot:demo-cheats.png;\
          click:demo night;wait:2;shot:demo-night.png;click:demo quit;await:menu;\
          wait:1;shot:demo-left.png;key:Escape;key:Escape;await:popup;click:ok",
     );

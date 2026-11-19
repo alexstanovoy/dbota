@@ -305,13 +305,14 @@ binary = "{binary}"
 public_url = "ws://127.0.0.1:{{port}}"
 version_probe = ["--wire-fingerprint"]
 start_timeout_secs = {PATIENCE}
-args = ["--map", "0", "--cheats", "--mode", "lockstep", "--ack-timeout-ticks", "900",
+args = ["--map", "{demo_map}", "--cheats", "--mode", "lockstep", "--ack-timeout-ticks", "900",
         "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}", "--abandon-unjoined", "--empty-after-secs", "{PATIENCE}",
         "--pick-secs", "1", "--tactical-secs", "0"]
 env = {{ BOTA_SEATS = "{{seats_with_versions}}" }}
 "#,
         db = dir.join("radovid.db").display(),
+        demo_map = bota_core::HERO_DEMO_ID.0,
         artifacts = dir.join("artifacts").display(),
         fingerprint = bota_radovid::fingerprint(),
         binary = binary.display(),
@@ -1386,6 +1387,10 @@ fn demo_hero_starts_a_cheat_match_of_the_service_with_the_hero_chosen() {
     assert!(
         core.statics().is_some_and(|s| s.metadata().cheats),
         "a match that cheats"
+    );
+    assert_eq!(
+        core.session().expect("the demo match").map().id,
+        bota_core::HERO_DEMO_ID
     );
     let before = own_gold(&core);
     core.act(bota_client_core::Intent::Cheat(bota_proto::Cheat::Gold {

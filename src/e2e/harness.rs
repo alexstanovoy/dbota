@@ -108,19 +108,26 @@ pub struct Server {
 impl Server {
     /// The server with `extra` options besides the defaults above, which they may set.
     pub fn start(seats: u8, extra: &[&str]) -> Server {
-        Self::start_match(seats, extra, false)
+        Self::start_match(seats, extra, false, true)
     }
 
     /// A live fixture whose peers stay connected while the server is stopped for HUD readiness.
     pub fn for_hud(seats: u8, extra: &[&str]) -> Server {
-        Self::start_match(seats, extra, true)
+        Self::for_hud_with_cheats(seats, extra, true)
     }
 
-    fn start_match(seats: u8, extra: &[&str], held_loading: bool) -> Server {
+    pub fn for_hud_with_cheats(seats: u8, extra: &[&str], cheats: bool) -> Server {
+        Self::start_match(seats, extra, true, cheats)
+    }
+
+    fn start_match(seats: u8, extra: &[&str], held_loading: bool, cheats: bool) -> Server {
         let turn = turn();
         let seats = seats.to_string();
         let mut args = vec!["--players", &seats];
-        args.extend(["--bind", "127.0.0.1", "--port", "0", "--cheats"]);
+        args.extend(["--bind", "127.0.0.1", "--port", "0"]);
+        if cheats {
+            args.push("--cheats");
+        }
         let defaults = [
             ("--map", "2"),
             ("--mode", "lockstep"),

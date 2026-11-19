@@ -502,7 +502,7 @@ fn spawn_shop_button(
     crate::buyback::spawn_shop_marks(commands, fonts, button);
 }
 
-/// One's own gold when playing; in a replay or as a spectator, that of the
+/// The buyer's gold when playing; in a replay or as a spectator, that of the
 /// hero watched (the stream tells all); in the tactical phase, what the
 /// queued items leave. Yellow, white within reach of a shop
 /// (`.ShopInRange .ShopButtonValueLabel`).
@@ -513,7 +513,7 @@ fn gold(session: NonSend<Session>, mut text: Single<(&mut Text, &mut TextColor),
     } else {
         let playing = matches!(core.source, Source::Live(_)) && core.my_slot.is_some();
         let seat = if playing {
-            core.my_slot
+            core.buyer_slot()
         } else {
             core.panel_slot()
         };

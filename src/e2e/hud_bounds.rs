@@ -679,3 +679,21 @@ fn the_player_glyph_count_and_three_digit_wait_fit_at_every_hud_size_and_scale()
         }
     }
 }
+
+#[test]
+fn the_hud_holds_together_with_the_cheat_panel_open() {
+    for (width, height) in [(1024, 600), (3840, 2160)] {
+        for scale in SCALES {
+            let (_server, mut client) = hud_with(width, height, scale, &[]);
+            client.click_named("demo fold");
+            client.frames(4);
+            let window = window_rect(&mut client);
+            let complaints = complaints(&client, window, &["hud demo panel", "demo levelmax"]);
+            assert!(
+                complaints.is_empty(),
+                "{width}x{height}, scale {scale}:\n{}",
+                complaints.join("\n")
+            );
+        }
+    }
+}

@@ -170,7 +170,12 @@ fn play(
 ) {
     let ambient = &mut *ambient;
     ambient.wanted.clear();
-    if let (Some(_), Ok((camera, frustum))) = (session.0.view(), camera.single()) {
+    if let (Some(_), Ok((camera, frustum))) = (session.0.view(), camera.single())
+        && !session
+            .0
+            .statics()
+            .is_some_and(|statics| crate::map::sandbox_map(statics.metadata().map))
+    {
         let night = daylight.night >= 0.5;
         let focus = Vec2::new(camera.focus.x, -camera.focus.z);
         for (i, e) in ambient.emitters.iter().enumerate() {

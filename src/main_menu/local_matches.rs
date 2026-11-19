@@ -77,7 +77,7 @@ impl Saved {
         let Ok(meta) = bota_replay::meta::decode(&self.metadata) else {
             return false;
         };
-        if meta.header.map == bota_core::DEMO_ID.0
+        if [bota_core::DEMO_ID.0, bota_core::HERO_DEMO_ID.0].contains(&meta.header.map)
             || self
                 .result
                 .as_ref()

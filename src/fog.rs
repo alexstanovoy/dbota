@@ -497,6 +497,7 @@ fn wrap(
             Has<Fogged>,
             Has<Figure>,
             Has<crate::water::Water>,
+            Has<crate::map::DemoTerrain>,
         ),
         Or<(With<Fogged>, With<Figure>)>,
     >,
@@ -509,10 +510,10 @@ fn wrap(
         return;
     };
     let veil = &mut *veil;
-    for (entity, material, fogged_part, figure, water) in &parts {
+    for (entity, material, fogged_part, figure, water, demo_ground) in &parts {
         let ground = terrain.as_ref().is_some_and(|t| t.0 == material.id());
         let paths = layers.as_ref().filter(|_| ground);
-        let surface = match (figure, fogged_part, ground, paths.is_some()) {
+        let surface = match (figure, fogged_part, ground || demo_ground, paths.is_some()) {
             _ if water => SURFACE_WATER,
             (true, true, ..) => SURFACE_FOGGED_FIGURE,
             (true, false, ..) => SURFACE_FIGURE,

@@ -52,6 +52,7 @@ fn model_of(bank: &ModelBank, building: &MapBuilding) -> Option<usize> {
 fn stand(
     mut commands: Commands,
     known: Res<MatchKnown>,
+    session: NonSend<crate::session::Session>,
     yaws: Res<BuildingYaws>,
     bank: Res<ModelBank>,
     ground: Res<Ground>,
@@ -65,7 +66,14 @@ fn stand(
         *state = Standing::Waiting;
         return;
     }
-    if matches!(*state, Standing::Done) || !ground.known() || bank.0.is_empty() {
+    if matches!(*state, Standing::Done)
+        || !ground.known()
+        || bank.0.is_empty()
+        || session
+            .0
+            .statics()
+            .is_some_and(|statics| crate::map::sandbox_map(statics.metadata().map))
+    {
         return;
     }
     let placed: Vec<(&MapBuilding, usize)> = yaws

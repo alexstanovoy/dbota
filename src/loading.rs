@@ -43,6 +43,10 @@ pub struct Loading {
 }
 
 impl Loading {
+    pub(crate) fn started(&self) -> bool {
+        self.game.is_some()
+    }
+
     /// Whether everything the game needs is resident and its world built:
     /// the game is on screen.
     pub fn done(&self) -> bool {

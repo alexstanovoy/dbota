@@ -159,6 +159,7 @@ fn over_hud(
 fn typing(
     mut session: NonSendMut<Session>,
     mut events: MessageReader<KeyboardInput>,
+    mut ime: MessageReader<bevy::window::Ime>,
     mut typing: ResMut<Typing>,
     mut panels: ResMut<Panels>,
     texts: Res<crate::dota_text::Texts>,
@@ -173,6 +174,18 @@ fn typing(
         manifest: &manifest,
         rates: Default::default(),
     };
+    for event in ime.read() {
+        if *typing == Typing::DemoSearch
+            && let bevy::window::Ime::Commit { value, .. } = event
+        {
+            crate::demo::search_key(
+                core,
+                &mut demo,
+                &Key::Character(value.as_str().into()),
+                None,
+            );
+        }
+    }
     for event in events.read() {
         if event.state != ButtonState::Pressed {
             continue;
@@ -207,10 +220,7 @@ fn typing(
                 }
             }
             Typing::DemoSearch => {
-                let first = catalog
-                    .search(&look, &demo.search)
-                    .into_iter()
-                    .find(|id| bota_core::item_def(bota_proto::ItemId(*id)).is_some());
+                let first = crate::demo::item_results(&catalog, &look, &demo.search).next();
                 if crate::demo::search_key(core, &mut demo, &event.logical_key, first) {
                     *typing = Typing::No;
                 }
@@ -287,7 +297,7 @@ pub(crate) fn keys(
     }
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     seat(core, &fired, &mut panels, &mut groups, ctrl);
-    if core.my_standing_hero().is_none() || !core.controls_selection() || core.over.is_some() {
+    if !core.gives_orders() {
         return;
     }
     command(core, &fired, &mut panels, ctrl);
@@ -468,6 +478,7 @@ pub(crate) fn mouse(
     screen: Res<crate::settings::Screen>,
     settings: Res<Settings>,
     window: Single<&Window, With<PrimaryWindow>>,
+    mut demo: ResMut<crate::demo::DemoPanel>,
 ) {
     if over.0 || screen.open || window.cursor_position().is_none() {
         return;
@@ -476,6 +487,9 @@ pub(crate) fn mouse(
     let Some(ground) = cursor.0.map(|p| (p.x, -p.z)) else {
         return;
     };
+    if demo.world_click(core, &buttons, ground) {
+        return;
+    }
     // The picker alone says which unit a click is on; with none, the click is
     // for the ground at the cursor.
     let unit_of = |hit: crate::pick::Hit| hit.map(|(id, _)| id);
@@ -574,11 +588,7 @@ fn directional_move(
     mut walking: Local<Option<((f32, f32), f32)>>,
 ) {
     let core = &mut session.0;
-    let commands = core.my_standing_hero().is_some()
-        && core.controls_selection()
-        && core.over.is_none()
-        && matches!(core.source, Source::Live(_))
-        && !screen.open;
+    let commands = core.gives_orders() && !screen.open;
     let ground = cursor.0.map(|p| (p.x, -p.z));
     let aim = ground.filter(|_| commands && !over.0 && fired.held(Action::MoveDirection));
     match (aim, *walking) {

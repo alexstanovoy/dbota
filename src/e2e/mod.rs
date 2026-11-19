@@ -30,6 +30,7 @@ mod creep_walk;
 mod cursors;
 mod damage_numbers;
 mod death;
+mod demo;
 mod effect_bounds;
 mod enemy_base_shop;
 mod event_visibility;

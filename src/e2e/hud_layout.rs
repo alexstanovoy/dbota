@@ -413,6 +413,11 @@ fn demo_panel_follows_reference_at(width: u32, height: u32) {
         |c| c.core().my_hero().is_some(),
     );
     on_screen(&mut client);
+    assert_eq!(
+        client.core().session().expect("the demo match").map().id,
+        bota_core::HERO_DEMO_ID,
+        "Demo Hero opens the short lane and Roshan map",
+    );
     client.frames(30);
     let window = Vec2::new(width as f32, height as f32);
     let panel = measured(&mut client, Named("hud demo panel")).expect("the demo panel is drawn");
@@ -448,6 +453,11 @@ fn demo_panel_follows_reference_at(width: u32, height: u32) {
         "at {size}: {}",
         complaints.join("; ")
     );
+    client.click_named("demo quit");
+    client.until("Quit Demo returns to the inspected hero", |client| {
+        client.world().non_send::<MenuCore>().page()
+            == crate::main_menu::Page::Hero(HeroId::SHADOW_FIEND)
+    });
 }
 
 #[test]

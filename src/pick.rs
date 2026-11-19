@@ -9,7 +9,7 @@
 //! is lit is what a click gets.
 
 use bevy::{prelude::*, window::PrimaryWindow};
-use bota_client_core::{Slot, Source};
+use bota_client_core::Slot;
 use bota_proto::{Aim, EntityId, Team, UnitKind, WorldView};
 
 use crate::camera::RtsCamera;
@@ -241,11 +241,8 @@ pub fn pick(
 /// What each kind of click wants right now: selecting, ordering, and
 /// aiming, and what the left button does.
 fn wants(core: &bota_client_core::App) -> (Want, Want, Want, Left) {
-    let mine = core.my_team();
-    let commands = core.my_standing_hero().is_some()
-        && core.controls_selection()
-        && core.over.is_none()
-        && matches!(core.source, Source::Live(_));
+    let mine = core.ordering_team();
+    let commands = core.gives_orders();
     let select = Want {
         side: Side::Any,
         strict: false,
@@ -259,7 +256,7 @@ fn wants(core: &bota_client_core::App) -> (Want, Want, Want, Left) {
             Side::Any
         },
         strict: false,
-        exclude: core.my_hero(),
+        exclude: core.commanded(),
         orders: true,
     };
     if !commands {
@@ -357,7 +354,7 @@ pub fn update(
     let lens = Lens::new(lens.fov);
     let (select, attack, aim, left) = wants(core);
     let all: Vec<(Candidate, Vec2)> =
-        stands(view, &index, &units, &ground, core.my_team()).collect();
+        stands(view, &index, &units, &ground, core.ordering_team()).collect();
     let find = |want: &Want, among: &dyn Fn(&Candidate) -> bool| {
         pick(
             ray,

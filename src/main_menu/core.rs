@@ -673,6 +673,8 @@ pub struct MenuCore {
     hosted_at: Option<String>,
     /// The hero of the last Demo Hero started.
     demo: Option<bota_proto::HeroId>,
+    /// The hero page that launched the current demo, when there was one.
+    demo_origin: Option<Page>,
     /// The hero of a Demo Hero being made: started, its match waited for.
     demo_asked: Option<bota_proto::HeroId>,
     /// The last Demo Hero's match: its result is no news.
@@ -826,6 +828,7 @@ impl MenuCore {
             left_in_picks: false,
             hosting: false,
             demo: None,
+            demo_origin: None,
             demo_asked: None,
             demo_match: None,
             tried_service: false,
@@ -1084,6 +1087,10 @@ impl MenuCore {
     /// it was not the player's doing); `over` when the match is over, so
     /// there is no seat to take again.
     pub fn left_game(&mut self, why: Option<&str>, over: bool) {
+        let demo_origin = self
+            .demo_origin
+            .take()
+            .filter(|_| self.demo_hero().is_some());
         let left = self.on_screen.take();
         self.keep_left(left);
         self.launching = false;
@@ -1108,7 +1115,7 @@ impl MenuCore {
             Some(OnScreen::Match(id)) if self.games.iter().any(|g| g.match_id == id) => {
                 self.go(Page::MyGames);
             }
-            left => self.page = self.rest_page(left),
+            left => self.page = demo_origin.unwrap_or_else(|| self.rest_page(left)),
         }
         if let Some(page) = self.after_results.take() {
             self.page = page;
@@ -1913,6 +1920,7 @@ impl MenuCore {
         if bota_core::hero_def(hero).is_none() || self.demo_asked.is_some() {
             return;
         }
+        self.demo_origin = Some(self.page).filter(|page| matches!(page, Page::Hero(_)));
         let ruleset = self
             .menu_rulesets()
             .find(|r| bota_radovid::is_demo(r))
