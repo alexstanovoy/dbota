@@ -7,9 +7,11 @@ use std::time::Duration;
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
-use bota_proto::HeroId;
+use bota_proto::{Cheat, HeroId, Team};
 
-use super::harness::{Client, Server, quiet_seat};
+use super::harness::{Client, Patience, Server, quiet_seat};
+
+const RADIANT_BADGE: &str = "hud glyph radiant charges";
 
 fn joined_scene() -> (Server, Client) {
     let server = Server::for_hud(2, &[]);
@@ -230,7 +232,11 @@ fn assert_countdown(client: &mut Client) {
 
 /// What the Glyph's badge shows: its number while it is drawn, None while it is not.
 fn glyph_badge(client: &mut Client) -> Option<String> {
-    let badge = named(client, "hud glyph charges");
+    badge_number(client, "hud glyph charges")
+}
+
+fn badge_number(client: &mut Client, name: &str) -> Option<String> {
+    let badge = named(client, name);
     let world = client.world();
     let shown = world.get::<InheritedVisibility>(badge)?.get();
     let text = world
@@ -249,44 +255,142 @@ fn press(client: &mut Client, key: KeyCode) {
     client.key(key, ButtonState::Released);
 }
 
-/// Since the game's 7.42 the Glyph holds charges, and its button says how many, as the Scan's does:
-/// nothing while none is held, the number while one or two are, one fewer once it is used.
+/// The lockstep server advances once the client acknowledges a view. Pump the connection
+/// between HUD checks so the intervening ticks need neither UI frames nor wall-clock pacing.
+fn advance_to(client: &mut Client, tick: u32) {
+    let mut patience = Patience::of(Duration::from_secs(30));
+    while client.view().game_tick() < tick {
+        patience.pass("the Glyph's next charge boundary");
+        client.core_mut().pump(0.0);
+        std::thread::yield_now();
+    }
+}
+
 #[test]
-fn the_glyph_button_shows_the_charges_it_holds_and_one_fewer_once_it_is_used() {
-    let (_server, mut client) = scene();
-    client.frames(5);
+fn the_glyph_button_counts_from_empty_to_full_and_back_after_both_uses() {
+    use bota_core::rules::{GLYPH_USE_COOLDOWN_TICKS, Schedule, TICKS_PER_SECOND};
+
+    let server = Server::start(1, &["--immortal-structures"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
     assert_eq!(
         glyph_charges(&client),
         Some(0),
-        "none before the first wait is out"
+        "charges at game tick {}",
+        client.view().game_tick()
     );
-    assert_eq!(glyph_badge(&mut client), None, "no badge without a charge");
-    client.cheat(bota_proto::Cheat::Refresh);
-    client.until("a charge held", |c| glyph_charges(c).is_some_and(|n| n > 0));
-    client.frames(5);
-    let held = glyph_charges(&client).expect("told");
-    assert_eq!(
-        glyph_badge(&mut client),
-        Some(held.to_string()),
-        "the badge tells the {held} charges held"
+    client.until("the empty Glyph count is drawn", |c| {
+        glyph_badge(c).as_deref() == Some("0")
+    });
+    assert_eq!(badge_number(&mut client, RADIANT_BADGE), None);
+
+    let schedule = Schedule::of(client.core().pregame_ticks());
+    for (minute, charges, label) in [(3, 1, "1"), (9, 2, "2")] {
+        let due = schedule.at_minute(minute);
+        advance_to(&mut client, due - 1);
+        assert_eq!(client.view().game_tick(), due - 1);
+        assert_eq!(glyph_charges(&client), Some(charges - 1));
+        client.until("the earned Glyph charge is drawn", |c| {
+            glyph_charges(c) == Some(charges) && glyph_badge(c).as_deref() == Some(label)
+        });
+        assert!(client.view().game_tick() >= due);
+    }
+    super::hud_layout::on_screen(&mut client);
+    let glyph = named_rect(&mut client, "hud glyph");
+    let badge = named_rect(&mut client, "hud glyph charges");
+    let unit = dota(&client);
+    near("the badge's width", badge.width(), 20.0 * unit);
+    near("the badge's right edge", badge.max.x, glyph.max.x);
+    near(
+        "the badge above the button's foot",
+        glyph.max.y - badge.max.y,
+        2.0 * unit,
     );
+
     press(&mut client, KeyCode::KeyJ);
-    client.until("a charge spent", |c| glyph_charges(c) == Some(held - 1));
-    client.frames(5);
+    client.until("the Glyph shows one charge after the first use", |c| {
+        glyph_charges(c) == Some(1) && glyph_badge(c).as_deref() == Some("1")
+    });
+    let glyph = client.core().glyph().expect("the player's Glyph");
+    let wait = glyph.ready_after.expect("the player's wait");
     assert!(
-        client
-            .core()
-            .glyph()
-            .and_then(|glyph| glyph.ready_after)
-            .is_some_and(|wait| wait > 0),
-        "the button waits between two uses"
+        wait > GLYPH_USE_COOLDOWN_TICKS - TICKS_PER_SECOND && wait <= GLYPH_USE_COOLDOWN_TICKS,
+        "the use starts the seven-second lock: {wait} ticks left"
     );
-    let left = held - 1;
+    let cover = glyph_cover(&mut client);
+    assert!(cover > 0.6, "the lock darkens the Glyph: {cover}");
+    let unlock = client.view().game_tick() + wait;
+    advance_to(&mut client, unlock - GLYPH_USE_COOLDOWN_TICKS / 2);
+    client.step_frames(2);
+    let angle = glyph_sweep(&mut client).stops[1]
+        .angle
+        .expect("the edge of the sweep");
+    assert!(
+        (angle - std::f32::consts::PI).abs() < 0.2,
+        "the seven-second lock is about halfway swept after 3.5 seconds: {angle} radians"
+    );
+    advance_to(&mut client, unlock - 1);
+    client.until("the use lock clears and its sweep lightens", |c| {
+        c.core().glyph().and_then(|glyph| glyph.ready_after) == Some(0) && glyph_cover(c) < cover
+    });
+    press(&mut client, KeyCode::KeyJ);
+    client.until("the Glyph shows zero after the last use", |c| {
+        glyph_charges(c) == Some(0) && glyph_badge(c).as_deref() == Some("0")
+    });
+}
+
+#[test]
+fn a_spectator_can_read_each_sides_glyph_count_and_players_only_receive_their_own() {
+    use bota_proto::Order;
+
+    let mut game = super::fog_pov::Spectated::pair("2");
+    game.cheat(Cheat::Refresh);
+    game.wait("one charge before spending", |driver, _| {
+        driver.glyph().and_then(|glyph| glyph.charges) == Some(1)
+    });
+    game.order(Order::Glyph);
+    game.wait("different charges for the two sides", |driver, client| {
+        driver.glyph().and_then(|glyph| glyph.charges) == Some(0)
+            && client
+                .view()
+                .glyphs
+                .iter()
+                .any(|glyph| glyph.team == Team::Radiant && glyph.charges == Some(0))
+            && client
+                .view()
+                .glyphs
+                .iter()
+                .any(|glyph| glyph.team == Team::Dire && glyph.charges == Some(1))
+    });
+    for player in [&game.driver, game.other.as_ref().expect("the Dire player")] {
+        let side = player.my_team().expect("the player's own side");
+        let view = player.view().expect("the player's view");
+        let opposing = view
+            .glyphs
+            .iter()
+            .find(|glyph| glyph.team != side)
+            .expect("the enemy Glyph");
+        assert_eq!(
+            opposing.charges, None,
+            "{side:?} only receives its own count"
+        );
+    }
+    super::hud_layout::on_screen(&mut game.client);
     assert_eq!(
-        glyph_badge(&mut client),
-        (left > 0).then(|| left.to_string()),
-        "the badge tells what is left"
+        badge_number(&mut game.client, RADIANT_BADGE).as_deref(),
+        Some("0")
     );
+    assert_eq!(glyph_badge(&mut game.client).as_deref(), Some("1"));
+    let radiant = named_rect(&mut game.client, RADIANT_BADGE);
+    let dire = named_rect(&mut game.client, "hud glyph charges");
+    assert!(radiant.max.x < dire.min.x, "Radiant is left of Dire");
+    for (side, expected) in [(Team::Radiant, "0"), (Team::Dire, "1")] {
+        game.next_side(side);
+        game.wait("the watched side's Glyph badge is drawn", |_, client| {
+            glyph_badge(client).as_deref() == Some(expected)
+                && badge_number(client, RADIANT_BADGE).is_none()
+        });
+    }
 }
 
 /// A click on the Glyph's button uses a charge, as its key does.
@@ -375,11 +479,16 @@ fn a_replay_shows_the_glyph_of_the_side_it_is_seen_from_or_of_both_sides() {
             held.map(|n| n.to_string()),
             "{pov:?}: its badge tells the charges"
         );
+        assert_eq!(
+            badge_number(&mut client, RADIANT_BADGE).as_deref(),
+            pov.is_none().then_some("1"),
+            "{pov:?}: a second badge is drawn only with the all-teams view"
+        );
     }
 }
 
 /// The darkest the Glyph's sweep is over the button, 0 when it is clear.
-fn glyph_cover(client: &mut Client) -> f32 {
+fn glyph_sweep(client: &mut Client) -> &bevy::ui::ConicGradient {
     let world = client.world_mut();
     let gradient = world
         .query_filtered::<&BackgroundGradient, With<crate::glyph::GlyphSweep>>()
@@ -388,11 +497,17 @@ fn glyph_cover(client: &mut Client) -> f32 {
     gradient
         .0
         .iter()
-        .filter_map(|gradient| match gradient {
+        .find_map(|gradient| match gradient {
             bevy::ui::Gradient::Conic(conic) => Some(conic),
             _ => None,
         })
-        .flat_map(|conic| conic.stops.iter())
+        .expect("the Glyph's conic sweep")
+}
+
+fn glyph_cover(client: &mut Client) -> f32 {
+    glyph_sweep(client)
+        .stops
+        .iter()
         .map(|stop| stop.color.to_srgba().alpha)
         .fold(0.0, f32::max)
 }
@@ -424,8 +539,6 @@ fn the_glyph_shows_the_recharge_of_the_charge_still_to_come() {
 
 #[test]
 fn a_late_watcher_sees_the_glyph_charge_without_a_recharge_sweep() {
-    use bota_proto::Cheat;
-
     let server = Server::for_hud(1, &["--spectators", "open"]);
     let mut player = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     player.ready_with_match_held(&server);
@@ -452,7 +565,10 @@ fn a_late_watcher_sees_the_glyph_charge_without_a_recharge_sweep() {
         },
     );
     watcher.ready_with_match_held(&server);
-    assert_eq!(glyph_badge(&mut watcher).as_deref(), Some("1"));
+    assert_eq!(
+        badge_number(&mut watcher, RADIANT_BADGE).as_deref(),
+        Some("1")
+    );
     assert_eq!(
         glyph_cover(&mut watcher),
         0.0,

@@ -272,6 +272,51 @@ pub fn text(s: impl Into<String>, font: &Handle<Font>, size: f32, color: Color) 
     )
 }
 
+/// A count at a lower corner of a button. The left corner is for Radiant when both sides are shown.
+pub(crate) fn spawn_charge_badge(
+    commands: &mut Commands,
+    fonts: &Fonts,
+    button: Entity,
+    left: bool,
+) -> (Entity, Entity) {
+    let (left, right) = if left {
+        (px(0), Val::Auto)
+    } else {
+        (Val::Auto, px(0))
+    };
+    let badge = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left,
+                right,
+                bottom: dota(2.0),
+                width: dota(20.0),
+                height: dota(20.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                ColorStop::auto(Color::srgb(0.267, 0.267, 0.267)),
+                ColorStop::auto(Color::BLACK),
+            ])),
+            BoxShadow::new(Color::BLACK, dota(2.0), dota(2.0), px(0), dota(4.0)),
+            Pickable::IGNORE,
+            ChildOf(button),
+        ))
+        .id();
+    let count = commands
+        .spawn((
+            text("", &fonts.bold, 12.0 * DOTA, INK),
+            Pickable::IGNORE,
+            ChildOf(badge),
+        ))
+        .id();
+    (badge, count)
+}
+
 /// The thin dark outline every HUD text carries, so it reads on any ground.
 pub fn shadow() -> TextShadow {
     TextShadow {

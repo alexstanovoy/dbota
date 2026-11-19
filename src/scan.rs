@@ -140,8 +140,10 @@ fn spawn(
         Pickable::IGNORE,
         ChildOf(button),
     ));
-    let (badge, count) = crate::glyph::spawn_charge_badge(&mut commands, &fonts, button);
-    commands.entity(badge).insert(ScanBadge);
+    let (badge, count) = ui::spawn_charge_badge(&mut commands, &fonts, button, false);
+    commands
+        .entity(badge)
+        .insert((ScanBadge, Visibility::Hidden));
     commands.entity(count).insert(ScanCount);
 }
 

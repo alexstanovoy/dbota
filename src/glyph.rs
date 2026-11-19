@@ -1,8 +1,6 @@
-//! The Glyph of Fortification button, as Dota draws it: a round icon in the
-//! frame against the minimap's right side (where Scan goes below it, which
-//! bota has not), no words on it. Ready, it shows Dota's lit Glyph; waiting,
-//! the dimmed one under a dark sweep that clears clockwise, with the seconds
-//! left in its middle. A click or the Glyph key activates it.
+//! The Glyph of Fortification sits in the lower well beside the minimap.
+//! Its badge counts the charges and a sweep tracks the wait to use it.
+//! A click or the Glyph key activates it.
 
 use std::f32::consts::TAU;
 
@@ -38,12 +36,12 @@ struct GlyphIcon {
 #[derive(Component)]
 pub(crate) struct GlyphSweep;
 
-/// The badge with the charges held, and the number in it.
 #[derive(Component)]
-struct GlyphBadge;
-
-#[derive(Component)]
-struct GlyphCount;
+struct GlyphBadge {
+    left: bool,
+    label: Entity,
+    drawn: Option<u8>,
+}
 
 /// The seconds left, in the middle.
 #[derive(Component)]
@@ -63,7 +61,7 @@ pub fn plugin(app: &mut App) {
 }
 
 pub(crate) fn updates() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
-    show.run_if(|k: Res<MatchKnown>| k.0)
+    (show, show_charges).run_if(|k: Res<MatchKnown>| k.0)
 }
 
 fn spawn(
@@ -137,52 +135,55 @@ fn spawn(
         Pickable::IGNORE,
         ChildOf(button),
     ));
-    let (badge, count) = spawn_charge_badge(&mut commands, &fonts, button);
-    commands
-        .entity(badge)
-        .insert((GlyphBadge, Name::new("hud glyph charges")));
-    commands.entity(count).insert(GlyphCount);
+    for (left, name) in [
+        (false, "hud glyph charges"),
+        (true, "hud glyph radiant charges"),
+    ] {
+        let (badge, label) = ui::spawn_charge_badge(&mut commands, &fonts, button, left);
+        commands.entity(badge).insert((
+            Name::new(name),
+            GlyphBadge {
+                left,
+                label,
+                drawn: None,
+            },
+            Visibility::Hidden,
+        ));
+    }
 }
 
-/// The badge of the charges a button holds, at its lower right, 2 of Dota's pixels over the
-/// button's foot: Dota's `ChargeCount` (20 of its pixels across, a dark gradient disc with a shadow, the number centred in it). Hidden until the
-/// caller shows it. Returns the badge and its number.
-pub(crate) fn spawn_charge_badge(
-    commands: &mut Commands,
-    fonts: &Fonts,
-    button: Entity,
-) -> (Entity, Entity) {
-    let badge = commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                right: px(0),
-                bottom: dota(2.0),
-                width: dota(20.0),
-                height: dota(20.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::MAX,
-                ..default()
-            },
-            BackgroundGradient::from(LinearGradient::to_bottom(vec![
-                ColorStop::auto(Color::srgb(0.267, 0.267, 0.267)),
-                ColorStop::auto(Color::BLACK),
-            ])),
-            BoxShadow::new(Color::BLACK, dota(2.0), dota(2.0), px(0), dota(4.0)),
-            Pickable::IGNORE,
-            Visibility::Hidden,
-            ChildOf(button),
-        ))
-        .id();
-    let count = commands
-        .spawn((
-            ui::text("", &fonts.bold, 12.0 * ui::DOTA, ui::INK),
-            Pickable::IGNORE,
-            ChildOf(badge),
-        ))
-        .id();
-    (badge, count)
+fn show_charges(
+    session: NonSend<Session>,
+    mut badges: Query<(&mut GlyphBadge, &mut Visibility)>,
+    mut labels: Query<(&mut Text, &mut TextColor)>,
+) {
+    let core = &session.0;
+    // The lower corners follow the left-to-right order of the spectator HUD.
+    let both = core
+        .view()
+        .filter(|view| core.my_slot.is_none() && view.viewer.is_none())
+        .and_then(|view| {
+            let charges = |team| view.glyphs.iter().find(|glyph| glyph.team == team)?.charges;
+            charges(Team::Radiant).zip(charges(Team::Dire))
+        });
+    for (mut badge, mut visibility) in &mut badges {
+        let (charges, color) = match (both, badge.left) {
+            (Some((radiant, _)), true) => (Some(radiant), ui::HP_FRIEND),
+            (Some((_, dire)), false) => (Some(dire), ui::HP_FOE),
+            (None, true) => (None, ui::INK),
+            (None, false) => (core.glyph().and_then(|glyph| glyph.charges), ui::INK),
+        };
+        visibility.set_if_neq(ui::visible(charges.is_some()));
+        if let Some(charges) = charges
+            && let Ok((mut text, mut text_color)) = labels.get_mut(badge.label)
+        {
+            if badge.drawn != Some(charges) {
+                badge.drawn = Some(charges);
+                text.0 = charges.to_string();
+            }
+            text_color.set_if_neq(TextColor(color));
+        }
+    }
 }
 
 /// The share of a wait of `wait` ticks still to go with `ready_in` left: what the dark sweep
@@ -195,11 +196,10 @@ fn sweep_left(ready_in: u32, wait: u32) -> f32 {
 #[derive(Default)]
 pub(crate) struct Shown {
     /// The icon was the ready one; the seconds under it; the sweep's angle in half degrees and its
-    /// darkness in hundredths; the charges held.
+    /// darkness in hundredths.
     waiting: Option<bool>,
     seconds: Option<u32>,
     sweep: Option<(u16, u8)>,
-    charges: Option<u8>,
     recharge: Recharge,
 }
 
@@ -239,19 +239,16 @@ impl Recharge {
     }
 }
 
-/// The button, shown for the side the HUD is about (one's own, or the one shown to a watcher or
-/// in a replay): its icon, its sweep and its seconds, and the charges it holds.
+/// The icon and its timer follow the side the HUD is about.
 #[allow(clippy::type_complexity)]
 fn show(
     session: NonSend<Session>,
     game: Res<crate::main_menu::GameEpoch>,
     mut shown: Local<Shown>,
-    mut frame: Single<&mut Visibility, (With<GlyphFrame>, Without<GlyphBadge>)>,
+    mut frame: Single<&mut Visibility, With<GlyphFrame>>,
     mut icon: Single<(&GlyphIcon, &mut ImageNode), Without<GlyphSweep>>,
     mut sweep: Single<&mut BackgroundGradient, With<GlyphSweep>>,
-    mut seconds: Single<&mut Text, (With<GlyphSeconds>, Without<GlyphCount>)>,
-    mut badge: Single<&mut Visibility, (With<GlyphBadge>, Without<GlyphFrame>)>,
-    mut count: Single<&mut Text, (With<GlyphCount>, Without<GlyphSeconds>)>,
+    mut seconds: Single<&mut Text, With<GlyphSeconds>>,
 ) {
     let core = &session.0;
     let rate = u32::from(core.tick_rate()).max(1);
@@ -330,16 +327,6 @@ fn show(
         } else {
             String::new()
         };
-    }
-    if shown.charges != Some(charges) {
-        shown.charges = Some(charges);
-        // None held, no badge (`.NoCharges #GlyphChargeCount`).
-        badge.set_if_neq(if charges > 0 {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        });
-        count.0 = charges.to_string();
     }
 }
 
