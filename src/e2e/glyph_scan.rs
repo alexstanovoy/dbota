@@ -11,11 +11,16 @@ use bota_proto::HeroId;
 
 use super::harness::{Client, Server, quiet_seat};
 
-fn scene() -> (Server, Client) {
-    let server = Server::start(2, &[]);
+fn joined_scene() -> (Server, Client) {
+    let server = Server::for_hud(2, &[]);
     quiet_seat(&server, HeroId::SHADOW_FIEND);
-    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
-    super::hud_layout::on_screen(&mut client);
+    let client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    (server, client)
+}
+
+fn scene() -> (Server, Client) {
+    let (server, mut client) = joined_scene();
+    client.ready_with_match_held(&server);
     (server, client)
 }
 
@@ -144,7 +149,63 @@ fn the_glyph_has_the_games_popup_with_its_wait() {
 #[test]
 fn the_glyph_button_counts_the_wait_the_server_reports() {
     let (_server, mut client) = scene();
-    client.frames(5);
+    assert_countdown(&mut client);
+}
+
+/// Bring the live match to the first-charge deadline with the HUD still covered.
+#[test]
+fn loading_through_the_first_glyph_deadline_preserves_the_countdown() {
+    const PART: &str = "delayed HUD fixture";
+    let (server, mut client) = joined_scene();
+    let first_charge =
+        bota_core::rules::Schedule::of(client.core().pregame_ticks()).glyph_first_use();
+    let before_charge = first_charge - 1;
+    client
+        .world_mut()
+        .resource_mut::<crate::loading::Parts>()
+        .set(PART, 0, 1);
+    assert!(!client.world().resource::<crate::loading::Loading>().done());
+
+    // Take each lockstep snapshot without scheduling thousands of full UI frames under load.
+    let mut patience = super::harness::Patience::of(Duration::from_secs(30));
+    while client.tick() < before_charge {
+        patience.pass("the snapshot before the first Glyph charge");
+        let tick = client.tick();
+        client.core_mut().pump(0.0);
+        if client.tick() == tick {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    assert_eq!(client.tick(), before_charge);
+
+    let mut frames = 3u8;
+    client
+        .app
+        .add_systems(Update, move |mut parts: ResMut<crate::loading::Parts>| {
+            frames = frames.saturating_sub(1);
+            if frames == 0 {
+                parts.set(PART, 1, 1);
+            }
+        });
+
+    client.ready_with_match_held(&server);
+    assert_eq!(
+        client
+            .world()
+            .resource::<crate::loading::Parts>()
+            .0
+            .get(PART),
+        Some(&(1, 1)),
+        "the HUD stayed covered until the delayed part completed"
+    );
+    assert_eq!(client.tick(), before_charge);
+    assert_countdown(&mut client);
+    client.until("the first charge arrives after readiness", |c| {
+        c.tick() >= first_charge && glyph_charges(c) == Some(1)
+    });
+}
+
+fn assert_countdown(client: &mut Client) {
     let told = client
         .core()
         .glyph()
@@ -162,7 +223,7 @@ fn the_glyph_button_counts_the_wait_the_server_reports() {
     assert!(shown.1, "the seconds are drawn on the button");
     let seconds: u32 = shown.0.parse().expect("a number of seconds");
     assert!(
-        seconds.abs_diff(told.div_ceil(rate)) <= 2,
+        seconds == told.div_ceil(rate),
         "the button says {seconds} s, the server reports {told} ticks"
     );
 }
@@ -247,11 +308,11 @@ fn a_click_on_the_glyph_button_uses_a_charge() {
 #[test]
 fn a_right_click_on_the_terrain_over_the_plates_clear_part_orders_a_move() {
     for scale in ["0.5", "1", "2"] {
-        let server = Server::start(2, &[]);
+        let server = Server::for_hud(2, &[]);
         quiet_seat(&server, HeroId::SHADOW_FIEND);
         let setting = format!("ui_scale={scale}");
         let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--set", &setting]);
-        super::hud_layout::on_screen(&mut client);
+        client.ready_with_match_held(&server);
         client.frames(20);
         let plate = named_rect(&mut client, "hud glyph plate");
         // A fifth of the plate's way down is far above its wells and its art.
@@ -365,8 +426,9 @@ fn the_glyph_shows_the_recharge_of_the_charge_still_to_come() {
 fn a_late_watcher_sees_the_glyph_charge_without_a_recharge_sweep() {
     use bota_proto::Cheat;
 
-    let server = Server::start(1, &["--spectators", "open"]);
+    let server = Server::for_hud(1, &["--spectators", "open"]);
     let mut player = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    player.ready_with_match_held(&server);
     player.cheat(Cheat::Refresh);
     player.cheat(Cheat::Refresh);
     assert_eq!(
@@ -380,7 +442,7 @@ fn a_late_watcher_sees_the_glyph_charge_without_a_recharge_sweep() {
             .glyph()
             .is_some_and(|glyph| glyph.charges == Some(1) && glyph.ready_after == Some(0))
     });
-    let mut watcher = Client::run(&["--addr", &server.address, "--spectate"]);
+    let mut watcher = Client::run_on(&server, &["--spectate"], &[]);
     watcher.within(
         Duration::from_secs(25),
         "the late watcher receives one charge",
@@ -389,7 +451,7 @@ fn a_late_watcher_sees_the_glyph_charge_without_a_recharge_sweep() {
             glyph_charges(c) == Some(1)
         },
     );
-    super::hud_layout::on_screen(&mut watcher);
+    watcher.ready_with_match_held(&server);
     assert_eq!(glyph_badge(&mut watcher).as_deref(), Some("1"));
     assert_eq!(
         glyph_cover(&mut watcher),

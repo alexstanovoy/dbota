@@ -13,7 +13,7 @@ use super::harness::{Client, Server, quiet_seat};
 
 /// The client of a hero in a two-seat match, on its screen.
 fn hud_of(hero: HeroId) -> (Server, Client) {
-    let server = Server::start(2, &[]);
+    let server = Server::for_hud(2, &[]);
     quiet_seat(
         &server,
         if hero == HeroId::PUDGE {
@@ -23,7 +23,7 @@ fn hud_of(hero: HeroId) -> (Server, Client) {
         },
     );
     let mut client = Client::join(&server, hero, &[]);
-    super::hud_layout::on_screen(&mut client);
+    client.ready_with_match_held(&server);
     client.frames(20);
     (server, client)
 }

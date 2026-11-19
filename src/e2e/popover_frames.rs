@@ -194,7 +194,7 @@ fn shopper(window: &str) -> (Server, Client) {
 
 /// [`shopper`] in a window at an interface scale of the settings, with the shop on a tab.
 fn shopper_scaled(window: &str, scale: f32, tab: &str) -> (Server, Client) {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let setting = format!("ui_scale={scale}");
     let mut client = Client::join(
         &server,
@@ -202,7 +202,7 @@ fn shopper_scaled(window: &str, scale: f32, tab: &str) -> (Server, Client) {
         &["--shop", tab, "--window", window, "--set", &setting],
     );
     // The interface's scale is the game's only once its loading is over.
-    super::hud_layout::on_screen(&mut client);
+    client.ready_with_match_held(&server);
     client.core_mut().act(Intent::SelectHero);
     client.cheat(Cheat::Gold { amount: 10_000 });
     client.stand_at(MID);

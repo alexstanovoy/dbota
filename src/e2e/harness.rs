@@ -2,11 +2,13 @@
 //! window and GPU left out: the app's frames run when a test asks for them.
 
 use std::cell::Cell;
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::{Shutdown, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc::{Receiver, TryRecvError, sync_channel};
 use std::time::{Duration, Instant};
 
 use bevy::app::PluginsState;
@@ -15,8 +17,9 @@ use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow, WindowEvent};
-use bota_client_core::{App as Core, Intent};
-use clap::{CommandFactory, FromArgMatches};
+use bota_client_core::{App as Core, Intent, Source, Transport};
+use bota_proto::{ClientMsg, FrameReader, ServerMsg, encode_frame_to_vec};
+use clap::{CommandFactory, FromArgMatches, Parser};
 
 use crate::session::Session;
 
@@ -97,6 +100,7 @@ pub struct Server {
     // Read to the end by nobody, but open: a server whose pipe is closed fails on its next line.
     _output: BufReader<ChildStdout>,
     pub address: String,
+    held_loading: bool,
     // Last: the server is gone before the next test's may start.
     _turn: Rc<Turn>,
 }
@@ -104,6 +108,15 @@ pub struct Server {
 impl Server {
     /// The server with `extra` options besides the defaults above, which they may set.
     pub fn start(seats: u8, extra: &[&str]) -> Server {
+        Self::start_match(seats, extra, false)
+    }
+
+    /// A live fixture whose peers stay connected while the server is stopped for HUD readiness.
+    pub fn for_hud(seats: u8, extra: &[&str]) -> Server {
+        Self::start_match(seats, extra, true)
+    }
+
+    fn start_match(seats: u8, extra: &[&str], held_loading: bool) -> Server {
         let turn = turn();
         let seats = seats.to_string();
         let mut args = vec!["--players", &seats];
@@ -118,6 +131,12 @@ impl Server {
             if !extra.contains(&option) {
                 args.extend([option, value]);
             }
+        }
+        if held_loading {
+            // A deliberate process stop silences every peer. The fixture still owns their
+            // lifetime, and the existing readiness deadline still bounds the wait.
+            assert!(!extra.contains(&"--idle-timeout-secs"));
+            args.extend(["--idle-timeout-secs", "0"]);
         }
         let mut child = crate::steering::scrubbed_command(crate::main_menu::tests::server_binary())
             .args(args)
@@ -138,6 +157,7 @@ impl Server {
             child,
             _output: output,
             address,
+            held_loading,
             _turn: turn,
         }
     }
@@ -228,6 +248,117 @@ pub struct Client {
     scratch: Scratch,
     // Last: the next test's clients may start once this one's loads have ended.
     _turn: Rc<Turn>,
+}
+
+/// A frame reader for paused-server fixtures. The test owns the local server and closes
+/// the socket on teardown, so silence during the hold does not mean a broken connection.
+struct FixtureSocket {
+    stream: TcpStream,
+    frames: FrameReader,
+}
+
+impl FixtureSocket {
+    fn open(address: &str) -> io::Result<Self> {
+        let timeout = bota_client_core::DEFAULT_IO_TIMEOUT;
+        let stream = bota_client_core::open_tcp(address, timeout, timeout)?;
+        Ok(Self {
+            stream,
+            frames: FrameReader::new(),
+        })
+    }
+
+    fn allow_silence(&self) -> io::Result<()> {
+        self.stream.set_read_timeout(None)
+    }
+}
+
+impl Transport for FixtureSocket {
+    fn recv(&mut self) -> io::Result<Option<ServerMsg>> {
+        let mut bytes = [0; 8192];
+        loop {
+            if let Some(message) = self.frames.next_message().map_err(io::Error::other)? {
+                return Ok(Some(message));
+            }
+            match self.stream.read(&mut bytes)? {
+                0 if self.frames.is_empty() => return Ok(None),
+                0 => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+                count => self.frames.push(&bytes[..count]),
+            }
+        }
+    }
+
+    fn send(&mut self, message: &ClientMsg) -> io::Result<()> {
+        self.stream
+            .write_all(&encode_frame_to_vec(message).map_err(io::Error::other)?)
+    }
+}
+
+const FIXTURE_INBOX: usize = 8;
+
+struct FixtureLink {
+    socket: FixtureSocket,
+    inbox: Receiver<ServerMsg>,
+    closed: bool,
+}
+
+impl FixtureLink {
+    fn connect(args: &crate::Args) -> io::Result<Core> {
+        let (address, hello) = crate::session::given_seat(args)?;
+        let mut socket = FixtureSocket::open(&address)?;
+        socket.allow_silence()?;
+        socket.send(&hello)?;
+        socket.send(&bota_client_core::catalogue_after(&hello))?;
+        let mut reader = FixtureSocket {
+            stream: socket.stream.try_clone()?,
+            frames: FrameReader::new(),
+        };
+        let (deliver, inbox) = sync_channel(FIXTURE_INBOX);
+        std::thread::spawn(move || {
+            while let Ok(Some(message)) = reader.recv() {
+                if deliver.send(message).is_err() {
+                    return;
+                }
+            }
+        });
+        Ok(Core::new(Source::Live(Box::new(Self {
+            socket,
+            inbox,
+            closed: false,
+        }))))
+    }
+}
+
+impl bota_client_core::LiveLink for FixtureLink {
+    fn poll(&mut self) -> Vec<ServerMsg> {
+        let mut messages = Vec::new();
+        for _ in 0..FIXTURE_INBOX {
+            match self.inbox.try_recv() {
+                Ok(message) => messages.push(message),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.closed = true;
+                    break;
+                }
+            }
+        }
+        messages
+    }
+
+    fn send(&mut self, message: &ClientMsg) -> io::Result<()> {
+        let sent = self.socket.send(message);
+        self.closed |= sent.is_err();
+        sent
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed
+    }
+}
+
+impl Drop for FixtureLink {
+    fn drop(&mut self) {
+        let _ = self.socket.stream.shutdown(Shutdown::Both);
+    }
 }
 
 struct HeldIncoming<P> {
@@ -510,9 +641,7 @@ impl Client {
         files: &[(&str, &str)],
         frame: Option<Duration>,
     ) -> Client {
-        let mut args = vec!["--addr", server.address.as_str()];
-        args.extend_from_slice(extra);
-        let mut client = Client::run_with_files(&args, files);
+        let mut client = Client::run_on(server, extra, files);
         if let Some(frame) = frame {
             client
                 .world_mut()
@@ -527,6 +656,43 @@ impl Client {
             core.in_tactical_phase() || core.ears().is_some()
         });
         client
+    }
+
+    /// A client of this test server, including a spectator when requested.
+    pub fn run_on(server: &Server, extra: &[&str], files: &[(&str, &str)]) -> Client {
+        let mut args = vec!["--addr", server.address.as_str()];
+        args.extend_from_slice(extra);
+        let core = server.held_loading.then(|| {
+            FixtureLink::connect(&crate::Args::parse_from(
+                std::iter::once("dbota").chain(args.iter().copied()),
+            ))
+            .expect("the held-loading fixture connects")
+        });
+        Self::build(&args, core, files)
+    }
+
+    /// Let the HUD load and settle while holding both the live server and the displayed snapshot.
+    /// Since all fixture peers keep their existing sockets, resuming does not rejoin the match.
+    pub fn ready_with_match_held(&mut self, server: &Server) {
+        assert!(server.held_loading, "use a server made for a held HUD load");
+        let tick = self.view().tick;
+        server.frozen(|| {
+            let source = std::mem::replace(
+                &mut self.core_mut().source,
+                crate::main_menu::idle().0.source,
+            );
+            self.within(Duration::from_secs(120), "the game on screen", |c| {
+                c.world().resource::<crate::loading::Loading>().done()
+                    && c.world().resource::<crate::ui::HudShown>().0
+            });
+            self.frames(10);
+            self.core_mut().source = source;
+        });
+        assert_eq!(
+            self.tick(),
+            tick,
+            "the view holds its tick while the HUD loads"
+        );
     }
 
     /// The client run with `extra` command-line arguments, its settings and replays in a folder of its own,
@@ -1086,11 +1252,21 @@ pub fn scripted_seat(
     + Send
     + 'static,
 ) {
-    let (mut link, seated) =
-        bota_client_core::Link::join(&server.address, "quiet", hero, None).expect("a seat");
-    std::thread::spawn(move || {
-        let _ = bota_client_core::play(&mut link, seated, &mut (), decide);
-    });
+    if server.held_loading {
+        let mut link = FixtureSocket::open(&server.address).expect("the quiet link connects");
+        let seated = bota_client_core::join(&mut link, "quiet", hero, None).expect("a seat");
+        link.allow_silence()
+            .expect("the quiet link can wait while loading");
+        std::thread::spawn(move || {
+            let _ = bota_client_core::play(&mut link, seated, &mut (), decide);
+        });
+    } else {
+        let (mut link, seated) =
+            bota_client_core::Link::join(&server.address, "quiet", hero, None).expect("a seat");
+        std::thread::spawn(move || {
+            let _ = bota_client_core::play(&mut link, seated, &mut (), decide);
+        });
+    }
 }
 
 /// A second seat held by a client with no front end that hunts wards: its hero stands at `at`,

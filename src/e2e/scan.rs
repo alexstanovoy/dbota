@@ -36,9 +36,10 @@ fn listen(client: &mut Client) -> Arc<Mutex<Vec<String>>> {
 /// A match of two seats, the enemy's quiet, with the client's hero standing in the middle of the
 /// map and one charge of Scan from the cheat.
 fn scene() -> (Server, Client) {
-    let server = Server::start(2, &[]);
+    let server = Server::for_hud(2, &[]);
     quiet_seat(&server, HeroId::SHADOW_FIEND);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.ready_with_match_held(&server);
     client.stand_at(MID);
     (server, client)
 }

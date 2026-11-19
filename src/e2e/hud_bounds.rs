@@ -386,14 +386,14 @@ fn hud_in(width: u32, height: u32, scale: f32) -> (Server, Client) {
 
 /// [`hud_in`] with more command-line arguments.
 fn hud_with(width: u32, height: u32, scale: f32, extra: &[&str]) -> (Server, Client) {
-    let server = Server::start(2, &[]);
+    let server = Server::for_hud(2, &[]);
     quiet_seat(&server, HeroId::SHADOW_FIEND);
     let size = format!("{width}x{height}");
     let setting = format!("ui_scale={scale}");
     let mut arguments = vec!["--window", &size, "--set", &setting];
     arguments.extend_from_slice(extra);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &arguments);
-    super::hud_layout::on_screen(&mut client);
+    client.ready_with_match_held(&server);
     for item in CARRIED {
         client.cheat(Cheat::Item { item });
     }

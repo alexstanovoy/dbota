@@ -344,12 +344,12 @@ pub(super) fn on_screen(client: &mut Client) {
 
 /// The client in a game, laid out in a window of `width` by `height`.
 fn in_window(width: u32, height: u32) -> (Client, Vec2) {
-    let server = Server::start(2, &[]);
+    let server = Server::for_hud(2, &[]);
     quiet_seat(&server, HeroId::SHADOW_FIEND);
     let size = format!("{width}x{height}");
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--window", &size]);
     // The fonts and the first layout settle over a few frames.
-    on_screen(&mut client);
+    client.ready_with_match_held(&server);
     client.frames(30);
     (client, Vec2::new(width as f32, height as f32))
 }
@@ -514,9 +514,9 @@ fn kill_a_hero(client: &mut Client) {
 fn the_corner_tally_tells_each_figure_of_the_seat_in_its_own_place() {
     use bota_client_core::Intent;
     use bota_proto::{Cheat, CreepSide};
-    let server = Server::start(1, &["--map", "0", "--runes", "none"]);
+    let server = Server::for_hud(1, &["--map", "0", "--runes", "none"]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
-    on_screen(&mut client);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     client.cheat(Cheat::CreepSpawning { on: false });
     client.cheat(Cheat::KillCreeps {

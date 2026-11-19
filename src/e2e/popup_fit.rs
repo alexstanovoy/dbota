@@ -60,12 +60,13 @@ fn inside(room: Rect, rect: Rect) -> bool {
 }
 
 fn stashed(window: &str) -> (Server, Client) {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(
         &server,
         HeroId::SHADOW_FIEND,
         &["--shop", "basics", "--window", window],
     );
+    client.ready_with_match_held(&server);
     client.core_mut().act(Intent::SelectHero);
     client.cheat(Cheat::Gold { amount: 10_000 });
     client.stand_at(MID);

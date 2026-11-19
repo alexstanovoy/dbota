@@ -49,9 +49,9 @@ fn bar(client: &mut Client) -> (bool, f32) {
 
 #[test]
 fn a_watcher_channels_in_its_animation_and_the_bar_shows_the_channel_near_the_bottom() {
-    let server = Server::start(1, &["--map", "0", "--objectives", "watchers"]);
+    let server = Server::for_hud(1, &["--map", "0", "--objectives", "watchers"]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
-    super::hud_layout::on_screen(&mut client);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     let at = bota_core::DOTA_WATCHERS[4];
     client.stand_at((at.x.to_int() + 100, at.y.to_int()));
@@ -282,9 +282,9 @@ fn label(client: &mut Client) -> (String, Rect, Rect) {
 
 /// One's hero channelling at the Watcher with the bar drawn.
 fn channelling_at_a_watcher() -> (Server, Client) {
-    let server = Server::start(1, &["--map", "0", "--objectives", "watchers"]);
+    let server = Server::for_hud(1, &["--map", "0", "--objectives", "watchers"]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
-    super::hud_layout::on_screen(&mut client);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     let at = bota_core::DOTA_WATCHERS[4];
     client.stand_at((at.x.to_int() + 100, at.y.to_int()));
