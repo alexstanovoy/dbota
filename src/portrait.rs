@@ -1094,7 +1094,7 @@ fn draw(stage: &mut Stage, ready: bool, commands: &mut Commands) -> bool {
 fn speak(
     stage: Res<Stage>,
     faces: Res<Faces>,
-    speech: Res<Speech>,
+    mut speech: ResMut<Speech>,
     time: Res<Time<bevy::time::Real>>,
     mut weights: Query<&mut MorphWeights>,
 ) {
@@ -1103,6 +1103,7 @@ fn speak(
     };
     if stage.render {
         let now = time.elapsed_secs();
+        speech.settle(now, |line, t| face.line_controls(line, t, &faces));
         face.pose(now, speech.saying(stage.unit, now), &faces, &mut weights);
     }
 }

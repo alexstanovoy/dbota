@@ -28,7 +28,8 @@
 //! with no jump moves a weight up to 0.123 in 4 ms (Pudge's line 25 started 3480 ms into the loop,
 //! weight 7) and all of them together up to 0.553 (Pudge's line 159 started 2780 ms in), 0.0019
 //! and 0.0086 in [`FINEST`]. No jump is allowed anywhere: a line that ends, or that another takes
-//! over, eases out of the face ([`crate::talk::EASE_OUT`]).
+//! over, is let go of gradually ([`crate::talk::RELEASE`]), and so are three lines said within a
+//! fifth of a second of each other.
 //!
 //! Then every line's face is shown as the client shows it on the frames of a 240 Hz and a 60 Hz
 //! display and of a browser's uneven frames ([`Pacing`]), its sound reported as a device takes it
@@ -565,14 +566,24 @@ impl<'a> Played<'a> {
         let mut speech = Speech::default();
         for (face, said) in script.iter().filter(|(_, said)| *said <= now) {
             speech.finish(*said);
+            self.settle(&mut speech, *said);
             speech.say(Some(self.unit), face.clone(), None, *said);
         }
         speech.finish(now);
-        self.posed(now, &speech)
+        self.posed(now, &mut speech)
     }
 
-    /// The face `speech` gives at `now`, and how far into its line the hero says it is.
-    fn posed(&mut self, now: f32, speech: &Speech) -> (Vec<f32>, Option<f32>) {
+    /// Takes the lines `speech` let go into what is left of the lines before, as the portrait
+    /// does on each frame.
+    fn settle(&self, speech: &mut Speech, now: f32) {
+        let (face, faces) = (&self.mirror.face, self.faces);
+        speech.settle(now, |line, t| face.line_controls(line, t, faces));
+    }
+
+    /// The face `speech` gives at `now` (taking in the lines it let go first, as the portrait
+    /// does), and how far into its line the hero says it is.
+    fn posed(&mut self, now: f32, speech: &mut Speech) -> (Vec<f32>, Option<f32>) {
+        self.settle(speech, now);
         let saying = speech.saying(Some(self.unit), now);
         let t = saying.line.map(|(_, t)| t);
         (self.mirror.pose(now, saying, self.faces), t)
@@ -644,26 +655,25 @@ impl<'a> Played<'a> {
         }
     }
 
-    /// Says a whole line `start` seconds into the expression's loop, as the hero's voice says
-    /// one (from its start at once), and takes it over halfway with `next` when there is one,
-    /// from the face at rest before it to the face eased back to its own after: the jumps.
+    /// Says lines `start` seconds into the expression's loop, as the hero's voice says them (each
+    /// from its start at once), each `after` seconds after the one before (the first a lead
+    /// after `start`), from the face at rest before them to the face let go back to its own
+    /// after: the jumps.
     fn say(
         &mut self,
         start: f32,
-        line: &AuthoredLine,
-        next: Option<&AuthoredLine>,
+        lines: &[(&AuthoredLine, f32)],
         fastest: &mut Fastest,
     ) -> Vec<String> {
         let lead = LINE_STEP * LEAD_FRAMES as f32;
-        let said = start + lead;
-        let mut script = vec![(line.face.clone(), said)];
-        let mut end = said + line.face.lipsync.end();
-        if let Some(next) = next {
-            let over = said + line.face.lipsync.end() / 2.0;
-            script.push((next.face.clone(), over));
-            end = over + next.face.lipsync.end();
+        let mut said = start + lead;
+        let mut script = Vec::new();
+        for (line, after) in lines {
+            said += after;
+            script.push((line.face.clone(), said));
         }
-        let frames = ((end + crate::talk::EASE_OUT + lead - start) / LINE_STEP).ceil() as usize;
+        let end = said + script.last().map_or(0.0, |(f, _)| f.lipsync.end());
+        let frames = ((end + crate::talk::LET_GO + lead - start) / LINE_STEP).ceil() as usize;
         let names: Vec<&str> = script.iter().map(|(f, _)| f.file.as_str()).collect();
         let phase = format!("{} from {:.0} ms", names.join(" then "), start * 1000.0);
         let found = self.play((start, frames, LINE_STEP), &script, &phase, fastest);
@@ -679,7 +689,7 @@ impl<'a> Played<'a> {
     /// [`SHOWN_SLACK`] of all its weights together: the frames it moves more or less on (it
     /// holds still and then jumps on), and the most it did.
     fn shown(&mut self, line: &AuthoredLine, pacing: Pacing) -> (Vec<String>, f32) {
-        let frames = pacing.frames(line.face.lipsync.end() + crate::talk::EASE_OUT + 0.3);
+        let frames = pacing.frames(line.face.lipsync.end() + crate::talk::LET_GO + 0.3);
         let times: Vec<f32> = frames
             .iter()
             .scan(0.0, |t, step| {
@@ -709,7 +719,7 @@ impl<'a> Played<'a> {
             };
             speech.hear(now, report);
             speech.finish(now);
-            let shown = self.posed(now, &speech).0;
+            let shown = self.posed(now, &mut speech).0;
             // The face of the frame's time: the line from the frame its sound began.
             let script = [(line.face.clone(), heard.min(now.max(said)))];
             let own = self.at(now, &script).0;
@@ -735,7 +745,8 @@ impl<'a> Played<'a> {
     }
 }
 
-/// Every [`TAKEOVER_EVERY`]th phase, each line is also taken over halfway by the next one.
+/// Every [`TAKEOVER_EVERY`]th phase, each line is also taken over halfway by the next one, and
+/// said with the next two 0.06 s apart.
 const TAKEOVER_EVERY: usize = 10;
 
 /// The face's jumps apart from the client: its idle expression through a whole loop, and every
@@ -768,9 +779,16 @@ fn played_apart(
                         let start = phase as f32 * PHASE_STEP;
                         for (k, line) in lines.iter().enumerate() {
                             let next = &lines[(k + 1) % lines.len()];
-                            let mut found = played.say(start, line, None, &mut fastest);
+                            let third = &lines[(k + 2) % lines.len()];
+                            let mut found = played.say(start, &[(line, 0.0)], &mut fastest);
                             if phase % TAKEOVER_EVERY == 0 {
-                                found.extend(played.say(start, line, Some(next), &mut fastest));
+                                let half = line.face.lipsync.end() / 2.0;
+                                let over = [(line, 0.0), (next, half)];
+                                found.extend(played.say(start, &over, &mut fastest));
+                                // Three lines inside a fifth of a second: the first still being
+                                // let go when the second is.
+                                let quick = [(line, 0.0), (next, 0.06), (third, 0.06)];
+                                found.extend(played.say(start, &quick, &mut fastest));
                             }
                             jumps.extend(found.into_iter().map(|j| (phase, format!("{name} {j}"))));
                         }

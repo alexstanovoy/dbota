@@ -58,20 +58,32 @@ pub struct LineFace {
     pub file: String,
 }
 
-/// Seconds a line's face takes to leave the face once the line ends or another takes over: the
-/// ease out `CAudioMorphData` gives a line by default. A line whose data ends on its rest leaves
-/// nothing to ease; one ending off it (or cut short) would otherwise snap back in one frame.
-pub const EASE_OUT: f32 = 0.2;
+/// How a line's face lets go once the line ends or another takes over: what is left of it decays
+/// with this time constant (seconds), as Source lets a flex go (`ExponentialDecay`), five of them
+/// making the 0.2 s ease out `CAudioMorphData` gives a line by default. A line whose data ends on
+/// its rest leaves nothing to let go; one ending off it (or cut short) would otherwise snap back
+/// in one frame. Decays of one constant add into one: whatever number of lines leave, one by one
+/// or at once, what is left of them is one set of controllers decaying together.
+pub const RELEASE: f32 = 0.04;
+/// Seconds after which what is left of a line let go is dropped: seven time constants, when less
+/// than a thousandth of what it held is left (well under any change the eye or the face tests
+/// see).
+pub const LET_GO: f32 = 7.0 * RELEASE;
+/// Most lines left waiting to be added to what is let go, when no face takes them in.
+const PENDING: usize = 8;
 /// How far a sound's reported position may run from the line's own clock before the clock is
 /// set to it again: more than a device's buffers ahead (two of about 45 ms), so that only a sound
 /// that stalled or skipped moves the face's clock, never the steps the device takes it in.
 const RESYNC: f32 = 0.25;
 
-/// The line one's hero is saying, and the one it is leaving.
+/// The line one's hero is saying, and what is left of the lines it said before.
 #[derive(Resource, Default)]
 pub struct Speech {
     line: Option<Line>,
-    leaving: Option<Leaving>,
+    /// Lines that ended or were taken over since a face last took them in ([`Speech::settle`]).
+    leaving: Vec<Leaving>,
+    /// What is left of the lines taken in: their controllers, decaying from an instant on.
+    residue: Option<Residue>,
 }
 
 struct Line {
@@ -88,13 +100,25 @@ struct Line {
     held: Option<f32>,
 }
 
-/// A line that ended or was taken over: its face where it stopped, easing out.
+/// A line that ended or was taken over: its face where it stopped, decaying from when it did.
 struct Leaving {
     unit: Option<EntityId>,
     face: Arc<LineFace>,
     /// How far into it the line stopped, and when.
     at: f32,
     since: f32,
+}
+
+/// The lines let go, as one set of controllers decaying from `since`.
+struct Residue {
+    unit: Option<EntityId>,
+    controls: Controls,
+    since: f32,
+}
+
+/// What is left `age` seconds after a line was let go.
+fn release(age: f32) -> f32 {
+    (-age.max(0.0) / RELEASE).exp()
 }
 
 /// What a sound's player tells of a line's sound on a frame.
@@ -108,12 +132,15 @@ pub enum Heard {
     Gone,
 }
 
-/// What a face says at a moment: the line and how far into it, and the line it leaves, held where
-/// it stopped, with how much of it is left.
+/// What a face says at a moment: the line and how far into it, and what is left of the lines it
+/// said before.
 #[derive(Clone, Copy, Default)]
 pub struct Saying<'a> {
     pub line: Option<(&'a LineFace, f32)>,
-    pub leaving: Option<(&'a LineFace, f32, f32)>,
+    leaving: &'a [Leaving],
+    residue: Option<&'a Residue>,
+    unit: Option<EntityId>,
+    now: f32,
 }
 
 impl Speech {
@@ -144,19 +171,46 @@ impl Speech {
         (line.unit.is_none() || line.unit == unit).then(|| (line.face.as_ref(), t))
     }
 
-    /// What `unit`'s face says at `now`: its line, and the line it is leaving.
+    /// What `unit`'s face says at `now`: its line, and what is left of the lines before it.
     pub fn saying(&self, unit: Option<EntityId>, now: f32) -> Saying<'_> {
-        let leaving = self
-            .leaving
-            .as_ref()
-            .filter(|l| l.unit.is_none() || l.unit == unit);
         Saying {
             line: self.of(unit, now),
-            leaving: leaving.map(|l| {
-                let left = 1.0 - ((now - l.since) / EASE_OUT).clamp(0.0, 1.0);
-                (l.face.as_ref(), l.at, left)
-            }),
+            leaving: &self.leaving,
+            residue: self.residue.as_ref(),
+            unit,
+            now,
         }
+    }
+
+    /// Takes the lines let go since the last call into what is left of the lines before, at
+    /// `now`: `face` gives a line's controllers where it stopped (a face's own ranges). The sum
+    /// is the same before and after, so a face posed at `now` does not change by it; it only
+    /// keeps what is let go one set of controllers, however many lines leave.
+    pub fn settle(&mut self, now: f32, mut face: impl FnMut(&LineFace, f32) -> Controls) {
+        if self.leaving.is_empty() {
+            return;
+        }
+        let mut residue = self.residue.take();
+        let unit = self.leaving.last().and_then(|l| l.unit);
+        let mut controls = residue
+            .as_mut()
+            .map(|r| {
+                let left = release(now - r.since);
+                r.controls.values_mut().for_each(|v| *v *= left);
+                std::mem::take(&mut r.controls)
+            })
+            .unwrap_or_default();
+        for line in self.leaving.drain(..) {
+            let left = release(now - line.since);
+            for (name, value) in face(&line.face, line.at) {
+                *controls.entry(name).or_insert(0.0) += value * left;
+            }
+        }
+        self.residue = Some(Residue {
+            unit,
+            controls,
+            since: now,
+        });
     }
 
     /// Debug: holds the line at `t` seconds in.
@@ -169,7 +223,8 @@ impl Speech {
 
     pub fn stop(&mut self) {
         self.line = None;
-        self.leaving = None;
+        self.leaving.clear();
+        self.residue = None;
     }
 
     /// Keeps the line on the frames' clock from the moment its sound begins (its lead behind it),
@@ -209,12 +264,13 @@ impl Speech {
         if done {
             self.leave(now);
         }
+        self.leaving.retain(|l| now - l.since <= LET_GO);
         if self
-            .leaving
+            .residue
             .as_ref()
-            .is_some_and(|l| now - l.since >= EASE_OUT)
+            .is_some_and(|r| now - r.since > LET_GO)
         {
-            self.leaving = None;
+            self.residue = None;
         }
     }
 
@@ -228,7 +284,10 @@ impl Speech {
                 None if now - line.anchor > end => (end, line.anchor + end),
                 None => (now - line.anchor, now),
             };
-            self.leaving = Some(Leaving {
+            if self.leaving.len() == PENDING {
+                self.leaving.remove(0);
+            }
+            self.leaving.push(Leaving {
                 unit: line.unit,
                 face: line.face,
                 at,
@@ -378,7 +437,7 @@ impl Face {
     }
 
     /// The controllers of the face as it is at `now`, saying what `saying` says: its idle
-    /// expression, the line added over it, and the line it leaves added by what is left of it.
+    /// expression, the line added over it, and what is left of the lines before it.
     pub fn controls(&self, now: f32, saying: Saying, faces: &Faces) -> Controls {
         let mut controls = Controls::new();
         if let Some(scene) = &self.expression {
@@ -388,14 +447,27 @@ impl Face {
             line.lipsync
                 .apply(t, &faces.phonemes, &self.ranges, &mut controls);
         }
-        if let Some((line, t, left)) = saying.leaving.filter(|l| l.2 > 0.0) {
-            let mut leaving = Controls::new();
-            line.lipsync
-                .apply(t, &faces.phonemes, &self.ranges, &mut leaving);
-            for (name, value) in leaving {
+        let ours = |unit: Option<EntityId>| unit.is_none() || unit == saying.unit;
+        for line in saying.leaving.iter().filter(|l| ours(l.unit)) {
+            let left = release(saying.now - line.since);
+            for (name, value) in self.line_controls(&line.face, line.at, faces) {
                 *controls.entry(name).or_insert(0.0) += value * left;
             }
         }
+        if let Some(residue) = saying.residue.filter(|r| ours(r.unit)) {
+            let left = release(saying.now - residue.since);
+            for (name, value) in &residue.controls {
+                *controls.entry(*name).or_insert(0.0) += value * left;
+            }
+        }
+        controls
+    }
+
+    /// The controllers a line adds to the face `t` seconds into it.
+    pub fn line_controls(&self, line: &LineFace, t: f32, faces: &Faces) -> Controls {
+        let mut controls = Controls::new();
+        line.lipsync
+            .apply(t, &faces.phonemes, &self.ranges, &mut controls);
         controls
     }
 
