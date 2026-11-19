@@ -722,11 +722,10 @@ pub(super) fn owner_hovered(client: &mut Client) -> bool {
         .any(|hovered| hovered.get())
 }
 
-/// At the smallest window and the largest interface scale the menu's context help is still shown
-/// when its control is reached by the keyboard, inside the window, and not over the control it
-/// explains.
+/// Keyboard-focused context help fits inside the smallest window at the largest interface scale
+/// and stays clear of the whole row it explains.
 #[test]
-fn context_help_at_1024x600_and_scale_2_is_shown_inside_the_window_and_not_over_its_control() {
+fn context_help_at_1024x600_and_scale_2_stays_inside_the_window_and_clear_of_its_row() {
     use super::help_widgets::{fonts_ready, tab_to};
     let mut client = Client::run(&[
         "--menu-preview",
@@ -741,9 +740,12 @@ fn context_help_at_1024x600_and_scale_2_is_shown_inside_the_window_and_not_over_
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             std::time::Duration::from_millis(10),
         ));
-    // Other pages can leave an anchor in the world while their popups are hidden.
+    // An unrelated anchor has real bounds across the viewport. Checking the first anchor would
+    // falsely report that a visible popup overlaps its row.
     let world = client.world_mut();
-    let other_row = world.spawn(Node::default()).id();
+    let other_row = world
+        .spawn((crate::ui::fill(), Visibility::Hidden, Pickable::IGNORE))
+        .id();
     world.spawn((
         crate::ui::help::placement::Anchor {
             row: other_row,
@@ -753,6 +755,22 @@ fn context_help_at_1024x600_and_scale_2_is_shown_inside_the_window_and_not_over_
     ));
     fonts_ready(&mut client);
     client.mouse(Vec2::ZERO);
+    let other_bounds = {
+        let world = client.world();
+        let size = world
+            .get::<ComputedNode>(other_row)
+            .expect("the unrelated row is laid out")
+            .size();
+        let at = world
+            .get::<UiGlobalTransform>(other_row)
+            .expect("the unrelated row is placed");
+        Rect::from_center_size(at.translation, size)
+    };
+    assert_eq!(
+        other_bounds,
+        window_rect(&mut client),
+        "the unrelated row fills the viewport"
+    );
     // Every control of the page that has context help, each reached by the keyboard in turn.
     let names: Vec<String> = {
         let world = client.world_mut();
