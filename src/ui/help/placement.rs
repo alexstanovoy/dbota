@@ -85,11 +85,9 @@ pub(super) fn place(
         // owner with no lag only because its layout runs after the owner moves; here a one-frame
         // gap is the price of never showing a popup where it no longer belongs.
         let sliding = Vec2::new(px_of(motion.translation.x), px_of(motion.translation.y)) / unit;
-        if tip.size().min_element() <= 0.0
-            || !is_placed(actual, position + sliding)
-            || !clear(actual, row, 4.0 / unit)
-            || !contained(actual, Rect::from_corners(Vec2::ZERO, extent))
-        {
+        // Where the room is short the place chosen above may lie over its row or past the window's
+        // edge: it is shown there, as the tooltips are, not hidden for being where it had to be.
+        if tip.size().min_element() <= 0.0 || !is_placed(actual, position + sliding) {
             visible.set_if_neq(Visibility::Hidden);
         }
     }
@@ -105,10 +103,6 @@ fn px_of(length: Val) -> f32 {
 
 fn contained(rect: Rect, bounds: Rect) -> bool {
     rect.min.cmpge(bounds.min).all() && rect.max.cmple(bounds.max).all()
-}
-
-fn clear(rect: Rect, row: Rect, gap: f32) -> bool {
-    (row.min - rect.max).max(rect.min - row.max).max_element() >= gap
 }
 
 /// The four places beside `row`, a `gap` off it, in the order of preference of `preferred`: a box

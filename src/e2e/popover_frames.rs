@@ -722,7 +722,7 @@ pub(super) fn owner_hovered(client: &mut Client) -> bool {
 /// explains.
 #[test]
 fn context_help_at_1024x600_and_scale_2_is_shown_inside_the_window_and_not_over_its_control() {
-    use super::help_widgets::{button, fonts_ready, tab_to};
+    use super::help_widgets::{fonts_ready, tab_to};
     let mut client = Client::run(&[
         "--menu-preview",
         "play",
@@ -738,27 +738,55 @@ fn context_help_at_1024x600_and_scale_2_is_shown_inside_the_window_and_not_over_
         ));
     fonts_ready(&mut client);
     client.mouse(Vec2::ZERO);
-    tab_to(&mut client, "about solo mid");
-    for _ in 0..60 {
-        client.step_frames(1);
-    }
+    // Every control of the page that has context help, each reached by the keyboard in turn.
+    let names: Vec<String> = {
+        let world = client.world_mut();
+        world
+            .query::<&Name>()
+            .iter(world)
+            .map(|name| name.as_str().to_owned())
+            .filter(|name| name.starts_with("about "))
+            .collect()
+    };
+    assert!(names.len() >= 2, "the page has several helps: {names:?}");
     let room = window_rect(&mut client);
-    let help = seen::<crate::ui::help::placement::Anchor>(&mut client)
-        .expect("the help of the focused control is shown");
-    let control = button(&mut client, "about solo mid").expect("the control");
-    let at = client.centre_of(control).expect("placed");
-    assert!(
-        !help.rect.contains(at),
-        "the help {:?} covers the control it explains at {at}",
-        help.rect
-    );
-    let over = help.rect.size().cmpgt(room.size());
-    let inside =
-        |low: f32, high: f32, room_high: f32, over: bool| low >= 0.0 && (over || high <= room_high);
-    assert!(
-        inside(help.rect.min.x, help.rect.max.x, room.max.x, over.x)
-            && inside(help.rect.min.y, help.rect.max.y, room.max.y, over.y),
-        "the help {:?} is not inside the window {room:?}",
-        help.rect
-    );
+    let mut complaints = Vec::new();
+    for name in names {
+        tab_to(&mut client, &name);
+        for _ in 0..60 {
+            client.step_frames(1);
+        }
+        let Some(help) = seen::<crate::ui::help::placement::Anchor>(&mut client) else {
+            complaints.push(format!("{name}: the help is not shown"));
+            continue;
+        };
+        let row = {
+            let world = client.world_mut();
+            let row = world
+                .query::<&crate::ui::help::placement::Anchor>()
+                .iter(world)
+                .next()
+                .expect("an anchor")
+                .row;
+            let node = world.get::<ComputedNode>(row).expect("laid out");
+            let at = world
+                .get::<bevy::ui::UiGlobalTransform>(row)
+                .expect("placed");
+            Rect::from_center_size(at.translation, node.size())
+        };
+        if !(room.contains(help.rect.min) && room.contains(help.rect.max)) {
+            complaints.push(format!(
+                "{name}: the help {:?} is not wholly inside the window {room:?}",
+                help.rect
+            ));
+        }
+        let both = help.rect.intersect(row);
+        if both.width() > 0.0 && both.height() > 0.0 {
+            complaints.push(format!(
+                "{name}: the help {:?} covers part of the row it explains {row:?}",
+                help.rect
+            ));
+        }
+    }
+    assert!(complaints.is_empty(), "{}", complaints.join("\n"));
 }
