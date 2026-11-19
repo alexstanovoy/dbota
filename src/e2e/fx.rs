@@ -58,7 +58,7 @@ fn hook(client: &mut Client, slot: u8, at: (f32, f32)) {
 }
 
 /// Pudge hooks an enemy hero and then a frail one: the throw sounds, the chain flies as Dota's
-/// particle, the hit bursts and sounds on the one caught, the stun of the drag shows over it,
+/// particle, the hit bursts and sounds on the one caught, the drag plays the disabled pose,
 /// and the death of the second is sounded as Dota's Pudge dies.
 #[test]
 fn a_meat_hook_is_thrown_flies_hits_stuns_and_kills_as_dota_shows_it() {
@@ -79,7 +79,7 @@ fn a_meat_hook_is_thrown_flies_hits_stuns_and_kills_as_dota_shows_it() {
         enemy: true,
         at: bota_proto::Vec2::from_ints(MID.0 + 500, MID.1),
     });
-    let (_, at) = enemy(&client);
+    let (victim, at) = enemy(&client);
     hook(&mut client, slot, at);
     client.until("the hook thrown and sounded", |c| {
         heard(c, "sound.pudge.hook_throw") > 0
@@ -88,9 +88,19 @@ fn a_meat_hook_is_thrown_flies_hits_stuns_and_kills_as_dota_shows_it() {
     client.until("the hit shown and sounded", |c| {
         started(c, "hero.pudge.hook_impact") > 0 && heard(c, "sound.pudge.hook_impact") > 0
     });
-    client.until("the stun of the drag shown", |c| {
-        started(c, "status.stunned") > 0
+    client.until("the enemy is held by the hook", |c| {
+        wears(c, victim, bota_proto::EffectId::STUNNED)
     });
+    assert_eq!(
+        drawn_clip(&client, victim),
+        "flail",
+        "hook drag overrides the activity"
+    );
+    assert_eq!(
+        started(&client, "status.stunned"),
+        0,
+        "hook drag has no overhead marker"
+    );
     // The hook is back; the enemy is beside Pudge, frail, and the next hook strikes four times as hard.
     client.until("the hook back", |c| {
         !c.view()
@@ -98,6 +108,14 @@ fn a_meat_hook_is_thrown_flies_hits_stuns_and_kills_as_dota_shows_it() {
             .iter()
             .any(|p| p.inflictor == Some(bota_proto::Inflictor::Ability(AbilityId::MEAT_HOOK)))
     });
+    client.until("the hook clears its stun", |c| {
+        !wears(c, victim, bota_proto::EffectId::STUNNED)
+    });
+    assert_ne!(
+        drawn_clip(&client, victim),
+        "flail",
+        "the hook released the pose"
+    );
     let (victim, at) = enemy(&client);
     let frail = ModifierSpec {
         max_hp: ModifierSpec::MIN_SCALE,
@@ -196,7 +214,7 @@ fn a_maelstroms_lightning_and_a_skull_bashers_bash_show_as_dota_shows_them() {
         started(c, "item.maelstrom.hit") > 0 && heard(c, "sound.item.maelstrom") > 0
     });
     client.until("a bash sounded under the stun's mark", |c| {
-        heard(c, "sound.item.skull_basher") > 0 && started(c, "status.stunned") > 0
+        heard(c, "sound.item.skull_basher") > 0 && started(c, "status.bashed") > 0
     });
 }
 
@@ -444,4 +462,368 @@ fn crozier_shows_its_shared_ghost_and_movement_effects_and_collection_heal() {
     client.until("positive collection shows the native heal particle", |c| {
         started(c, "item.magic_stick") > healed
     });
+}
+
+fn wears(client: &Client, unit: EntityId, effect: bota_proto::EffectId) -> bool {
+    client
+        .view()
+        .unit(unit)
+        .is_some_and(|unit| unit.effects.iter().any(|held| held.id == effect))
+}
+
+fn drawn_clip(client: &Client, unit: EntityId) -> &'static str {
+    let body = client.body(unit).expect("the disabled unit is drawn");
+    client
+        .world()
+        .get::<crate::anim::Pose>(body)
+        .expect("the disabled unit's pose")
+        .clip()
+}
+
+fn active_particle_positions<'a>(
+    client: &'a Client,
+    logical: &str,
+) -> impl Iterator<Item = bevy::prelude::Vec3> + use<'a> {
+    let world = client.world();
+    let playing = world.resource::<Playing>();
+    world
+        .resource::<Library>()
+        .effect(logical)
+        .into_iter()
+        .flat_map(move |effect| playing.instances_of(effect))
+        .filter(|instance| !instance.ending())
+        .map(|instance| instance.nodes[0].control_points[0].position)
+}
+
+fn assert_overhead(client: &Client, unit: EntityId, particle: &str) {
+    let world = client.world();
+    let body = client.body(unit).expect("the marked body is drawn");
+    let unit = world.get::<crate::units::Unit>(body).expect("the unit");
+    let ground = world.resource::<crate::map::Ground>();
+    let height = ground.at(unit.at.x, unit.at.y) + crate::bars::bar_height(unit.kind);
+    let overhead = bevy::prelude::Vec3::new(unit.at.x, unit.at.y, height);
+    assert!(
+        active_particle_positions(client, particle).any(|point| point.distance(overhead) < 0.01),
+        "{particle} is active at {:?}'s drawn overhead point {overhead:?}",
+        unit.id,
+    );
+    let effect = world
+        .resource::<Library>()
+        .effect(particle)
+        .expect("the marker in the cache");
+    assert!(
+        world
+            .resource::<Playing>()
+            .instances_of(effect)
+            .any(|instance| {
+                let root = instance.nodes[0].def;
+                !instance.ending()
+                    && instance
+                        .particles()
+                        .iter()
+                        .any(|(system, at, _)| *system == root && at.distance(overhead) < 160.0)
+            }),
+        "{particle}'s root particles are around {:?}'s drawn overhead point {overhead:?}",
+        unit.id,
+    );
+}
+
+#[test]
+fn a_skull_bashers_bash_shows_its_own_overhead_marker_until_it_lifts() {
+    use bota_proto::{EffectId, Order, Vec2};
+    let server = Server::start(1, &["--seed", "51"]);
+    let mut client = Client::join_with_clock(
+        &server,
+        HeroId::PUDGE,
+        &[],
+        std::time::Duration::from_millis(17),
+    );
+    client.stand_at(MID);
+    client.cheat(Cheat::Item {
+        item: ItemId::SKULL_BASHER,
+    });
+    client.cheat(Cheat::CreateHero {
+        hero: HeroId::SHADOW_FIEND,
+        enemy: true,
+        at: Vec2::from_ints(MID.0 + 120, MID.1),
+    });
+    let (victim, _) = enemy(&client);
+    client.cheat(Cheat::ApplyModifier {
+        target: Target::Unit(victim),
+        spec: ModifierSpec {
+            max_hp: ModifierSpec::MAX_SCALE,
+            ..ModifierSpec::NOMINAL
+        },
+        ticks: 1000,
+    });
+    client.core_mut().send_order(Order::Attack {
+        target: Target::Unit(victim),
+    });
+    client.until("a Skull Basher attack applied Bash", |c| {
+        wears(c, victim, EffectId::BASHED)
+    });
+    client.frames(2);
+    assert_overhead(&client, victim, "status.bashed");
+    assert_eq!(
+        drawn_clip(&client, victim),
+        "stun",
+        "Bash plays the disabled clip"
+    );
+    client.core_mut().act(Intent::Stop);
+    let mut checked_size = false;
+    client.until("the bash lifts", |c| {
+        if !wears(c, victim, EffectId::BASHED) {
+            return true;
+        }
+        assert_overhead(c, victim, "status.bashed");
+        let world = c.world();
+        let effect = world
+            .resource::<Library>()
+            .effect("status.bashed")
+            .expect("Bash in cache");
+        for instance in world.resource::<Playing>().instances_of(effect) {
+            let root = &instance.nodes[0];
+            // The installed root starts at three times its authored 64-unit sprite radius.
+            // Its radius operator settles to the authored size at 25% of the one-second life.
+            if !instance.ending() && root.age >= 0.3 && !root.parts.is_empty() {
+                let radius = (0..root.parts.len())
+                    .map(|index| {
+                        root.parts
+                            .scalar_field(heatel::particle::Field::RADIUS, index)
+                    })
+                    .fold(0.0_f32, f32::max);
+                assert!(
+                    (60.0..=65.0).contains(&radius),
+                    "settled Bash sprite radius: {radius}"
+                );
+                checked_size = true;
+            }
+        }
+        false
+    });
+    assert!(
+        checked_size,
+        "the bash held long enough to check the settled radius"
+    );
+    assert!(
+        active_particle_positions(&client, "status.bashed")
+            .next()
+            .is_none(),
+        "Bash stopped emitting"
+    );
+    assert_ne!(
+        drawn_clip(&client, victim),
+        "stun",
+        "Bash released the pose"
+    );
+}
+
+#[test]
+fn a_stunned_hero_and_lane_creep_play_disabled_clips_then_resume_moving() {
+    use bota_proto::{EffectId, Vec2};
+    let server = Server::start(1, &["--seed", "51"]);
+    let mut client = Client::join_with_clock(
+        &server,
+        HeroId::SHADOW_FIEND,
+        &[],
+        std::time::Duration::from_millis(17),
+    );
+    client.stand_at(MID);
+    client.cheat(Cheat::CreateCreeps {
+        enemy: false,
+        at: Vec2::from_ints(MID.0 - 120, MID.1),
+    });
+    let hero = client.me().id;
+    let creep = client
+        .view()
+        .units
+        .iter()
+        .find(|unit| unit.team == client.me().team && unit.kind == UnitKind::CreepMelee)
+        .expect("the spawned lane creep")
+        .id;
+    client
+        .core_mut()
+        .act(Intent::MoveTo(((MID.0 - 600) as f32, MID.1 as f32)));
+    client.until("the hero and creep are running", |c| {
+        [hero, creep]
+            .into_iter()
+            .all(|unit| drawn_clip(c, unit) == "run")
+    });
+    for unit in [hero, creep] {
+        client.cheat(Cheat::Stun {
+            target: Target::Unit(unit),
+            ticks: 36,
+        });
+    }
+    client.frames(2);
+    for unit in [hero, creep] {
+        assert!(
+            wears(&client, unit, EffectId::STUNNED),
+            "the server applied generic stun"
+        );
+        assert_eq!(
+            drawn_clip(&client, unit),
+            "stun",
+            "generic stun plays the disabled clip"
+        );
+        assert_overhead(&client, unit, "status.stunned");
+    }
+    client.until("both stuns lift", |c| {
+        [hero, creep]
+            .into_iter()
+            .all(|unit| !wears(c, unit, EffectId::STUNNED))
+    });
+    assert!(
+        active_particle_positions(&client, "status.stunned")
+            .next()
+            .is_none(),
+        "the stun markers stopped emitting"
+    );
+    client.until("the hero and creep are running again", |c| {
+        [hero, creep]
+            .into_iter()
+            .all(|unit| drawn_clip(c, unit) == "run")
+    });
+}
+
+fn assert_dismember_lifetime(kind: UnitKind, interrupt: bool) {
+    use bota_proto::{AbilitySlot, EffectId, Order, Vec2};
+    let server = Server::start(1, &["--seed", "51"]);
+    let mut client = Client::join_with_clock(
+        &server,
+        HeroId::PUDGE,
+        &[],
+        std::time::Duration::from_millis(17),
+    );
+    client.stand_at(MID);
+    client.cheat(Cheat::AllVision { on: true });
+    client.cheat(Cheat::Levels { count: 5 });
+    client.cheat(Cheat::MaxAbilities);
+    let at = Vec2::from_ints(MID.0 + 120, MID.1);
+    match kind {
+        UnitKind::Hero => client.cheat(Cheat::CreateHero {
+            hero: HeroId::SHADOW_FIEND,
+            enemy: true,
+            at,
+        }),
+        UnitKind::CreepMelee => client.cheat(Cheat::CreateCreeps { enemy: true, at }),
+        _ => unreachable!("Dismember scenario target"),
+    }
+    let victim = client
+        .view()
+        .units
+        .iter()
+        .find(|unit| unit.kind == kind && unit.team != client.me().team)
+        .expect("an enemy target for Dismember")
+        .id;
+    client.cheat(Cheat::ApplyModifier {
+        target: Target::Unit(victim),
+        spec: ModifierSpec {
+            max_hp: ModifierSpec::MAX_SCALE,
+            ..ModifierSpec::NOMINAL
+        },
+        ticks: 1000,
+    });
+    client.until("the victim's animation rig loaded", |c| {
+        c.body(victim)
+            .is_some_and(|body| c.world().get::<crate::units::Rig>(body).is_some())
+    });
+    let slot = AbilitySlot(slot_of(&client, AbilityId::DISMEMBER));
+    client.core_mut().send_order(Order::Cast {
+        slot,
+        target: Target::Unit(victim),
+    });
+    client.until("the Dismember channel holds the victim", |c| {
+        wears(c, victim, EffectId::DISMEMBERED)
+    });
+    let mut dispelled = client.view().unit(victim).expect("the target").clone();
+    dispelled
+        .effects
+        .retain(|effect| effect.id != EffectId::DISMEMBERED);
+    assert!(
+        dispelled
+            .effects
+            .iter()
+            .any(|effect| effect.id == EffectId::STUNNED)
+    );
+    assert_eq!(
+        client
+            .world()
+            .resource::<crate::fx::rules::Rules>()
+            .pose_of(&dispelled),
+        Some(crate::fx::line::DisabledPose::Stun),
+        "removing the hold without its accompanying stun restores the generic pose"
+    );
+    if interrupt {
+        client.cheat(Cheat::Stun {
+            target: Target::Unit(victim),
+            ticks: 120,
+        });
+    }
+    let began = client.tick();
+    let mut interrupted = false;
+    client.until("Dismember releases its target", |c| {
+        if !wears(c, victim, EffectId::DISMEMBERED) {
+            return true;
+        }
+        assert_eq!(
+            drawn_clip(c, victim),
+            "flail",
+            "Dismember's victim plays its activity override"
+        );
+        assert!(
+            active_particle_positions(c, "status.stunned")
+                .next()
+                .is_none(),
+            "Dismember does not show the generic overhead marker"
+        );
+        if interrupt && c.tick() >= began + 15 && !interrupted {
+            c.core_mut().act(Intent::Stop);
+            interrupted = true;
+        }
+        false
+    });
+    assert_eq!(client.me().channel, None, "Pudge released his channel");
+    assert_ne!(
+        drawn_clip(&client, victim),
+        "flail",
+        "the victim can animate on release"
+    );
+    assert_eq!(
+        heard(&client, "sound.pudge.dismember"),
+        1,
+        "one cue per hold"
+    );
+    assert!(
+        started(&client, "hero.pudge.dismember") > 0,
+        "blood played on a bite"
+    );
+    if interrupt {
+        assert!(interrupted);
+        assert!(client.tick() - began < 40, "Stop ended Dismember early");
+        assert!(
+            wears(&client, victim, EffectId::STUNNED),
+            "the other stun remains"
+        );
+        assert_eq!(drawn_clip(&client, victim), "stun");
+        assert!(
+            active_particle_positions(&client, "status.stunned")
+                .next()
+                .is_some(),
+            "the remaining stun's marker replaces the hold"
+        );
+    } else {
+        assert!(client.tick() - began >= 70, "the full channel completed");
+    }
+}
+
+#[test]
+fn a_dismember_victim_looks_held_until_the_channel_ends_or_breaks() {
+    assert_dismember_lifetime(UnitKind::Hero, false);
+    assert_dismember_lifetime(UnitKind::Hero, true);
+}
+
+#[test]
+fn a_dismembered_lane_creep_flails_until_the_channel_ends() {
+    assert_dismember_lifetime(UnitKind::CreepMelee, false);
 }

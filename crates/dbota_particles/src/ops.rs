@@ -143,6 +143,29 @@ pub fn operate(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &m
             normal_lock(scene, parts, call, control_point.index());
         }
         Operator::PositionLock(lock) => position_lock(lock, scene, parts, call),
+        Operator::RigidAttachToControlPoint {
+            control_point,
+            scale,
+            input,
+            output,
+            local,
+        } => {
+            let frame = scene.control_points[control_point.index()];
+            let scale = scale.map_or(1.0, |(point, axis)| {
+                scene.control_points[point.index()]
+                    .position
+                    .to_array()
+                    .get(usize::from(axis))
+                    .copied()
+                    .unwrap_or(1.0)
+            });
+            let (input, output) = (slot(*input), slot(*output));
+            for index in 0..parts.len() {
+                let offset = parts.vector(input, index) * scale;
+                let position = frame.position + if *local { frame.rotate(offset) } else { offset };
+                parts.set_vector(output, index, position);
+            }
+        }
         Operator::SpinUpdate => {
             for i in 0..parts.len() {
                 let age = scene.age - parts.scalars[store::CREATION][i];

@@ -56,7 +56,7 @@
 #           Dota's client loads): each phoneme's flex controller settings, added up by a speaking face.
 #   fx      <subject>.<trigger> at=<where> [attach=<point>] [particle=<particle logical>] [sound=<sound logical prefix>]
 #           [cp<N>=<feed>]... [whose=own|foreign] [stacks=<n>|<from>..<to>] [side=radiant|dire]
-#           [look=radiant|dire]
+#           [look=radiant|dire] [disable=<priority>] [pose=stun|flail]
 #           an effect bound to a fact of the game by Dota's name for it (src/fx.rs). The importer passes these lines on; the client reads them.
 #           subject: item.<ids.txt item name> | ability.<ids.txt ability name> | modifier.<Dota modifier name> |
 #                    effect.<bota effect key that is no Dota modifier: bota_shrine_ready> |
@@ -83,6 +83,8 @@
 #           attach: where on the unit it plays: origin (its feet, the default) | overhead (where its health bar floats) |
 #                   attach_<node> (a node of its model: attach_hitloc, attach_head, attach_eyeL), hitloc for attach_hitloc
 #           sound: one of the sounds of that logical name (its variants share it) plays at that spot
+#           pose: the selected disable's activity, where the model has the clip
+#           disable: only the highest-priority active disable line applies; ties use manifest order
 #           cp<N> (N from 1; the particle's first control point is where it plays): what that control point is given:
 #                 stacks | seconds (the effect's stacks, the seconds it
 #                 has left) | mode (the attribute of the item: 0 strength, 1 agility, 2 intelligence) | charges (the share
@@ -126,7 +128,7 @@
 
 
 # --- Shadow Fiend (npc_dota_hero_nevermore: BAT 1.6, attack point 0.5 s, raze cast point 0.55 s, requiem 1.67 s)
-model hero.nevermore.model models/heroes/shadow_fiend/shadow_fiend.vmdl_c models/hero/nevermore/nevermore.glb anims=idle,run_anim,attack01,attack02,cast1_shadowraze_a,cast1_shadowraze_b,cast1_shadowraze_c,cast6_requiem,death,idle_rare,idle_injured,run_haste_anim,run_injured_anim,stun,flail,teleport,spawn,generic_channel model_scale=0.98
+model hero.nevermore.model models/heroes/shadow_fiend/shadow_fiend.vmdl_c models/hero/nevermore/nevermore.glb anims=idle,run_anim,attack01,attack02,cast1_shadowraze_a,cast1_shadowraze_b,cast1_shadowraze_c,cast6_requiem,death,idle_rare,idle_injured,run_haste_anim,run_injured_anim,stun_anim,flail_anim,teleport,spawn,generic_channel model_scale=0.98
 clip hero.nevermore.model idle idle 1.600
 clip hero.nevermore.model run run_anim 1.100
 clip hero.nevermore.model attack attack01 1.100 point=0.5
@@ -140,8 +142,8 @@ clip hero.nevermore.model idle_rare idle_rare 9.600
 clip hero.nevermore.model idle_injured idle_injured 6.400
 clip hero.nevermore.model run_haste run_haste_anim 5.730
 clip hero.nevermore.model run_injured run_injured_anim 1.100
-clip hero.nevermore.model stun stun 2.067
-clip hero.nevermore.model flail flail 0.686
+clip hero.nevermore.model stun stun_anim 2.067
+clip hero.nevermore.model flail flail_anim 0.686
 clip hero.nevermore.model teleport teleport 2.233
 clip hero.nevermore.model spawn spawn 1.000
 # ACT_DOTA_GENERIC_CHANNEL_1: a hero channelling at a Watcher (ability_lamp_use) or an Outpost (ability_capture).
@@ -192,48 +194,54 @@ model hero.pudge.belt models/heroes/pudge/belt.vmdl_c models/hero/pudge_belt/pud
 
 # --- Lane creeps (npc_units.txt; attack rate 1.0; attack point melee 0.467 s, ranged 0.5 s)
 # Flagbearers carry a model particle at attach_banner; their Inspiration ring is a separate particle.
-model creep.radiant.melee.model models/creeps/lane_creeps/creep_radiant_melee/radiant_melee.vmdl_c models/creep/radiant_melee/radiant_melee.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
+model creep.radiant.melee.model models/creeps/lane_creeps/creep_radiant_melee/radiant_melee.vmdl_c models/creep/radiant_melee/radiant_melee.glb anims=idle,run,attack,attack2,death,stun,flail model_scale=0.93
 clip creep.radiant.melee.model idle idle 1.433
 clip creep.radiant.melee.model run run 0.800
 clip creep.radiant.melee.model attack attack 1.000 point=0.467
 clip creep.radiant.melee.model attack2 attack2 1.000 point=0.467
 clip creep.radiant.melee.model death death 1.033
 clip creep.radiant.melee.model stun stun 2.150
-model creep.radiant.flagbearer.model models/creeps/lane_creeps/creep_radiant_melee/radiant_flagbearer.vmdl_c models/creep/radiant_flagbearer/radiant_flagbearer.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
+clip creep.radiant.melee.model flail flail 0.933
+model creep.radiant.flagbearer.model models/creeps/lane_creeps/creep_radiant_melee/radiant_flagbearer.vmdl_c models/creep/radiant_flagbearer/radiant_flagbearer.glb anims=idle,run,attack,attack2,death,stun,flail model_scale=0.93
 clip creep.radiant.flagbearer.model idle idle 1.433
 clip creep.radiant.flagbearer.model run run 0.800
 clip creep.radiant.flagbearer.model attack attack 1.000 point=0.467
 clip creep.radiant.flagbearer.model attack2 attack2 1.000 point=0.467
 clip creep.radiant.flagbearer.model death death 1.033
 clip creep.radiant.flagbearer.model stun stun 2.150
-model creep.radiant.ranged.model models/creeps/lane_creeps/creep_radiant_ranged/radiant_ranged.vmdl_c models/creep/radiant_ranged/radiant_ranged.glb anims=idle,run,attack,attack2,death,stun model_scale=0.88
+clip creep.radiant.flagbearer.model flail flail 0.933
+model creep.radiant.ranged.model models/creeps/lane_creeps/creep_radiant_ranged/radiant_ranged.vmdl_c models/creep/radiant_ranged/radiant_ranged.glb anims=idle,run,attack,attack2,death,stun,flail model_scale=0.88
 clip creep.radiant.ranged.model idle idle 1.600
 clip creep.radiant.ranged.model run run 0.700
 clip creep.radiant.ranged.model attack attack 1.000 point=0.5
 clip creep.radiant.ranged.model attack2 attack2 1.000 point=0.5
 clip creep.radiant.ranged.model death death 0.867
 clip creep.radiant.ranged.model stun stun 1.400
-model creep.dire.melee.model models/creeps/lane_creeps/creep_bad_melee/creep_bad_melee.vmdl_c models/creep/dire_melee/dire_melee.glb anims=idle,run,attack,attackAlt,die,stun meshes=creep_bad_melee_model model_scale=0.93
+clip creep.radiant.ranged.model flail flail 0.533
+model creep.dire.melee.model models/creeps/lane_creeps/creep_bad_melee/creep_bad_melee.vmdl_c models/creep/dire_melee/dire_melee.glb anims=idle,run,attack,attackAlt,die,stun,flail meshes=creep_bad_melee_model model_scale=0.93
 clip creep.dire.melee.model idle idle 1.700
 clip creep.dire.melee.model run run 0.767
 clip creep.dire.melee.model attack attack 0.933 point=0.467
 clip creep.dire.melee.model attack2 attackAlt 0.933 point=0.467
 clip creep.dire.melee.model death die 1.700
 clip creep.dire.melee.model stun stun 1.067
-model creep.dire.flagbearer.model models/creeps/lane_creeps/creep_bad_melee/creep_bad_flagbearer.vmdl_c models/creep/dire_flagbearer/dire_flagbearer.glb anims=idle,run,attack,attackAlt,die,stun meshes=creep_bad_melee_model model_scale=0.93
+clip creep.dire.melee.model flail flail 0.800
+model creep.dire.flagbearer.model models/creeps/lane_creeps/creep_bad_melee/creep_bad_flagbearer.vmdl_c models/creep/dire_flagbearer/dire_flagbearer.glb anims=idle,run,attack,attackAlt,die,stun,flail meshes=creep_bad_melee_model model_scale=0.93
 clip creep.dire.flagbearer.model idle idle 1.700
 clip creep.dire.flagbearer.model run run 0.767
 clip creep.dire.flagbearer.model attack attack 0.933 point=0.467
 clip creep.dire.flagbearer.model attack2 attackAlt 0.933 point=0.467
 clip creep.dire.flagbearer.model death die 1.700
 clip creep.dire.flagbearer.model stun stun 1.067
-model creep.dire.ranged.model models/creeps/lane_creeps/creep_bad_ranged/lane_dire_ranged.vmdl_c models/creep/dire_ranged/dire_ranged.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
+clip creep.dire.flagbearer.model flail flail 0.800
+model creep.dire.ranged.model models/creeps/lane_creeps/creep_bad_ranged/lane_dire_ranged.vmdl_c models/creep/dire_ranged/dire_ranged.glb anims=idle,run,attack,attack2,death,stun,flail model_scale=0.93
 clip creep.dire.ranged.model idle idle 1.967
 clip creep.dire.ranged.model run run 0.633
 clip creep.dire.ranged.model attack attack 0.967 point=0.5
 clip creep.dire.ranged.model attack2 attack2 0.967 point=0.5
 clip creep.dire.ranged.model death death 1.300
 clip creep.dire.ranged.model stun stun 1.967
+clip creep.dire.ranged.model flail flail 0.633
 
 # Siege creeps (npc_dota_{goodguys,badguys}_siege: attack rate 3.0, attack point 0.7 s). Their models have no
 # death or stun animation: Dota swaps in a baked "deathsim" break-apart model (*.destruction, play death once, hide).
@@ -445,6 +453,7 @@ particle hero.pudge.dismember particles/units/heroes/hero_pudge/pudge_dismember.
 particle hero.pudge.meat_shield particles/units/heroes/hero_pudge/pudge_fleshheap_block_activation.vpcf_c particles/pudge_fleshheap_block_activation.json
 # What a unit under a stun, a disarm, a break, a slow, a purge or a mana burn shows, and the fountain's mending
 particle status.stunned particles/generic_gameplay/generic_stunned.vpcf_c particles/generic_stunned.json
+particle status.bashed particles/generic_gameplay/generic_bashed.vpcf_c particles/generic_bashed.json
 particle status.disarmed particles/generic_gameplay/generic_disarm.vpcf_c particles/generic_disarm.json
 particle status.broken particles/generic_gameplay/generic_break.vpcf_c particles/generic_break.json
 particle status.slowed_cold particles/generic_gameplay/generic_slowed_cold.vpcf_c particles/generic_slowed_cold.json
@@ -586,12 +595,15 @@ fx ability.nevermore_shadowraze*.worn at=unit particle=hero.nevermore.raze_debuf
 fx ability.pudge_meat_hook.cast at=caster sound=sound.pudge.hook_throw
 fx ability.pudge_meat_hook.flies at=chain particle=hero.pudge.hook cp2=2200,0,0 cp3=10,0,0 cp4=1,0,0
 fx ability.pudge_meat_hook.hit at=unit attach=attach_hitloc particle=hero.pudge.hook_impact sound=sound.pudge.hook_impact
+fx ability.pudge_meat_hook.worn at=unit disable=4 pose=flail
 fx ability.pudge_rot.worn at=unit whose=own particle=hero.pudge.rot sound=sound.pudge.rot cp1=250,1,250
 fx ability.pudge_rot.worn at=unit whose=foreign particle=hero.pudge.rot_recipient
-fx modifier.modifier_pudge_dismember.worn at=unit attach=attach_hitloc particle=hero.pudge.dismember sound=sound.pudge.dismember
+fx modifier.modifier_pudge_dismember.worn at=unit disable=4 pose=flail
+fx modifier.modifier_pudge_dismember.worn at=unit attach=attach_hitloc sound=sound.pudge.dismember
+fx ability.pudge_dismember.hit at=unit attach=attach_hitloc particle=hero.pudge.dismember follow=true
 fx modifier.modifier_pudge_flesh_heap_block.worn at=unit particle=hero.pudge.meat_shield
 # What a unit under a stun, a disarm or a break shows over its head, and the fountain's mending
-fx modifier.modifier_stunned.worn at=unit attach=overhead particle=status.stunned
+fx modifier.modifier_stunned.worn at=unit attach=overhead particle=status.stunned disable=1 pose=stun
 fx modifier.modifier_disarmed.worn at=unit attach=overhead particle=status.disarmed cp1=attach_hitloc
 fx modifier.modifier_break.worn at=unit attach=overhead particle=status.broken
 fx modifier.modifier_fountain_aura_buff.worn at=unit particle=fountain.regen
@@ -1412,83 +1424,93 @@ sound sound.night sounds/ambient/night.vsnd_c sounds/ambient/night.wav event=Gen
 # unit that wears it). Clips: idle, run, attack (+ attack2 when the model has a second swing), death, stun (when the
 # model has ACT_DOTA_DISABLED), castN for each ACT_DOTA_CAST_ABILITY_N its units' abilities use. The Wildwing's
 # Tornado is an invisible attachment model in Dota: it is drawn as nothing.
-model neutral.ice_giant01.model models/creeps/ice_biome/giant/ice_giant01.vmdl_c models/neutral/ice_giant01/ice_giant01.glb anims=witchdoctor_idle_anim,witchdoctor_run_anim,ice_giant_attack_ranged,witchdoctor_death,stun_anim,paralyzing_cask_anim
+model neutral.ice_giant01.model models/creeps/ice_biome/giant/ice_giant01.vmdl_c models/neutral/ice_giant01/ice_giant01.glb anims=witchdoctor_idle_anim,witchdoctor_run_anim,ice_giant_attack_ranged,witchdoctor_death,stun_anim,paralyzing_cask_anim,flail_anim
 clip neutral.ice_giant01.model idle witchdoctor_idle_anim 1.567
 clip neutral.ice_giant01.model run witchdoctor_run_anim 1.400
 clip neutral.ice_giant01.model attack ice_giant_attack_ranged 1.467 point=0.7
 clip neutral.ice_giant01.model death witchdoctor_death 1.967
 clip neutral.ice_giant01.model stun stun_anim 1.567
 clip neutral.ice_giant01.model cast1 paralyzing_cask_anim 0.800 point=0.35
+clip neutral.ice_giant01.model flail flail_anim 0.667
 unit npc_dota_neutral_ice_shaman neutral.ice_giant01.model model_scale=1.3 attack=neutral.attack.witchdoctor soundset=n_creep_ranged
-model neutral.n_creep_ancient_frog.model models/creeps/neutral_creeps/n_creep_ancient_frog/n_creep_ancient_frog.vmdl_c models/neutral/n_creep_ancient_frog/n_creep_ancient_frog.glb anims=ancient_frog_idle,ancient_frog_run,ancient_frog_attack_01,ancient_frog_death,ancient_frog_cast
+model neutral.n_creep_ancient_frog.model models/creeps/neutral_creeps/n_creep_ancient_frog/n_creep_ancient_frog.vmdl_c models/neutral/n_creep_ancient_frog/n_creep_ancient_frog.glb anims=ancient_frog_idle,ancient_frog_run,ancient_frog_attack_01,ancient_frog_death,ancient_frog_cast,froglet_flail
 clip neutral.n_creep_ancient_frog.model idle ancient_frog_idle 2.438
 clip neutral.n_creep_ancient_frog.model run ancient_frog_run 1.222
 clip neutral.n_creep_ancient_frog.model attack ancient_frog_attack_01 1.300 point=0.3
 clip neutral.n_creep_ancient_frog.model death ancient_frog_death 4.200
 clip neutral.n_creep_ancient_frog.model cast5 ancient_frog_cast 0.867 point=0.3
+clip neutral.n_creep_ancient_frog.model flail froglet_flail 0.667
 unit npc_dota_neutral_ancient_frog neutral.n_creep_ancient_frog.model model_scale=1.25 soundset=n_creep_melee
-model neutral.n_creep_ancient_frog_mage.model models/creeps/neutral_creeps/n_creep_ancient_frog/n_creep_ancient_frog_mage.vmdl_c models/neutral/n_creep_ancient_frog_mage/n_creep_ancient_frog_mage.glb anims=ancient_frog_mage_idle,ancient_frog_mage_run,ancient_frog_mage_attack,ancient_frog_mage_death_a,ancient_frog_mage_stun,ancient_frog_mage_cast
+model neutral.n_creep_ancient_frog_mage.model models/creeps/neutral_creeps/n_creep_ancient_frog/n_creep_ancient_frog_mage.vmdl_c models/neutral/n_creep_ancient_frog_mage/n_creep_ancient_frog_mage.glb anims=ancient_frog_mage_idle,ancient_frog_mage_run,ancient_frog_mage_attack,ancient_frog_mage_death_a,ancient_frog_mage_stun,ancient_frog_mage_cast,ancient_frog_mage_flail
 clip neutral.n_creep_ancient_frog_mage.model idle ancient_frog_mage_idle 2.700
 clip neutral.n_creep_ancient_frog_mage.model run ancient_frog_mage_run 0.833
 clip neutral.n_creep_ancient_frog_mage.model attack ancient_frog_mage_attack 1.625 point=0.7
 clip neutral.n_creep_ancient_frog_mage.model death ancient_frog_mage_death_a 1.250
 clip neutral.n_creep_ancient_frog_mage.model stun ancient_frog_mage_stun 4.208
 clip neutral.n_creep_ancient_frog_mage.model cast2 ancient_frog_mage_cast 1.083 point=0.3
+clip neutral.n_creep_ancient_frog_mage.model flail ancient_frog_mage_flail 2.417
 unit npc_dota_neutral_ancient_frog_mage neutral.n_creep_ancient_frog_mage.model model_scale=1.10 attack=neutral.attack.witchdoctor soundset=n_creep_melee
-model neutral.n_creep_beast.model models/creeps/neutral_creeps/n_creep_beast/n_creep_beast.vmdl_c models/neutral/n_creep_beast/n_creep_beast.glb anims=idle,run,attack,die,stun
+model neutral.n_creep_beast.model models/creeps/neutral_creeps/n_creep_beast/n_creep_beast.vmdl_c models/neutral/n_creep_beast/n_creep_beast.glb anims=idle,run,attack,die,stun,flail
 clip neutral.n_creep_beast.model idle idle 1.267
 clip neutral.n_creep_beast.model run run 0.800
 clip neutral.n_creep_beast.model attack attack 0.667 point=0.3
 clip neutral.n_creep_beast.model death die 1.167
 clip neutral.n_creep_beast.model stun stun 1.600
+clip neutral.n_creep_beast.model flail flail 0.800
 unit npc_dota_neutral_polar_furbolg_champion neutral.n_creep_beast.model model_scale=.80 soundset=n_creep_melee
-model neutral.n_creep_black_dragon.model models/creeps/neutral_creeps/n_creep_black_dragon/n_creep_black_dragon.vmdl_c models/neutral/n_creep_black_dragon/n_creep_black_dragon.glb anims=idle,run,attack,death,stun,cast1_fireball
+model neutral.n_creep_black_dragon.model models/creeps/neutral_creeps/n_creep_black_dragon/n_creep_black_dragon.vmdl_c models/neutral/n_creep_black_dragon/n_creep_black_dragon.glb anims=idle,run,attack,death,stun,cast1_fireball,flail
 clip neutral.n_creep_black_dragon.model idle idle 0.967
 clip neutral.n_creep_black_dragon.model run run 0.967
 clip neutral.n_creep_black_dragon.model attack attack 0.933 point=0.5
 clip neutral.n_creep_black_dragon.model death death 0.967
 clip neutral.n_creep_black_dragon.model stun stun 0.967
 clip neutral.n_creep_black_dragon.model cast1 cast1_fireball 0.933 point=0.3
+clip neutral.n_creep_black_dragon.model flail flail 0.667
 unit npc_dota_neutral_black_dragon neutral.n_creep_black_dragon.model model_scale=1 attack=neutral.attack.black_dragon soundset=n_creep_ranged
-model neutral.n_creep_black_drake.model models/creeps/neutral_creeps/n_creep_black_drake/n_creep_black_drake.vmdl_c models/neutral/n_creep_black_drake/n_creep_black_drake.glb anims=idle,run,attack,death,stun
+model neutral.n_creep_black_drake.model models/creeps/neutral_creeps/n_creep_black_drake/n_creep_black_drake.vmdl_c models/neutral/n_creep_black_drake/n_creep_black_drake.glb anims=idle,run,attack,death,stun,flail
 clip neutral.n_creep_black_drake.model idle idle 0.967
 clip neutral.n_creep_black_drake.model run run 0.967
 clip neutral.n_creep_black_drake.model attack attack 0.933 point=0.5
 clip neutral.n_creep_black_drake.model death death 0.967
 clip neutral.n_creep_black_drake.model stun stun 0.967
+clip neutral.n_creep_black_drake.model flail flail 0.667
 unit npc_dota_neutral_black_drake neutral.n_creep_black_drake.model model_scale=.6 attack=neutral.attack.black_drake soundset=n_creep_ranged
-model neutral.n_creep_centaur_lrg.model models/creeps/neutral_creeps/n_creep_centaur_lrg/n_creep_centaur_lrg.vmdl_c models/neutral/n_creep_centaur_lrg/n_creep_centaur_lrg.glb anims=idle,runN,attack,death,disabled,stomp
+model neutral.n_creep_centaur_lrg.model models/creeps/neutral_creeps/n_creep_centaur_lrg/n_creep_centaur_lrg.vmdl_c models/neutral/n_creep_centaur_lrg/n_creep_centaur_lrg.glb anims=idle,runN,attack,death,disabled,stomp,flail
 clip neutral.n_creep_centaur_lrg.model idle idle 2.633
 clip neutral.n_creep_centaur_lrg.model run runN 0.433
 clip neutral.n_creep_centaur_lrg.model attack attack 0.667 point=0.3
 clip neutral.n_creep_centaur_lrg.model death death 1.367
 clip neutral.n_creep_centaur_lrg.model stun disabled 0.967
 clip neutral.n_creep_centaur_lrg.model cast1 stomp 0.867 point=0.4
+clip neutral.n_creep_centaur_lrg.model flail flail 0.700
 unit npc_dota_neutral_centaur_khan neutral.n_creep_centaur_lrg.model model_scale=1 soundset=n_creep_melee
-model neutral.n_creep_centaur_med.model models/creeps/neutral_creeps/n_creep_centaur_med/n_creep_centaur_med.vmdl_c models/neutral/n_creep_centaur_med/n_creep_centaur_med.glb anims=idle,runN,attack,death,disabled
+model neutral.n_creep_centaur_med.model models/creeps/neutral_creeps/n_creep_centaur_med/n_creep_centaur_med.vmdl_c models/neutral/n_creep_centaur_med/n_creep_centaur_med.glb anims=idle,runN,attack,death,disabled,flail
 clip neutral.n_creep_centaur_med.model idle idle 2.633
 clip neutral.n_creep_centaur_med.model run runN 0.433
 clip neutral.n_creep_centaur_med.model attack attack 0.667 point=0.3
 clip neutral.n_creep_centaur_med.model death death 1.367
 clip neutral.n_creep_centaur_med.model stun disabled 0.967
+clip neutral.n_creep_centaur_med.model flail flail 0.700
 unit npc_dota_neutral_centaur_outrunner neutral.n_creep_centaur_med.model model_scale=.80 soundset=n_creep_melee
-model neutral.n_creep_forest_troll_berserker.model models/creeps/neutral_creeps/n_creep_forest_trolls/n_creep_forest_troll_berserker.vmdl_c models/neutral/n_creep_forest_troll_berserker/n_creep_forest_troll_berserker.glb anims=n_creep_forest_troll_berserker_idle,n_creep_forest_troll_berserker_run,n_creep_forest_troll_berserker_attack,n_creep_forest_troll_berserker_attack_B,n_creep_forest_troll_berserker_death,n_creep_forest_troll_berserker_stun
+model neutral.n_creep_forest_troll_berserker.model models/creeps/neutral_creeps/n_creep_forest_trolls/n_creep_forest_troll_berserker.vmdl_c models/neutral/n_creep_forest_troll_berserker/n_creep_forest_troll_berserker.glb anims=n_creep_forest_troll_berserker_idle,n_creep_forest_troll_berserker_run,n_creep_forest_troll_berserker_attack,n_creep_forest_troll_berserker_attack_B,n_creep_forest_troll_berserker_death,n_creep_forest_troll_berserker_stun,n_creep_forest_troll_berserker_flail
 clip neutral.n_creep_forest_troll_berserker.model idle n_creep_forest_troll_berserker_idle 3.733
 clip neutral.n_creep_forest_troll_berserker.model run n_creep_forest_troll_berserker_run 0.800
 clip neutral.n_creep_forest_troll_berserker.model attack n_creep_forest_troll_berserker_attack 0.800 point=0.3
 clip neutral.n_creep_forest_troll_berserker.model attack2 n_creep_forest_troll_berserker_attack_B 0.800 point=0.3
 clip neutral.n_creep_forest_troll_berserker.model death n_creep_forest_troll_berserker_death 1.333
 clip neutral.n_creep_forest_troll_berserker.model stun n_creep_forest_troll_berserker_stun 2.133
+clip neutral.n_creep_forest_troll_berserker.model flail n_creep_forest_troll_berserker_flail 2.400
 unit npc_dota_neutral_forest_troll_berserker neutral.n_creep_forest_troll_berserker.model model_scale=.90 attack=creep.dire.ranged.attack soundset=n_creep_ranged
-model neutral.n_creep_forest_troll_high_priest.model models/creeps/neutral_creeps/n_creep_forest_trolls/n_creep_forest_troll_high_priest.vmdl_c models/neutral/n_creep_forest_troll_high_priest/n_creep_forest_troll_high_priest.glb anims=idle,run,attack,death,stun,cast_heal
+model neutral.n_creep_forest_troll_high_priest.model models/creeps/neutral_creeps/n_creep_forest_trolls/n_creep_forest_troll_high_priest.vmdl_c models/neutral/n_creep_forest_troll_high_priest/n_creep_forest_troll_high_priest.glb anims=idle,run,attack,death,stun,cast_heal,flail
 clip neutral.n_creep_forest_troll_high_priest.model idle idle 2.000
 clip neutral.n_creep_forest_troll_high_priest.model run run 0.667
 clip neutral.n_creep_forest_troll_high_priest.model attack attack 0.700 point=0.3
 clip neutral.n_creep_forest_troll_high_priest.model death death 1.967
 clip neutral.n_creep_forest_troll_high_priest.model stun stun 2.000
 clip neutral.n_creep_forest_troll_high_priest.model cast1 cast_heal 1.200 point=0.5
+clip neutral.n_creep_forest_troll_high_priest.model flail flail 0.625
 unit npc_dota_neutral_forest_troll_high_priest neutral.n_creep_forest_troll_high_priest.model model_scale=.90 attack=creep.dire.ranged.attack soundset=n_creep_ranged
-model neutral.n_creep_froglet.model models/creeps/neutral_creeps/n_creep_froglet/n_creep_froglet.vmdl_c models/neutral/n_creep_froglet/n_creep_froglet.glb anims=froglet_idle,froglet_run,froglet_attack_01,froglet_attack_02,froglet_death,froglet_stun,froglet_cast
+model neutral.n_creep_froglet.model models/creeps/neutral_creeps/n_creep_froglet/n_creep_froglet.vmdl_c models/neutral/n_creep_froglet/n_creep_froglet.glb anims=froglet_idle,froglet_run,froglet_attack_01,froglet_attack_02,froglet_death,froglet_stun,froglet_cast,froglet_flail
 clip neutral.n_creep_froglet.model idle froglet_idle 1.500
 clip neutral.n_creep_froglet.model run froglet_run 0.800
 clip neutral.n_creep_froglet.model attack froglet_attack_01 0.800 point=0.3
@@ -1496,16 +1518,18 @@ clip neutral.n_creep_froglet.model attack2 froglet_attack_02 0.800 point=0.3
 clip neutral.n_creep_froglet.model death froglet_death 1.300
 clip neutral.n_creep_froglet.model stun froglet_stun 1.300
 clip neutral.n_creep_froglet.model cast5 froglet_cast 0.867 point=0.3
+clip neutral.n_creep_froglet.model flail froglet_flail 0.667
 unit npc_dota_neutral_grown_frog neutral.n_creep_froglet.model model_scale=1.2 soundset=n_creep_melee
-model neutral.n_creep_froglet_mage.model models/creeps/neutral_creeps/n_creep_froglet/n_creep_froglet_mage.vmdl_c models/neutral/n_creep_froglet_mage/n_creep_froglet_mage.glb anims=froglet_idle,froglet_run_alt,froglet_attack,froglet_death,froglet_stun,froglet_cast
+model neutral.n_creep_froglet_mage.model models/creeps/neutral_creeps/n_creep_froglet/n_creep_froglet_mage.vmdl_c models/neutral/n_creep_froglet_mage/n_creep_froglet_mage.glb anims=froglet_idle,froglet_run_alt,froglet_attack,froglet_death,froglet_stun,froglet_cast,froglet_flail
 clip neutral.n_creep_froglet_mage.model idle froglet_idle 1.750
 clip neutral.n_creep_froglet_mage.model run froglet_run_alt 0.633
 clip neutral.n_creep_froglet_mage.model attack froglet_attack 1.083 point=0.3
 clip neutral.n_creep_froglet_mage.model death froglet_death 1.125
 clip neutral.n_creep_froglet_mage.model stun froglet_stun 2.100
 clip neutral.n_creep_froglet_mage.model cast2 froglet_cast 1.125 point=0.3
+clip neutral.n_creep_froglet_mage.model flail froglet_flail 0.667
 unit npc_dota_neutral_grown_frog_mage neutral.n_creep_froglet_mage.model model_scale=1.0 attack=creep.dire.ranged.attack soundset=n_creep_melee
-model neutral.n_creep_frostbitten_swollen01.model models/creeps/ice_biome/frostbitten/n_creep_frostbitten_swollen01.vmdl_c models/neutral/n_creep_frostbitten_swollen01/n_creep_frostbitten_swollen01.glb anims=idle,run,attack,attack3,death,stun,siltbreaker_icicle_cast
+model neutral.n_creep_frostbitten_swollen01.model models/creeps/ice_biome/frostbitten/n_creep_frostbitten_swollen01.vmdl_c models/neutral/n_creep_frostbitten_swollen01/n_creep_frostbitten_swollen01.glb anims=idle,run,attack,attack3,death,stun,siltbreaker_icicle_cast,disabled
 clip neutral.n_creep_frostbitten_swollen01.model idle idle 1.667
 clip neutral.n_creep_frostbitten_swollen01.model run run 1.000
 clip neutral.n_creep_frostbitten_swollen01.model attack attack 0.733 point=0.3
@@ -1513,29 +1537,33 @@ clip neutral.n_creep_frostbitten_swollen01.model attack2 attack3 0.900 point=0.3
 clip neutral.n_creep_frostbitten_swollen01.model death death 2.467
 clip neutral.n_creep_frostbitten_swollen01.model stun stun 1.667
 clip neutral.n_creep_frostbitten_swollen01.model cast1 siltbreaker_icicle_cast 1.333 point=0.3
+clip neutral.n_creep_frostbitten_swollen01.model flail disabled 1.111
 unit npc_dota_neutral_frostbitten_golem neutral.n_creep_frostbitten_swollen01.model model_scale=1 soundset=n_creep_melee
-model neutral.n_creep_furbolg_disrupter.model models/creeps/neutral_creeps/n_creep_furbolg/n_creep_furbolg_disrupter.vmdl_c models/neutral/n_creep_furbolg_disrupter/n_creep_furbolg_disrupter.glb anims=n_creep_furbolg_disrupter_idle,n_creep_furbolg_disrupter_run,n_creep_furbolg_disrupter_attack,n_creep_furbolg_disrupter_die,disrupter_stun,n_creep_furbolg_disrupter_clap
+model neutral.n_creep_furbolg_disrupter.model models/creeps/neutral_creeps/n_creep_furbolg/n_creep_furbolg_disrupter.vmdl_c models/neutral/n_creep_furbolg_disrupter/n_creep_furbolg_disrupter.glb anims=n_creep_furbolg_disrupter_idle,n_creep_furbolg_disrupter_run,n_creep_furbolg_disrupter_attack,n_creep_furbolg_disrupter_die,disrupter_stun,n_creep_furbolg_disrupter_clap,disrupter_flail
 clip neutral.n_creep_furbolg_disrupter.model idle n_creep_furbolg_disrupter_idle 2.667
 clip neutral.n_creep_furbolg_disrupter.model run n_creep_furbolg_disrupter_run 0.800
 clip neutral.n_creep_furbolg_disrupter.model attack n_creep_furbolg_disrupter_attack 0.667 point=0.3
 clip neutral.n_creep_furbolg_disrupter.model death n_creep_furbolg_disrupter_die 1.333
 clip neutral.n_creep_furbolg_disrupter.model stun disrupter_stun 1.033
 clip neutral.n_creep_furbolg_disrupter.model cast1 n_creep_furbolg_disrupter_clap 0.933 point=0.4
+clip neutral.n_creep_furbolg_disrupter.model flail disrupter_flail 0.800
 unit npc_dota_neutral_polar_furbolg_ursa_warrior neutral.n_creep_furbolg_disrupter.model model_scale=.95 soundset=n_creep_melee
-model neutral.n_creep_ghost_a.model models/creeps/neutral_creeps/n_creep_ghost_a/n_creep_ghost_a.vmdl_c models/neutral/n_creep_ghost_a/n_creep_ghost_a.glb anims=ghost_a_idle,ghost_a_run,ghost_a_hit,ghost_a_death,ghost_a_stun,ghost_a_sb_cast
+model neutral.n_creep_ghost_a.model models/creeps/neutral_creeps/n_creep_ghost_a/n_creep_ghost_a.vmdl_c models/neutral/n_creep_ghost_a/n_creep_ghost_a.glb anims=ghost_a_idle,ghost_a_run,ghost_a_hit,ghost_a_death,ghost_a_stun,ghost_a_sb_cast,ghost_a_flail
 clip neutral.n_creep_ghost_a.model idle ghost_a_idle 3.167
 clip neutral.n_creep_ghost_a.model run ghost_a_run 2.100
 clip neutral.n_creep_ghost_a.model attack ghost_a_hit 0.700 point=0.3
 clip neutral.n_creep_ghost_a.model death ghost_a_death 0.967
 clip neutral.n_creep_ghost_a.model stun ghost_a_stun 1.167
 clip neutral.n_creep_ghost_a.model cast1 ghost_a_sb_cast 1.967 point=0.3
+clip neutral.n_creep_ghost_a.model flail ghost_a_flail 0.767
 unit npc_dota_neutral_ghost neutral.n_creep_ghost_a.model model_scale=.90 attack=neutral.attack.ghost soundset=n_creep_ranged
-model neutral.n_creep_ghost_b.model models/creeps/neutral_creeps/n_creep_ghost_b/n_creep_ghost_b.vmdl_c models/neutral/n_creep_ghost_b/n_creep_ghost_b.glb anims=idle,run,hit,death,stun
+model neutral.n_creep_ghost_b.model models/creeps/neutral_creeps/n_creep_ghost_b/n_creep_ghost_b.vmdl_c models/neutral/n_creep_ghost_b/n_creep_ghost_b.glb anims=idle,run,hit,death,stun,flail
 clip neutral.n_creep_ghost_b.model idle idle 3.200
 clip neutral.n_creep_ghost_b.model run run 2.133
 clip neutral.n_creep_ghost_b.model attack hit 0.800 point=0.4
 clip neutral.n_creep_ghost_b.model death death 1.000
 clip neutral.n_creep_ghost_b.model stun stun 1.600
+clip neutral.n_creep_ghost_b.model flail flail 0.800
 unit npc_dota_neutral_fel_beast neutral.n_creep_ghost_b.model model_scale=.90 soundset=n_creep_melee
 model neutral.n_creep_gnoll.model models/creeps/neutral_creeps/n_creep_gnoll/n_creep_gnoll.vmdl_c models/neutral/n_creep_gnoll/n_creep_gnoll.glb anims=n_creep_gnoll_idle,n_creep_gnoll_run,n_creep_gnoll_attack,n_creep_gnoll_death
 clip neutral.n_creep_gnoll.model idle n_creep_gnoll_idle 4.467
@@ -1543,7 +1571,7 @@ clip neutral.n_creep_gnoll.model run n_creep_gnoll_run 0.800
 clip neutral.n_creep_gnoll.model attack n_creep_gnoll_attack 0.800 point=0.4
 clip neutral.n_creep_gnoll.model death n_creep_gnoll_death 2.500
 unit npc_dota_neutral_gnoll_assassin neutral.n_creep_gnoll.model model_scale=.90 attack=neutral.attack.gnoll soundset=n_creep_ranged
-model neutral.n_creep_golem_b.model models/creeps/neutral_creeps/n_creep_golem_b/n_creep_golem_b.vmdl_c models/neutral/n_creep_golem_b/n_creep_golem_b.glb anims=idle,run,attack,attackAlt,die,stun,cast1_hurl_boulder
+model neutral.n_creep_golem_b.model models/creeps/neutral_creeps/n_creep_golem_b/n_creep_golem_b.vmdl_c models/neutral/n_creep_golem_b/n_creep_golem_b.glb anims=idle,run,attack,attackAlt,die,stun,cast1_hurl_boulder,flail
 clip neutral.n_creep_golem_b.model idle idle 2.500
 clip neutral.n_creep_golem_b.model run run 0.733
 clip neutral.n_creep_golem_b.model attack attack 0.667 point=0.3
@@ -1551,55 +1579,62 @@ clip neutral.n_creep_golem_b.model attack2 attackAlt 0.667 point=0.3
 clip neutral.n_creep_golem_b.model death die 1.500
 clip neutral.n_creep_golem_b.model stun stun 1.667
 clip neutral.n_creep_golem_b.model cast1 cast1_hurl_boulder 0.800 point=0.3
+clip neutral.n_creep_golem_b.model flail flail 1.200
 unit npc_dota_neutral_mud_golem neutral.n_creep_golem_b.model model_scale=1.1 soundset=n_creep_melee
 unit npc_dota_neutral_mud_golem_split neutral.n_creep_golem_b.model model_scale=0.7 soundset=n_creep_melee
-model neutral.n_creep_harpy_a.model models/creeps/neutral_creeps/n_creep_harpy_a/n_creep_harpy_a.vmdl_c models/neutral/n_creep_harpy_a/n_creep_harpy_a.glb anims=idle,run,attack,death,stun,harpy_a_cast1_take_off
+model neutral.n_creep_harpy_a.model models/creeps/neutral_creeps/n_creep_harpy_a/n_creep_harpy_a.vmdl_c models/neutral/n_creep_harpy_a/n_creep_harpy_a.glb anims=idle,run,attack,death,stun,harpy_a_cast1_take_off,flail
 clip neutral.n_creep_harpy_a.model idle idle 0.967
 clip neutral.n_creep_harpy_a.model run run 0.967
 clip neutral.n_creep_harpy_a.model attack attack 0.667 point=0.3
 clip neutral.n_creep_harpy_a.model death death 1.467
 clip neutral.n_creep_harpy_a.model stun stun 1.233
 clip neutral.n_creep_harpy_a.model cast1 harpy_a_cast1_take_off 1.033 point=1.5
+clip neutral.n_creep_harpy_a.model flail flail 0.667
 unit npc_dota_neutral_harpy_scout neutral.n_creep_harpy_a.model model_scale=0.85 attack=creep.dire.ranged.attack soundset=n_creep_ranged
-model neutral.n_creep_harpy_b.model models/creeps/neutral_creeps/n_creep_harpy_b/n_creep_harpy_b.vmdl_c models/neutral/n_creep_harpy_b/n_creep_harpy_b.glb anims=idle,run,attack,death,stun,chainlightning
+model neutral.n_creep_harpy_b.model models/creeps/neutral_creeps/n_creep_harpy_b/n_creep_harpy_b.vmdl_c models/neutral/n_creep_harpy_b/n_creep_harpy_b.glb anims=idle,run,attack,death,stun,chainlightning,flail
 clip neutral.n_creep_harpy_b.model idle idle 0.967
 clip neutral.n_creep_harpy_b.model run run 0.967
 clip neutral.n_creep_harpy_b.model attack attack 0.667 point=0.3
 clip neutral.n_creep_harpy_b.model death death 0.967
 clip neutral.n_creep_harpy_b.model stun stun 1.233
 clip neutral.n_creep_harpy_b.model cast1 chainlightning 0.933 point=0.3
+clip neutral.n_creep_harpy_b.model flail flail 0.667
 unit npc_dota_neutral_harpy_storm neutral.n_creep_harpy_b.model model_scale=0.925 attack=creep.dire.ranged.attack soundset=n_creep_ranged
-model neutral.n_creep_kobold_a.model models/creeps/neutral_creeps/n_creep_kobold/kobold_a/n_creep_kobold_a.vmdl_c models/neutral/n_creep_kobold_a/n_creep_kobold_a.glb anims=idle,run,attack,attackAlt,death,stun
+model neutral.n_creep_kobold_a.model models/creeps/neutral_creeps/n_creep_kobold/kobold_a/n_creep_kobold_a.vmdl_c models/neutral/n_creep_kobold_a/n_creep_kobold_a.glb anims=idle,run,attack,attackAlt,death,stun,flail
 clip neutral.n_creep_kobold_a.model idle idle 2.667
 clip neutral.n_creep_kobold_a.model run run 0.700
 clip neutral.n_creep_kobold_a.model attack attack 0.800 point=0.38
 clip neutral.n_creep_kobold_a.model attack2 attackAlt 0.800 point=0.38
 clip neutral.n_creep_kobold_a.model death death 2.500
 clip neutral.n_creep_kobold_a.model stun stun 1.067
+clip neutral.n_creep_kobold_a.model flail flail 0.867
 unit npc_dota_neutral_kobold_taskmaster neutral.n_creep_kobold_a.model model_scale=1 soundset=n_creep_melee
-model neutral.n_creep_kobold_b.model models/creeps/neutral_creeps/n_creep_kobold/kobold_b/n_creep_kobold_b.vmdl_c models/neutral/n_creep_kobold_b/n_creep_kobold_b.glb anims=idle,run,attack,death,stun
+model neutral.n_creep_kobold_b.model models/creeps/neutral_creeps/n_creep_kobold/kobold_b/n_creep_kobold_b.vmdl_c models/neutral/n_creep_kobold_b/n_creep_kobold_b.glb anims=idle,run,attack,death,stun,flail
 clip neutral.n_creep_kobold_b.model idle idle 1.600
 clip neutral.n_creep_kobold_b.model run run 0.800
 clip neutral.n_creep_kobold_b.model attack attack 0.800 point=0.38
 clip neutral.n_creep_kobold_b.model death death 0.733
 clip neutral.n_creep_kobold_b.model stun stun 0.800
+clip neutral.n_creep_kobold_b.model flail flail 0.800
 unit npc_dota_neutral_kobold_tunneler neutral.n_creep_kobold_b.model model_scale=1 soundset=n_creep_melee
-model neutral.n_creep_kobold_c.model models/creeps/neutral_creeps/n_creep_kobold/kobold_c/n_creep_kobold_c.vmdl_c models/neutral/n_creep_kobold_c/n_creep_kobold_c.glb anims=idle,run,attack,death,stun
+model neutral.n_creep_kobold_c.model models/creeps/neutral_creeps/n_creep_kobold/kobold_c/n_creep_kobold_c.vmdl_c models/neutral/n_creep_kobold_c/n_creep_kobold_c.glb anims=idle,run,attack,death,stun,flail
 clip neutral.n_creep_kobold_c.model idle idle 1.600
 clip neutral.n_creep_kobold_c.model run run 1.600
 clip neutral.n_creep_kobold_c.model attack attack 0.800 point=0.38
 clip neutral.n_creep_kobold_c.model death death 1.200
 clip neutral.n_creep_kobold_c.model stun stun 1.200
+clip neutral.n_creep_kobold_c.model flail flail 1.200
 unit npc_dota_neutral_kobold neutral.n_creep_kobold_c.model model_scale=.9 soundset=n_creep_melee
-model neutral.n_creep_ogre_lrg.model models/creeps/neutral_creeps/n_creep_ogre_lrg/n_creep_ogre_lrg.vmdl_c models/neutral/n_creep_ogre_lrg/n_creep_ogre_lrg.glb anims=idle,run,attack,death,stun,cast
+model neutral.n_creep_ogre_lrg.model models/creeps/neutral_creeps/n_creep_ogre_lrg/n_creep_ogre_lrg.vmdl_c models/neutral/n_creep_ogre_lrg/n_creep_ogre_lrg.glb anims=idle,run,attack,death,stun,cast,disabled
 clip neutral.n_creep_ogre_lrg.model idle idle 2.167
 clip neutral.n_creep_ogre_lrg.model run run 1.000
 clip neutral.n_creep_ogre_lrg.model attack attack 0.667 point=0.3
 clip neutral.n_creep_ogre_lrg.model death death 2.333
 clip neutral.n_creep_ogre_lrg.model stun stun 1.667
 clip neutral.n_creep_ogre_lrg.model cast1 cast 1.067 point=0.56
+clip neutral.n_creep_ogre_lrg.model flail disabled 0.889
 unit npc_dota_neutral_ogre_magi neutral.n_creep_ogre_lrg.model model_scale=.90 soundset=n_creep_melee
-model neutral.n_creep_ogre_med.model models/creeps/neutral_creeps/n_creep_ogre_med/n_creep_ogre_med.vmdl_c models/neutral/n_creep_ogre_med/n_creep_ogre_med.glb anims=idle,run,attack,attack3,death,stun,cast_ogre_smash
+model neutral.n_creep_ogre_med.model models/creeps/neutral_creeps/n_creep_ogre_med/n_creep_ogre_med.vmdl_c models/neutral/n_creep_ogre_med/n_creep_ogre_med.glb anims=idle,run,attack,attack3,death,stun,cast_ogre_smash,disabled
 clip neutral.n_creep_ogre_med.model idle idle 1.667
 clip neutral.n_creep_ogre_med.model run run 1.000
 clip neutral.n_creep_ogre_med.model attack attack 0.733 point=0.3
@@ -1607,14 +1642,16 @@ clip neutral.n_creep_ogre_med.model attack2 attack3 0.733 point=0.3
 clip neutral.n_creep_ogre_med.model death death 1.333
 clip neutral.n_creep_ogre_med.model stun stun 1.667
 clip neutral.n_creep_ogre_med.model cast2 cast_ogre_smash 3.667 point=2.8
+clip neutral.n_creep_ogre_med.model flail disabled 1.111
 unit npc_dota_neutral_ogre_mauler neutral.n_creep_ogre_med.model model_scale=.90 soundset=n_creep_melee
-model neutral.n_creep_satyr_a.model models/creeps/neutral_creeps/n_creep_satyr_a/n_creep_satyr_a.vmdl_c models/neutral/n_creep_satyr_a/n_creep_satyr_a.glb anims=satyr_a_idle,satyr_a_run,satyr_a_attack,satyr_a_death,satyr_a_stun,cast
+model neutral.n_creep_satyr_a.model models/creeps/neutral_creeps/n_creep_satyr_a/n_creep_satyr_a.vmdl_c models/neutral/n_creep_satyr_a/n_creep_satyr_a.glb anims=satyr_a_idle,satyr_a_run,satyr_a_attack,satyr_a_death,satyr_a_stun,cast,satyr_a_flail
 clip neutral.n_creep_satyr_a.model idle satyr_a_idle 1.300
 clip neutral.n_creep_satyr_a.model run satyr_a_run 0.733
 clip neutral.n_creep_satyr_a.model attack satyr_a_attack 0.667 point=0.3
 clip neutral.n_creep_satyr_a.model death satyr_a_death 0.967
 clip neutral.n_creep_satyr_a.model stun satyr_a_stun 1.350
 clip neutral.n_creep_satyr_a.model cast1 cast 1.300 point=0.5
+clip neutral.n_creep_satyr_a.model flail satyr_a_flail 0.667
 unit npc_dota_neutral_satyr_hellcaller neutral.n_creep_satyr_a.model model_scale=.95 soundset=n_creep_melee
 model neutral.n_creep_satyr_b.model models/creeps/neutral_creeps/n_creep_satyr_b/n_creep_satyr_b.vmdl_c models/neutral/n_creep_satyr_b/n_creep_satyr_b.glb anims=satyr_b_idle,satyr_b_run,satyr_b_attack,satyr_b_death,satyr_b_cast
 clip neutral.n_creep_satyr_b.model idle satyr_b_idle 1.133
@@ -1623,15 +1660,16 @@ clip neutral.n_creep_satyr_b.model attack satyr_b_attack 0.667 point=0.3
 clip neutral.n_creep_satyr_b.model death satyr_b_death 0.967
 clip neutral.n_creep_satyr_b.model cast1 satyr_b_cast 1.133 point=0.2
 unit npc_dota_neutral_satyr_trickster neutral.n_creep_satyr_b.model model_scale=.7 attack=neutral.attack.satyr_trickster soundset=n_creep_ranged
-model neutral.n_creep_satyr_c.model models/creeps/neutral_creeps/n_creep_satyr_c/n_creep_satyr_c.vmdl_c models/neutral/n_creep_satyr_c/n_creep_satyr_c.glb anims=satyr_c_idle,satyr_c_run,satyr_c_attack,satyr_c_death,satyr_c_stun,cast
+model neutral.n_creep_satyr_c.model models/creeps/neutral_creeps/n_creep_satyr_c/n_creep_satyr_c.vmdl_c models/neutral/n_creep_satyr_c/n_creep_satyr_c.glb anims=satyr_c_idle,satyr_c_run,satyr_c_attack,satyr_c_death,satyr_c_stun,cast,satyr_c_flail
 clip neutral.n_creep_satyr_c.model idle satyr_c_idle 1.300
 clip neutral.n_creep_satyr_c.model run satyr_c_run 0.800
 clip neutral.n_creep_satyr_c.model attack satyr_c_attack 0.733 point=0.3
 clip neutral.n_creep_satyr_c.model death satyr_c_death 1.300
 clip neutral.n_creep_satyr_c.model stun satyr_c_stun 1.300
 clip neutral.n_creep_satyr_c.model cast1 cast 1.133 point=0.3
+clip neutral.n_creep_satyr_c.model flail satyr_c_flail 0.667
 unit npc_dota_neutral_satyr_soulstealer neutral.n_creep_satyr_c.model model_scale=.8 soundset=n_creep_melee
-model neutral.n_creep_satyr_spawn_a.model models/creeps/neutral_creeps/n_creep_satyr_spawn_a/n_creep_satyr_spawn_a.vmdl_c models/neutral/n_creep_satyr_spawn_a/n_creep_satyr_spawn_a.glb anims=idle,run,attack,attack2,death,stun,cast_stomp
+model neutral.n_creep_satyr_spawn_a.model models/creeps/neutral_creeps/n_creep_satyr_spawn_a/n_creep_satyr_spawn_a.vmdl_c models/neutral/n_creep_satyr_spawn_a/n_creep_satyr_spawn_a.glb anims=idle,run,attack,attack2,death,stun,cast_stomp,flail
 clip neutral.n_creep_satyr_spawn_a.model idle idle 2.000
 clip neutral.n_creep_satyr_spawn_a.model run run 1.000
 clip neutral.n_creep_satyr_spawn_a.model attack attack 1.500 point=0.3
@@ -1639,47 +1677,53 @@ clip neutral.n_creep_satyr_spawn_a.model attack2 attack2 1.733 point=0.3
 clip neutral.n_creep_satyr_spawn_a.model death death 2.500
 clip neutral.n_creep_satyr_spawn_a.model stun stun 1.500
 clip neutral.n_creep_satyr_spawn_a.model cast1 cast_stomp 1.567 point=0.4
+clip neutral.n_creep_satyr_spawn_a.model flail flail 1.000
 unit npc_dota_neutral_prowler_shaman neutral.n_creep_satyr_spawn_a.model model_scale=1.15 soundset=n_creep_melee
-model neutral.n_creep_satyr_spawn_b.model models/creeps/neutral_creeps/n_creep_satyr_spawn_a/n_creep_satyr_spawn_b.vmdl_c models/neutral/n_creep_satyr_spawn_b/n_creep_satyr_spawn_b.glb anims=idle,run,attack,attack_2,death,stun
+model neutral.n_creep_satyr_spawn_b.model models/creeps/neutral_creeps/n_creep_satyr_spawn_a/n_creep_satyr_spawn_b.vmdl_c models/neutral/n_creep_satyr_spawn_b/n_creep_satyr_spawn_b.glb anims=idle,run,attack,attack_2,death,stun,flail
 clip neutral.n_creep_satyr_spawn_b.model idle idle 2.000
 clip neutral.n_creep_satyr_spawn_b.model run run 1.000
 clip neutral.n_creep_satyr_spawn_b.model attack attack 1.000 point=0.3
 clip neutral.n_creep_satyr_spawn_b.model attack2 attack_2 1.000 point=0.3
 clip neutral.n_creep_satyr_spawn_b.model death death 2.500
 clip neutral.n_creep_satyr_spawn_b.model stun stun 1.500
+clip neutral.n_creep_satyr_spawn_b.model flail flail 1.000
 unit npc_dota_neutral_prowler_acolyte neutral.n_creep_satyr_spawn_b.model model_scale=1.0 soundset=n_creep_melee
-model neutral.n_creep_skeleton_melee.model models/creeps/neutral_creeps/n_creep_troll_skeleton/n_creep_skeleton_melee.vmdl_c models/neutral/n_creep_skeleton_melee/n_creep_skeleton_melee.glb anims=idle,run_var3,attack1,attack2,death,stun_new
+model neutral.n_creep_skeleton_melee.model models/creeps/neutral_creeps/n_creep_troll_skeleton/n_creep_skeleton_melee.vmdl_c models/neutral/n_creep_skeleton_melee/n_creep_skeleton_melee.glb anims=idle,run_var3,attack1,attack2,death,stun_new,flail
 clip neutral.n_creep_skeleton_melee.model idle idle 4.600
 clip neutral.n_creep_skeleton_melee.model run run_var3 1.900
 clip neutral.n_creep_skeleton_melee.model attack attack1 0.933 point=0.56
 clip neutral.n_creep_skeleton_melee.model attack2 attack2 0.933 point=0.56
 clip neutral.n_creep_skeleton_melee.model death death 3.100
 clip neutral.n_creep_skeleton_melee.model stun stun_new 1.525
+clip neutral.n_creep_skeleton_melee.model flail flail 0.733
 unit npc_dota_dark_troll_warlord_skeleton_warrior neutral.n_creep_skeleton_melee.model model_scale=1.1
-model neutral.n_creep_tadpole_c.model models/creeps/neutral_creeps/n_creep_tadpole_c/n_creep_tadpole_c.vmdl_c models/neutral/n_creep_tadpole_c/n_creep_tadpole_c.glb anims=tadpole_c_idle_loop,tadpole_c_retarget_run_2,tadpole_c_attack_var_1,tadpole_c_death_b,tadpole_c_stun
+model neutral.n_creep_tadpole_c.model models/creeps/neutral_creeps/n_creep_tadpole_c/n_creep_tadpole_c.vmdl_c models/neutral/n_creep_tadpole_c/n_creep_tadpole_c.glb anims=tadpole_c_idle_loop,tadpole_c_retarget_run_2,tadpole_c_attack_var_1,tadpole_c_death_b,tadpole_c_stun,tadpole_c_flail
 clip neutral.n_creep_tadpole_c.model idle tadpole_c_idle_loop 1.200
 clip neutral.n_creep_tadpole_c.model run tadpole_c_retarget_run_2 4.000
 clip neutral.n_creep_tadpole_c.model attack tadpole_c_attack_var_1 0.967 point=0.4
 clip neutral.n_creep_tadpole_c.model death tadpole_c_death_b 2.500
 clip neutral.n_creep_tadpole_c.model stun tadpole_c_stun 1.467
+clip neutral.n_creep_tadpole_c.model flail tadpole_c_flail 0.909
 unit npc_dota_neutral_tadpole neutral.n_creep_tadpole_c.model model_scale=.45 attack=neutral.attack.gnoll soundset=n_creep_ranged
-model neutral.n_creep_tadpole_ranged_v2.model models/creeps/neutral_creeps/n_creep_tadpole/n_creep_tadpole_ranged_v2.vmdl_c models/neutral/n_creep_tadpole_ranged_v2/n_creep_tadpole_ranged_v2.glb anims=tadpole_ranged_idle,tadpole_run_2,tadpole_ranged_attack,tadpole_death_alt_6,tadpole_stun,tadpole_ranged_cast
+model neutral.n_creep_tadpole_ranged_v2.model models/creeps/neutral_creeps/n_creep_tadpole/n_creep_tadpole_ranged_v2.vmdl_c models/neutral/n_creep_tadpole_ranged_v2/n_creep_tadpole_ranged_v2.glb anims=tadpole_ranged_idle,tadpole_run_2,tadpole_ranged_attack,tadpole_death_alt_6,tadpole_stun,tadpole_ranged_cast,tadpole_flail
 clip neutral.n_creep_tadpole_ranged_v2.model idle tadpole_ranged_idle 3.000
 clip neutral.n_creep_tadpole_ranged_v2.model run tadpole_run_2 3.200
 clip neutral.n_creep_tadpole_ranged_v2.model attack tadpole_ranged_attack 2.000 point=0.3
 clip neutral.n_creep_tadpole_ranged_v2.model death tadpole_death_alt_6 2.133
 clip neutral.n_creep_tadpole_ranged_v2.model stun tadpole_stun 1.400
 clip neutral.n_creep_tadpole_ranged_v2.model cast2 tadpole_ranged_cast 0.833 point=0.3
+clip neutral.n_creep_tadpole_ranged_v2.model flail tadpole_flail 0.667
 unit npc_dota_neutral_froglet_mage neutral.n_creep_tadpole_ranged_v2.model model_scale=.75 attack=creep.dire.ranged.attack soundset=n_creep_melee
-model neutral.n_creep_tadpole_v2.model models/creeps/neutral_creeps/n_creep_tadpole/n_creep_tadpole_v2.vmdl_c models/neutral/n_creep_tadpole_v2/n_creep_tadpole_v2.glb anims=tadpole_idle_var1,tadpole_run_2,tadpole_attack_var_5,tadpole_death_alt_6,tadpole_stun,cast
+model neutral.n_creep_tadpole_v2.model models/creeps/neutral_creeps/n_creep_tadpole/n_creep_tadpole_v2.vmdl_c models/neutral/n_creep_tadpole_v2/n_creep_tadpole_v2.glb anims=tadpole_idle_var1,tadpole_run_2,tadpole_attack_var_5,tadpole_death_alt_6,tadpole_stun,cast,tadpole_flail
 clip neutral.n_creep_tadpole_v2.model idle tadpole_idle_var1 3.000
 clip neutral.n_creep_tadpole_v2.model run tadpole_run_2 3.200
 clip neutral.n_creep_tadpole_v2.model attack tadpole_attack_var_5 2.000 point=0.3
 clip neutral.n_creep_tadpole_v2.model death tadpole_death_alt_6 2.467
 clip neutral.n_creep_tadpole_v2.model stun tadpole_stun 1.400
 clip neutral.n_creep_tadpole_v2.model cast5 cast 0.800 point=0.3
+clip neutral.n_creep_tadpole_v2.model flail tadpole_flail 0.667
 unit npc_dota_neutral_froglet neutral.n_creep_tadpole_v2.model model_scale=0.85 soundset=n_creep_melee
-model neutral.n_creep_thunder_lizard_big.model models/creeps/neutral_creeps/n_creep_thunder_lizard/n_creep_thunder_lizard_big.vmdl_c models/neutral/n_creep_thunder_lizard_big/n_creep_thunder_lizard_big.glb anims=n_creep_thunder_lizard_big_idle,n_creep_thunder_lizard_big_run,n_creep_thunder_lizard_big_attack,n_creep_thunder_lizard_big_death,n_creep_thunder_lizard_big_stun,n_creep_thunder_lizard_big_cast2_frenzy,n_creep_thunder_lizard_big_cast1_slam
+model neutral.n_creep_thunder_lizard_big.model models/creeps/neutral_creeps/n_creep_thunder_lizard/n_creep_thunder_lizard_big.vmdl_c models/neutral/n_creep_thunder_lizard_big/n_creep_thunder_lizard_big.glb anims=n_creep_thunder_lizard_big_idle,n_creep_thunder_lizard_big_run,n_creep_thunder_lizard_big_attack,n_creep_thunder_lizard_big_death,n_creep_thunder_lizard_big_stun,n_creep_thunder_lizard_big_cast2_frenzy,n_creep_thunder_lizard_big_cast1_slam,n_creep_thunder_lizard_big_flail
 clip neutral.n_creep_thunder_lizard_big.model idle n_creep_thunder_lizard_big_idle 2.333
 clip neutral.n_creep_thunder_lizard_big.model run n_creep_thunder_lizard_big_run 1.067
 clip neutral.n_creep_thunder_lizard_big.model attack n_creep_thunder_lizard_big_attack 0.667 point=0.3
@@ -1687,29 +1731,33 @@ clip neutral.n_creep_thunder_lizard_big.model death n_creep_thunder_lizard_big_d
 clip neutral.n_creep_thunder_lizard_big.model stun n_creep_thunder_lizard_big_stun 1.667
 clip neutral.n_creep_thunder_lizard_big.model cast1 n_creep_thunder_lizard_big_cast2_frenzy 0.800 point=0
 clip neutral.n_creep_thunder_lizard_big.model cast3 n_creep_thunder_lizard_big_cast1_slam 0.733 point=0.3
+clip neutral.n_creep_thunder_lizard_big.model flail n_creep_thunder_lizard_big_flail 0.733
 unit npc_dota_neutral_big_thunder_lizard neutral.n_creep_thunder_lizard_big.model model_scale=.80 attack=neutral.attack.thunderlizard soundset=n_creep_ranged
-model neutral.n_creep_thunder_lizard_small.model models/creeps/neutral_creeps/n_creep_thunder_lizard/n_creep_thunder_lizard_small.vmdl_c models/neutral/n_creep_thunder_lizard_small/n_creep_thunder_lizard_small.glb anims=n_creep_thunder_lizard_small_idle,n_creep_thunder_lizard_small_run,n_creep_thunder_lizard_small_attack,n_creep_thunder_lizard_small_death,n_creep_thunder_lizard_small_stun
+model neutral.n_creep_thunder_lizard_small.model models/creeps/neutral_creeps/n_creep_thunder_lizard/n_creep_thunder_lizard_small.vmdl_c models/neutral/n_creep_thunder_lizard_small/n_creep_thunder_lizard_small.glb anims=n_creep_thunder_lizard_small_idle,n_creep_thunder_lizard_small_run,n_creep_thunder_lizard_small_attack,n_creep_thunder_lizard_small_death,n_creep_thunder_lizard_small_stun,n_creep_thunder_lizard_small_flail
 clip neutral.n_creep_thunder_lizard_small.model idle n_creep_thunder_lizard_small_idle 2.333
 clip neutral.n_creep_thunder_lizard_small.model run n_creep_thunder_lizard_small_run 1.067
 clip neutral.n_creep_thunder_lizard_small.model attack n_creep_thunder_lizard_small_attack 0.667 point=0.5
 clip neutral.n_creep_thunder_lizard_small.model death n_creep_thunder_lizard_small_death 1.667
 clip neutral.n_creep_thunder_lizard_small.model stun n_creep_thunder_lizard_small_stun 1.667
+clip neutral.n_creep_thunder_lizard_small.model flail n_creep_thunder_lizard_small_flail 0.533
 unit npc_dota_neutral_small_thunder_lizard neutral.n_creep_thunder_lizard_small.model model_scale=.65 attack=neutral.attack.thunderlizard soundset=n_creep_ranged
-model neutral.n_creep_troll_dark_a.model models/creeps/neutral_creeps/n_creep_troll_dark_a/n_creep_troll_dark_a.vmdl_c models/neutral/n_creep_troll_dark_a/n_creep_troll_dark_a.glb anims=idle,run,attack,death,stun,ensnare
+model neutral.n_creep_troll_dark_a.model models/creeps/neutral_creeps/n_creep_troll_dark_a/n_creep_troll_dark_a.vmdl_c models/neutral/n_creep_troll_dark_a/n_creep_troll_dark_a.glb anims=idle,run,attack,death,stun,ensnare,flail
 clip neutral.n_creep_troll_dark_a.model idle idle 1.467
 clip neutral.n_creep_troll_dark_a.model run run 0.733
 clip neutral.n_creep_troll_dark_a.model attack attack 0.667 point=0.3
 clip neutral.n_creep_troll_dark_a.model death death 0.967
 clip neutral.n_creep_troll_dark_a.model stun stun 1.467
 clip neutral.n_creep_troll_dark_a.model cast1 ensnare 0.700 point=0.3
+clip neutral.n_creep_troll_dark_a.model flail flail 0.633
 unit npc_dota_neutral_dark_troll neutral.n_creep_troll_dark_a.model model_scale=.70 attack=creep.dire.ranged.attack soundset=n_creep_ranged
-model neutral.n_creep_troll_dark_b.model models/creeps/neutral_creeps/n_creep_troll_dark_b/n_creep_troll_dark_b.vmdl_c models/neutral/n_creep_troll_dark_b/n_creep_troll_dark_b.glb anims=idle,run,attack,death,stun,raise_dead
+model neutral.n_creep_troll_dark_b.model models/creeps/neutral_creeps/n_creep_troll_dark_b/n_creep_troll_dark_b.vmdl_c models/neutral/n_creep_troll_dark_b/n_creep_troll_dark_b.glb anims=idle,run,attack,death,stun,raise_dead,flail
 clip neutral.n_creep_troll_dark_b.model idle idle 1.467
 clip neutral.n_creep_troll_dark_b.model run run 0.733
 clip neutral.n_creep_troll_dark_b.model attack attack 0.667 point=0.3
 clip neutral.n_creep_troll_dark_b.model death death 1.467
 clip neutral.n_creep_troll_dark_b.model stun stun 1.467
 clip neutral.n_creep_troll_dark_b.model cast2 raise_dead 1.000 point=0.3
+clip neutral.n_creep_troll_dark_b.model flail flail 0.633
 unit npc_dota_neutral_dark_troll_warlord neutral.n_creep_troll_dark_b.model model_scale=.90 attack=creep.dire.ranged.attack soundset=n_creep_ranged
 model neutral.n_creep_vulture_a.model models/creeps/neutral_creeps/n_creep_vulture_a/n_creep_vulture_a.vmdl_c models/neutral/n_creep_vulture_a/n_creep_vulture_a.glb anims=n_creep_vulture_a_idle_01,n_creep_vulture_a_run,n_creep_vulture_a_attack_peck,n_creep_vulture_a_death,cast_hurricane
 clip neutral.n_creep_vulture_a.model idle n_creep_vulture_a_idle_01 3.833
@@ -1726,15 +1774,16 @@ clip neutral.n_creep_vulture_b.model attack2 n_creep_vulture_a_attack_peck 0.667
 clip neutral.n_creep_vulture_b.model death n_creep_vulture_a_death 1.000
 clip neutral.n_creep_vulture_b.model cast1 cast_tornado 1.600 point=0.4
 unit npc_dota_neutral_wildkin neutral.n_creep_vulture_b.model model_scale=.80 soundset=n_creep_melee
-model neutral.n_creep_worg_large.model models/creeps/neutral_creeps/n_creep_worg_large/n_creep_worg_large.vmdl_c models/neutral/n_creep_worg_large/n_creep_worg_large.glb anims=worg_idle,worg_run,worg_attack,worg_death,stun,cast
+model neutral.n_creep_worg_large.model models/creeps/neutral_creeps/n_creep_worg_large/n_creep_worg_large.vmdl_c models/neutral/n_creep_worg_large/n_creep_worg_large.glb anims=worg_idle,worg_run,worg_attack,worg_death,stun,cast,flail
 clip neutral.n_creep_worg_large.model idle worg_idle 1.467
 clip neutral.n_creep_worg_large.model run worg_run 0.467
 clip neutral.n_creep_worg_large.model attack worg_attack 0.667 point=0.33
 clip neutral.n_creep_worg_large.model death worg_death 0.967
 clip neutral.n_creep_worg_large.model stun stun 1.467
 clip neutral.n_creep_worg_large.model cast1 cast 1.133 point=0.33
+clip neutral.n_creep_worg_large.model flail flail 0.633
 unit npc_dota_neutral_alpha_wolf neutral.n_creep_worg_large.model model_scale=.90 soundset=n_creep_melee
-model neutral.n_creep_worg_small.model models/creeps/neutral_creeps/n_creep_worg_small/n_creep_worg_small.vmdl_c models/neutral/n_creep_worg_small/n_creep_worg_small.glb anims=idle,run,attack,attack_alt,die,stun,cast_intimidate
+model neutral.n_creep_worg_small.model models/creeps/neutral_creeps/n_creep_worg_small/n_creep_worg_small.vmdl_c models/neutral/n_creep_worg_small/n_creep_worg_small.glb anims=idle,run,attack,attack_alt,die,stun,cast_intimidate,flail
 clip neutral.n_creep_worg_small.model idle idle 1.333
 clip neutral.n_creep_worg_small.model run run 0.633
 clip neutral.n_creep_worg_small.model attack attack 0.700 point=0.33
@@ -1742,17 +1791,19 @@ clip neutral.n_creep_worg_small.model attack2 attack_alt 0.700 point=0.33
 clip neutral.n_creep_worg_small.model death die 1.333
 clip neutral.n_creep_worg_small.model stun stun 1.333
 clip neutral.n_creep_worg_small.model cast2 cast_intimidate 0.967 point=0.2
+clip neutral.n_creep_worg_small.model flail flail 0.733
 unit npc_dota_neutral_giant_wolf neutral.n_creep_worg_small.model model_scale=.90 soundset=n_creep_melee
-model neutral.neutral_creep_golem_a.model models/creeps/neutral_creeps/n_creep_golem_a/neutral_creep_golem_a.vmdl_c models/neutral/neutral_creep_golem_a/neutral_creep_golem_a.glb anims=idle,run,attack,attackAlt,dieAlt,stun
+model neutral.neutral_creep_golem_a.model models/creeps/neutral_creeps/n_creep_golem_a/neutral_creep_golem_a.vmdl_c models/neutral/neutral_creep_golem_a/neutral_creep_golem_a.glb anims=idle,run,attack,attackAlt,dieAlt,stun,flail
 clip neutral.neutral_creep_golem_a.model idle idle 2.000
 clip neutral.neutral_creep_golem_a.model run run 0.933
 clip neutral.neutral_creep_golem_a.model attack attack 0.667 point=0.3
 clip neutral.neutral_creep_golem_a.model attack2 attackAlt 0.667 point=0.3
 clip neutral.neutral_creep_golem_a.model death dieAlt 1.667
 clip neutral.neutral_creep_golem_a.model stun stun 1.667
+clip neutral.neutral_creep_golem_a.model flail flail 0.800
 unit npc_dota_neutral_rock_golem neutral.neutral_creep_golem_a.model model_scale=1 soundset=n_creep_melee
 unit npc_dota_neutral_granite_golem neutral.neutral_creep_golem_a.model model_scale=1.3 soundset=n_creep_melee
-model neutral.pine_cone.model models/creeps/pine_cone/pine_cone.vmdl_c models/neutral/pine_cone/pine_cone.glb anims=idle,run,attack,attack2,die,disabled,shield_bash
+model neutral.pine_cone.model models/creeps/pine_cone/pine_cone.vmdl_c models/neutral/pine_cone/pine_cone.glb anims=idle,run,attack,attack2,die,disabled,shield_bash,flail
 clip neutral.pine_cone.model idle idle 1.533
 clip neutral.pine_cone.model run run 0.633
 clip neutral.pine_cone.model attack attack 0.867 point=0.3
@@ -1760,6 +1811,7 @@ clip neutral.pine_cone.model attack2 attack2 0.867 point=0.3
 clip neutral.pine_cone.model death die 4.467
 clip neutral.pine_cone.model stun disabled 1.600
 clip neutral.pine_cone.model cast1 shield_bash 0.867 point=0.2
+clip neutral.pine_cone.model flail flail 1.100
 unit npc_dota_neutral_warpine_raider neutral.pine_cone.model model_scale=1.1 soundset=n_creep_melee
 unit npc_dota_enraged_wildkin_tornado none
 
@@ -2299,7 +2351,7 @@ sound sound.announcer.roshan.dire sounds/vo/announcer/announcer_roshan_fallen_di
 fx ability.roshan_slam.cast at=caster particle=neutral.roshan_slam sound=sound.neutral.roshan_slam
 fx ability.roshan_revengeroar.cast at=caster particle=neutral.roshan_roar
 fx ability.roshan_bash.cast at=caster sound=sound.neutral.roshan_bash
-fx modifier.modifier_bashed.worn at=unit attach=overhead particle=status.stunned
+fx modifier.modifier_bashed.worn at=unit attach=overhead particle=status.bashed disable=2 pose=stun
 fx modifier.modifier_roshan_revengeroar_disarm.worn at=unit attach=overhead particle=status.disarmed cp1=attach_hitloc
 fx modifier.modifier_silence.worn at=unit attach=overhead particle=status.silenced
 fx unit.npc_dota_roshan.died at=unit particle=neutral.roshan_death
@@ -2317,9 +2369,11 @@ sound sound.neutral.roshan_grab sounds/weapons/creep/roshan/grab.vsnd_c sounds/w
 sound sound.neutral.roshan_throw sounds/weapons/creep/roshan/throw.vsnd_c sounds/weapons/creep/roshan/throw.wav event=Roshan.Throw
 sound sound.neutral.roshan_throw_impact sounds/weapons/hero/primal_beast/pulverize_stun.vsnd_c sounds/weapons/hero/primal_beast/pulverize_stun.wav event=Roshan.Throw.Impact
 fx ability.roshan_grab_and_throw.cast at=caster sound=sound.neutral.roshan_grab
+fx modifier.modifier_roshan_grab.worn at=unit disable=4 pose=flail
 fx modifier.modifier_roshan_grab_thrown.worn at=unit sound=sound.neutral.roshan_throw
+fx modifier.modifier_roshan_grab_thrown.worn at=unit attach=overhead particle=status.stunned disable=3
 fx ability.roshan_grab_and_throw.land at=point sound=sound.neutral.roshan_throw_impact
-fx modifier.modifier_knockback.worn at=unit attach=overhead particle=status.stunned
+fx modifier.modifier_knockback.worn at=unit attach=overhead particle=status.stunned disable=3
 
 # Public boss status and global death cues, imported from the installed labels and sound events.
 label resource/localization/dota_english.txt DOTA_Tooltip_RoshanTimerMessage_RoshanIsAlive
@@ -2336,34 +2390,38 @@ texture menu.check panorama/images/control_icons/check_png.vtex_c menu/check_png
 texture menu.dropdown panorama/images/control_icons/arrow_dropdown_png.vtex_c menu/arrow_dropdown_png.png
 texture menu.reset panorama/images/control_icons/refresh_psd.vtex_c menu/refresh_psd.png
 
-model creep.radiant.melee_mega.model models/creeps/lane_creeps/creep_radiant_melee/radiant_melee_mega.vmdl_c models/creep/radiant_melee_mega/radiant_melee_mega.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
+model creep.radiant.melee_mega.model models/creeps/lane_creeps/creep_radiant_melee/radiant_melee_mega.vmdl_c models/creep/radiant_melee_mega/radiant_melee_mega.glb anims=idle,run,attack,attack2,death,stun,flail model_scale=0.93
 clip creep.radiant.melee_mega.model idle idle 1.433
 clip creep.radiant.melee_mega.model run run 0.800
 clip creep.radiant.melee_mega.model attack attack 1.000 point=0.467
 clip creep.radiant.melee_mega.model attack2 attack2 1.000 point=0.467
 clip creep.radiant.melee_mega.model death death 1.033
 clip creep.radiant.melee_mega.model stun stun 2.150
-model creep.radiant.ranged_mega.model models/creeps/lane_creeps/creep_radiant_ranged/radiant_ranged_mega.vmdl_c models/creep/radiant_ranged_mega/radiant_ranged_mega.glb anims=idle,run,attack,attack2,death,stun model_scale=0.88
+clip creep.radiant.melee_mega.model flail flail 0.933
+model creep.radiant.ranged_mega.model models/creeps/lane_creeps/creep_radiant_ranged/radiant_ranged_mega.vmdl_c models/creep/radiant_ranged_mega/radiant_ranged_mega.glb anims=idle,run,attack,attack2,death,stun,flail model_scale=0.88
 clip creep.radiant.ranged_mega.model idle idle 1.600
 clip creep.radiant.ranged_mega.model run run 0.700
 clip creep.radiant.ranged_mega.model attack attack 1.000 point=0.5
 clip creep.radiant.ranged_mega.model attack2 attack2 1.000 point=0.5
 clip creep.radiant.ranged_mega.model death death 0.867
 clip creep.radiant.ranged_mega.model stun stun 1.400
-model creep.dire.melee_mega.model models/creeps/lane_creeps/creep_bad_melee/creep_bad_melee_mega.vmdl_c models/creep/dire_melee_mega/dire_melee_mega.glb anims=idle,run,attack,attackAlt,die,stun meshes=creep_bad_melee_mega_model model_scale=0.93
+clip creep.radiant.ranged_mega.model flail flail 0.533
+model creep.dire.melee_mega.model models/creeps/lane_creeps/creep_bad_melee/creep_bad_melee_mega.vmdl_c models/creep/dire_melee_mega/dire_melee_mega.glb anims=idle,run,attack,attackAlt,die,stun,flail meshes=creep_bad_melee_mega_model model_scale=0.93
 clip creep.dire.melee_mega.model idle idle 1.700
 clip creep.dire.melee_mega.model run run 0.767
 clip creep.dire.melee_mega.model attack attack 0.933 point=0.467
 clip creep.dire.melee_mega.model attack2 attackAlt 0.933 point=0.467
 clip creep.dire.melee_mega.model death die 1.700
 clip creep.dire.melee_mega.model stun stun 1.067
-model creep.dire.ranged_mega.model models/creeps/lane_creeps/creep_bad_ranged/lane_dire_ranged_mega.vmdl_c models/creep/dire_ranged_mega/dire_ranged_mega.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
+clip creep.dire.melee_mega.model flail flail 0.800
+model creep.dire.ranged_mega.model models/creeps/lane_creeps/creep_bad_ranged/lane_dire_ranged_mega.vmdl_c models/creep/dire_ranged_mega/dire_ranged_mega.glb anims=idle,run,attack,attack2,death,stun,flail model_scale=0.93
 clip creep.dire.ranged_mega.model idle idle 1.967
 clip creep.dire.ranged_mega.model run run 0.633
 clip creep.dire.ranged_mega.model attack attack 0.967 point=0.5
 clip creep.dire.ranged_mega.model attack2 attack2 0.967 point=0.5
 clip creep.dire.ranged_mega.model death death 1.300
 clip creep.dire.ranged_mega.model stun stun 1.967
+clip creep.dire.ranged_mega.model flail flail 0.633
 
 # Which model and size each lane unit of Dota is drawn with, by tier: the plain creep (npc_units.txt), the super one (`_upgraded`,
 # bigger) and the mega one (`_upgraded_mega`, its own model; the siege creep has none). A flagbearer is never upgraded in play, as

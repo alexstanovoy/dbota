@@ -827,6 +827,17 @@ fn a_natural_pit_migration_draws_grab_flight_and_landing_even_when_spell_block_f
             .unit(victim)
             .is_some_and(|u| u.forced.is_some_and(|f| f.phase == ForcedPhase::Held))
     });
+    let pose = |c: &Client| {
+        c.body(victim)
+            .and_then(|entity| c.world().get::<crate::anim::Pose>(entity))
+            .expect("the ally's model")
+            .clip()
+    };
+    assert_eq!(
+        pose(&client),
+        "flail",
+        "Roshan's grip overrides the activity"
+    );
     let boss = client
         .view()
         .units
@@ -857,7 +868,11 @@ fn a_natural_pit_migration_draws_grab_flight_and_landing_even_when_spell_block_f
         blocked|=c.core().told.iter().any(|e|matches!(e,EventKind::AbilityCast{caster,ability} if *caster==boss.id&&*ability==bota_core::NeutralAbility::SpellBlock.id()));
         if blocked {kept_channel|=c.view().unit(boss.id).is_some_and(|u|u.channel.is_some_and(|ch|ch.ability==bota_core::NeutralAbility::GrabAndThrow.id()))&&c.body(boss.id).and_then(|e|c.world().get::<crate::anim::Pose>(e)).is_some_and(|p|p.clip()=="cast2");}
         let Some(hero)=c.view().unit(victim) else{return false;};
-        airborne|=hero.forced.is_some_and(|f|f.phase==ForcedPhase::Airborne);
+        let flying = hero.forced.is_some_and(|f|f.phase==ForcedPhase::Airborne);
+        if flying {
+            assert_ne!(pose(c), "flail", "the throw has released the grip's activity override");
+        }
+        airborne |= flying;
         raised|=c.body(victim).and_then(|e|c.world().get::<Unit>(e)).is_some_and(|u|crate::units::flight_height(u)>10.0);
         airborne&&raised&&hero.forced.is_none()
     });

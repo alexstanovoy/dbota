@@ -16,6 +16,7 @@ use bota_proto::{
 use crate::ability_art::art_of;
 use crate::camera::RtsCamera;
 use crate::coords::sim_facing_to_rotation;
+use crate::fx::{line::DisabledPose, rules::Rules};
 use crate::map::MainSun;
 use crate::session::Session;
 use crate::shadow_casters::{ShadowFloor, shadow_reaches};
@@ -194,6 +195,7 @@ struct Drawn<'a> {
 fn animate(
     session: NonSend<Session>,
     bank: Res<ModelBank>,
+    rules: Res<Rules>,
     channels: Res<Channels>,
     time: Res<Time>,
     mut units: Query<(
@@ -276,8 +278,24 @@ fn animate(
                                 })
                             })
                     });
-                match channel.and_then(|(channel, name)| Some((channel, name, clip(name)?))) {
-                    Some((channel, name, (duration, point))) => {
+                let disabled = rules.pose_of(u).and_then(|disabled| {
+                    let name = match disabled {
+                        DisabledPose::Stun => "stun",
+                        DisabledPose::Flail => "flail",
+                    };
+                    Some((name, clip(name)?.0))
+                });
+                match (
+                    disabled,
+                    channel.and_then(|(channel, name)| Some((channel, name, clip(name)?))),
+                ) {
+                    (Some((name, duration)), _) => {
+                        pose.swing = None;
+                        pose.since_strike = None;
+                        pose.struck_at = None;
+                        looping(&mut pose, name, duration, dt, 1.0)
+                    }
+                    (None, Some((channel, name, (duration, point)))) => {
                         let offset = if art_of(channel.ability).clip == name {
                             point.unwrap_or(0.0)
                         } else {
@@ -294,14 +312,14 @@ fn animate(
                             },
                         }
                     }
-                    None if worked.contains(&unit.id) => {
+                    (None, None) if worked.contains(&unit.id) => {
                         if let Some((duration, _)) = clip("channel") {
                             looping(&mut pose, "channel", duration, dt, 1.0)
                         } else {
                             choose(core, u, Drawn { unit, target }, &mut pose, dt, clip)
                         }
                     }
-                    None => choose(core, u, Drawn { unit, target }, &mut pose, dt, clip),
+                    (None, None) => choose(core, u, Drawn { unit, target }, &mut pose, dt, clip),
                 }
             }
             (None, None) => continue,
@@ -534,16 +552,6 @@ fn choose(
     clip: impl Fn(&str) -> Option<(f32, Option<f32>)>,
 ) -> Wanted {
     let unit = drawn.unit;
-    if u.forced.is_some() {
-        pose.swing = None;
-        pose.since_strike = None;
-        pose.struck_at = None;
-        for name in ["flail", "stun"] {
-            if let Some((duration, _)) = clip(name) {
-                return looping(pose, name, duration, dt, 1.0);
-            }
-        }
-    }
     let rate = f32::from(core.tick_rate().max(1));
     let sub = core.smooth.alpha();
     let tick = core.view().map_or(0, |view| view.tick);

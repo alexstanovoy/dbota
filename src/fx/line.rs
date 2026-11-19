@@ -121,6 +121,13 @@ pub enum Whose {
     Foreign,
 }
 
+/// A pose while a modifier holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisabledPose {
+    Stun,
+    Flail,
+}
+
 /// One `fx` line.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fx {
@@ -135,6 +142,10 @@ pub struct Fx {
     pub particle: Option<String>,
     /// The logical prefix of the sounds, one of them played, when the line has one.
     pub sound: Option<String>,
+    /// A disabled activity the wearer plays as long as this effect holds.
+    pub pose: Option<DisabledPose>,
+    /// The priority of a mutually exclusive disable presentation.
+    pub disable_priority: Option<std::num::NonZeroU8>,
     /// What the particle's control points are given, by control point (not the first).
     pub feeds: Vec<(usize, Feed)>,
     /// Whose effect a worn line is about.
@@ -190,6 +201,8 @@ impl Fx {
             attach: Attach::Origin,
             particle: None,
             sound: None,
+            pose: None,
+            disable_priority: None,
             feeds: Vec::new(),
             whose: Whose::Any,
             stacks: (0, u32::MAX),
@@ -207,6 +220,20 @@ impl Fx {
                 "attach" => fx.attach = attach_of(value)?,
                 "particle" => fx.particle = Some(value.to_owned()),
                 "sound" => fx.sound = Some(value.to_owned()),
+                "pose" => {
+                    fx.pose = Some(match value {
+                        "stun" => DisabledPose::Stun,
+                        "flail" => DisabledPose::Flail,
+                        _ => return Err("pose wants stun or flail".to_owned()),
+                    });
+                }
+                "disable" => {
+                    fx.disable_priority = Some(
+                        value
+                            .parse()
+                            .map_err(|_| "disable wants a priority from 1 to 255")?,
+                    );
+                }
                 "whose" => fx.whose = whose_of(value)?,
                 "follow" => {
                     fx.follow = match value {
@@ -232,8 +259,11 @@ impl Fx {
     /// Whether the line makes sense: it plays something, at a place its trigger can name, and
     /// asks of the fact only what its trigger knows.
     fn check(&self) -> Result<(), String> {
-        if self.particle.is_none() && self.sound.is_none() {
-            return Err("neither a particle nor a sound".to_owned());
+        if self.particle.is_none() && self.sound.is_none() && self.pose.is_none() {
+            return Err("no particle, sound or pose".to_owned());
+        }
+        if self.pose.is_some() && self.disable_priority.is_none() {
+            return Err("pose requires a disable priority".to_owned());
         }
         let places: &[At] = match self.trigger {
             Trigger::Use => &[At::Caster, At::CasterBefore, At::Point],

@@ -79,6 +79,95 @@ fn every_fx_line_reads_and_names_what_the_manifest_has() {
     }
 }
 
+#[test]
+fn every_disabled_and_flail_clip_matches_the_installed_activity() {
+    use dbota_import::catalog::{Line, parse};
+    use heatel::{DirSource, Resource, Vpk, anim::read_sequences};
+    use std::collections::HashMap;
+
+    let catalog =
+        parse(MANIFEST, include_str!("../../assets-manifest/ids.txt")).expect("the asset manifest");
+    let source = DirSource::new(crate::e2e::harness::game_dir());
+    let pak = Vpk::open(&source, "pak01_dir.vpk").expect("the game package");
+    let models: HashMap<_, _> = catalog
+        .lines
+        .iter()
+        .filter_map(|line| match line {
+            Line::Model(model) => Some((&model.logical, model)),
+            _ => None,
+        })
+        .collect();
+    let mut checked = 0;
+    for clip in catalog.lines.iter().filter_map(|line| match line {
+        Line::Clip(clip) => Some(clip),
+        _ => None,
+    }) {
+        let activity = match clip.logical.as_str() {
+            "stun" => "ACT_DOTA_DISABLED",
+            "flail" => "ACT_DOTA_FLAIL",
+            _ => continue,
+        };
+        let model = models[&clip.model];
+        assert!(
+            model.anims.contains(&clip.name),
+            "{} is exported for {}",
+            clip.name,
+            clip.model
+        );
+        let bytes = pak
+            .read_file(&source, &model.src)
+            .expect("the installed model");
+        let sequences = read_sequences(&Resource::parse(&bytes).expect("model resource"))
+            .expect("model sequences");
+        assert!(
+            sequences.iter().any(|seq| seq.name == clip.name
+                && seq
+                    .activities
+                    .iter()
+                    .any(|tag| tag.name == activity && tag.modifiers.is_empty())),
+            "{}/{} does not play the unmodified {activity}",
+            clip.model,
+            clip.name,
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "the manifest declares disabled clips");
+}
+
+#[test]
+fn a_disable_rule_needs_a_valid_priority_pose_and_worn_subject() {
+    for (option, message) in [
+        ("disable=0", "disable wants a priority from 1 to 255"),
+        ("disable=256", "disable wants a priority from 1 to 255"),
+        ("disable=high", "disable wants a priority from 1 to 255"),
+        ("pose=run", "pose wants stun or flail"),
+        ("pose=stun", "pose requires a disable priority"),
+    ] {
+        assert_eq!(
+            Fx::parse(&[
+                "modifier.modifier_stunned.worn",
+                "at=unit",
+                option,
+                "particle=status.stunned"
+            ])
+            .expect_err(option),
+            message,
+        );
+    }
+    let manifest = Manifest::load(std::path::Path::new("/nonexistent"));
+    let line = Fx::parse(&[
+        "ability.pudge_dismember.hit",
+        "at=unit",
+        "disable=1",
+        "pose=stun",
+    ])
+    .expect("a syntactically valid line");
+    assert_eq!(
+        Rule::resolve(&line, &manifest).expect_err("a disable needs a worn fact"),
+        "disable requires a worn modifier, item or ability",
+    );
+}
+
 // Exact periodic cues await the client periodic-effect presentation follow-up. A cast or a
 // collection heal cannot stand in for a zero-heal automatic caster/target pulse.
 const DEFERRED_PERIODIC_SUPPORT: &[(&str, &str)] = &[(

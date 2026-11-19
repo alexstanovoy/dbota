@@ -8,7 +8,7 @@ use bevy::{prelude::*, transform::TransformSystems};
 use bota_core::rules::TICKS_PER_SECOND;
 use bota_proto::{EntityId, Fixed, Team, UnitView};
 
-use super::line::{Attach, Fx, Trigger, Whose};
+use super::line::{Attach, Fx, Trigger};
 use super::rules::{Rule, Rules, Subject};
 use super::{
     Feeds, PLACE, Stage, attach_basis, attach_point, carried, feed, item_feeds, nodes_ready,
@@ -63,16 +63,17 @@ struct Facts {
 }
 
 /// What `unit` holds of the rule's subject, if it wears it, or carries it, as the line asks.
-fn holding(rule: &Rule, unit: &UnitView, facts: &Facts) -> Option<Hold> {
+fn holding(
+    (index, rule): (usize, &Rule),
+    unit: &UnitView,
+    facts: &Facts,
+    disable: Option<usize>,
+) -> Option<Hold> {
     let fx = &rule.fx;
-    let side = held_for(unit);
-    if fx.side.is_some_and(|wanted| side != Some(wanted)) {
+    if !rule.fits_unit(unit) || (fx.disable_priority.is_some() && disable != Some(index)) {
         return None;
     }
-    if fx.look.is_some() && fx.look != crate::units::look(unit) {
-        return None;
-    }
-    let side = match side {
+    let side = match held_for(unit) {
         Some(Team::Dire) => 1.0,
         _ => 0.0,
     };
@@ -119,20 +120,12 @@ fn holding(rule: &Rule, unit: &UnitView, facts: &Facts) -> Option<Hold> {
                 },
             ))
         }),
-        _ => unit.effects.iter().find_map(|effect| {
-            let on = match &rule.subject {
-                Subject::Effects(ids) => ids.contains(&effect.id),
-                _ => rule.names(effect.inflictor),
-            };
-            let stacks = effect.stacks.unwrap_or(0);
-            let own = effect.caster == Some(unit.id);
-            let whose = match fx.whose {
-                Whose::Any => true,
-                Whose::Own => own,
-                Whose::Foreign => !own,
-            };
-            let fits = on && whose && (fx.stacks.0..=fx.stacks.1).contains(&stacks);
-            fits.then(|| held(stacks, effect.ticks_left, Feeds::default()))
+        _ => rule.worn_effect(unit).map(|effect| {
+            held(
+                effect.stacks.unwrap_or(0),
+                effect.ticks_left,
+                Feeds::default(),
+            )
         }),
     }
 }
@@ -237,6 +230,7 @@ fn worn(
         .chain(rules.of(Trigger::Casting))
         .chain(rules.of(Trigger::Channelled))
         .chain(rules.of(Trigger::Gathering))
+        .filter(|(_, rule)| rule.fx.particle.is_some() || rule.fx.sound.is_some())
         .collect::<Vec<_>>();
     if wearing.is_empty() {
         return;
@@ -244,16 +238,16 @@ fn worn(
     let facts = Facts {
         channelled: channels.objectives(view),
     };
-    worn.0.retain(|(id, rule), wearing| {
-        let keep = rules.0.get(*rule).is_some_and(|rule| match rule.subject {
+    worn.0.retain(|(id, index), wearing| {
+        let keep = rules.get(*index).is_some_and(|rule| match rule.subject {
             Subject::Runes(kind) => {
                 runes::shown(view, sight.fog()).any(|rune| rune.id == *id && rune.kind == kind)
             }
             _ => {
                 standing(id)
-                    && view
-                        .unit(*id)
-                        .is_some_and(|unit| holding(rule, unit, &facts).is_some())
+                    && view.unit(*id).is_some_and(|unit| {
+                        holding((*index, rule), unit, &facts, rules.disable_of(unit)).is_some()
+                    })
             }
         });
         if !keep {
@@ -263,6 +257,7 @@ fn worn(
     });
     let scene = Scene {
         facts: &facts,
+        rules: &rules,
         ground: &ground,
         bodies: &bodies,
         library: library.as_deref(),
@@ -311,6 +306,7 @@ fn wear_runes(
 /// What the effects worn are placed with.
 struct Scene<'a> {
     facts: &'a Facts,
+    rules: &'a Rules,
     ground: &'a Ground,
     bodies: &'a Shooters<'a, 'a>,
     library: Option<&'a Library>,
@@ -325,8 +321,9 @@ fn wear_unit(
     playing: &mut Playing,
     stage: &mut Stage,
 ) {
+    let disable = scene.rules.disable_of(unit);
     for (n, rule) in wearing {
-        let Some(held) = holding(rule, unit, scene.facts) else {
+        let Some(held) = holding((*n, rule), unit, scene.facts, disable) else {
             continue;
         };
         let fx = &rule.fx;

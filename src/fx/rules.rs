@@ -2,9 +2,9 @@
 //! line about a fact by comparing numbers.
 
 use bevy::prelude::*;
-use bota_proto::{AbilityId, EffectId, HeroId, Inflictor, ItemId, RuneKind, UnitView};
+use bota_proto::{AbilityId, EffectId, EffectView, HeroId, Inflictor, ItemId, RuneKind, UnitView};
 
-use super::line::{Fx, Trigger};
+use super::line::{DisabledPose, Fx, Trigger, Whose};
 use crate::manifest::Manifest;
 
 /// Which units a `unit.<npc>` subject names.
@@ -61,15 +61,34 @@ pub struct Rule {
 
 /// Every line of the manifest that resolved, in the manifest's order.
 #[derive(Resource, Default)]
-pub struct Rules(pub Vec<Rule>);
+pub struct Rules {
+    lines: Vec<Rule>,
+    disables: Vec<usize>,
+}
 
 impl Rules {
+    pub(super) fn get(&self, index: usize) -> Option<&Rule> {
+        self.lines.get(index)
+    }
+
     /// The rules of a trigger.
     pub fn of(&self, trigger: Trigger) -> impl Iterator<Item = (usize, &Rule)> {
-        self.0
+        self.lines
             .iter()
             .enumerate()
             .filter(move |(_, rule)| rule.fx.trigger == trigger)
+    }
+
+    /// The highest-priority disable the drawn unit still wears.
+    pub(super) fn disable_of(&self, unit: &UnitView) -> Option<usize> {
+        self.disables.iter().copied().find(|&index| {
+            let rule = &self.lines[index];
+            rule.fits_unit(unit) && rule.worn_effect(unit).is_some()
+        })
+    }
+
+    pub fn pose_of(&self, unit: &UnitView) -> Option<DisabledPose> {
+        self.lines[self.disable_of(unit)?].fx.pose
     }
 }
 
@@ -125,6 +144,33 @@ impl Rule {
         })
     }
 
+    pub(super) fn fits_unit(&self, unit: &UnitView) -> bool {
+        self.fx
+            .side
+            .is_none_or(|side| crate::units::held_for(unit) == Some(side))
+            && self
+                .fx
+                .look
+                .is_none_or(|look| crate::units::look(unit) == Some(look))
+    }
+
+    pub(super) fn worn_effect<'a>(&self, unit: &'a UnitView) -> Option<&'a EffectView> {
+        unit.effects.iter().find(|effect| {
+            let on = match &self.subject {
+                Subject::Effects(ids) => ids.contains(&effect.id),
+                _ => self.names(effect.inflictor),
+            };
+            let own = effect.caster == Some(unit.id);
+            let whose = match self.fx.whose {
+                Whose::Any => true,
+                Whose::Own => own,
+                Whose::Foreign => !own,
+            };
+            on && whose
+                && (self.fx.stacks.0..=self.fx.stacks.1).contains(&effect.stacks.unwrap_or(0))
+        })
+    }
+
     /// Whether what put something on a unit, or dealt a blow, is what the line is about.
     pub fn names(&self, by: Option<Inflictor>) -> bool {
         match (&self.subject, by) {
@@ -138,6 +184,12 @@ impl Rule {
 /// Whether the trigger has a fact about this kind of subject.
 fn subject_fits(fx: &Fx, subject: &Subject) -> Result<(), String> {
     let items_or_abilities = matches!(subject, Subject::Items(_) | Subject::Abilities(_));
+    if fx.disable_priority.is_some()
+        && (fx.trigger != Trigger::Worn
+            || !(items_or_abilities || matches!(subject, Subject::Effects(_))))
+    {
+        return Err("disable requires a worn modifier, item or ability".to_owned());
+    }
     let fits = match fx.trigger {
         Trigger::Use | Trigger::Held | Trigger::Store => matches!(subject, Subject::Items(_)),
         Trigger::Cast | Trigger::Casting => matches!(subject, Subject::Abilities(_)),
@@ -169,8 +221,17 @@ pub fn plugin(app: &mut App) {
 fn resolve(manifest: Res<Manifest>, mut rules: ResMut<Rules>) {
     for fx in &manifest.fx {
         match Rule::resolve(fx, &manifest) {
-            Ok(rule) => rules.0.push(rule),
+            Ok(rule) => rules.lines.push(rule),
             Err(why) => error!("fx line for {}: {why}", fx.subject),
         }
     }
+    let Rules { lines, disables } = &mut *rules;
+    disables.extend(
+        lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, rule)| rule.fx.disable_priority.map(|_| index)),
+    );
+    // Stable sort keeps manifest order when priorities match.
+    disables.sort_by_key(|&index| std::cmp::Reverse(lines[index].fx.disable_priority));
 }
