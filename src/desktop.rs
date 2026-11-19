@@ -107,6 +107,7 @@ pub fn ask_folder(title: &str) -> Result<Option<PathBuf>, NoDialog> {
     dialog(title, true)
 }
 
+#[cfg(not(test))]
 pub fn ask_file(title: &str) -> Result<Option<PathBuf>, NoDialog> {
     dialog(title, false)
 }
