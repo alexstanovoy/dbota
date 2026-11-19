@@ -359,6 +359,7 @@ tests = [
     { package = "dbota_particles", target = "lib" },
     { package = "dbota", target = "bin:dbota", filters = [
         "fx::worn::",
+        "glyph::tests::",
         "particles::",
         "fx::tests::",
         "e2e::effect_bounds::",

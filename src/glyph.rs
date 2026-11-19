@@ -11,7 +11,7 @@ use bevy::{
     picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
     ui_widgets::Button,
 };
-use bota_core::rules::{GLYPH_RECHARGE_TICKS, GLYPH_USE_COOLDOWN_TICKS};
+use bota_core::rules::Schedule;
 
 use crate::hud::{Blocker, Docks};
 use crate::manifest::Manifest;
@@ -125,6 +125,12 @@ fn spawn(
     ));
 }
 
+/// The share of a wait of `wait` ticks still to go with `ready_in` left: what the dark sweep
+/// covers.
+fn sweep_left(ready_in: u32, wait: u32) -> f32 {
+    (ready_in as f32 / wait.max(1) as f32).clamp(0.0, 1.0)
+}
+
 /// The button, shown to a player while the match runs: its icon, its sweep
 /// and its seconds.
 #[allow(clippy::type_complexity)]
@@ -161,14 +167,11 @@ fn show(
         image.color = art_color;
     }
     // Dark over what is still to wait, clear over what has passed.
-    // Since 7.42 the wait is a charge's six minutes when none is held, else the seven seconds
-    // between two uses.
-    let wait = if charges == 0 {
-        GLYPH_RECHARGE_TICKS
-    } else {
-        GLYPH_USE_COOLDOWN_TICKS
-    };
-    let left = (ready_in as f32 / wait as f32).clamp(0.0, 1.0);
+    // Over the whole of the wait it is in (since 7.42: the first charge's from the clock's
+    // start, a later charge's six minutes, or the seven seconds between two uses).
+    let clock = core.view().map_or(0, |view| view.game_tick());
+    let wait = Schedule::of(core.pregame_ticks()).glyph_wait(clock, charges);
+    let left = sweep_left(ready_in, wait);
     let dark = Color::srgba(0.0, 0.0, 0.0, if waiting { 0.68 } else { 0.0 });
     let wanted = ui::split_disc((1.0 - left) * TAU, Color::NONE, dark);
     if **sweep != wanted {
@@ -190,5 +193,41 @@ fn click(
 ) {
     if event.button == PointerButton::Primary && button.contains(event.entity) {
         session.0.activate_glyph();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sweep_left;
+    use bota_core::rules::{self, Schedule};
+
+    /// Before the first charge the sweep runs over the first wait (270 s from the pregame's
+    /// start on Dota's pregame), not a later charge's 360 s: full at the clock's start, half
+    /// way at its middle.
+    #[test]
+    fn the_sweep_runs_over_the_first_charges_own_wait() {
+        let schedule = Schedule::of(rules::DOTA_PREGAME_TICKS);
+        let first = schedule.glyph_first_use();
+        assert_eq!(first, 270 * rules::TICKS_PER_SECOND);
+        let at = |clock: u32| sweep_left(first - clock, schedule.glyph_wait(clock, 0));
+        assert_eq!(at(0), 1.0);
+        assert_eq!(at(first / 2), 0.5);
+        let later = first + 10;
+        assert_eq!(
+            sweep_left(
+                rules::GLYPH_RECHARGE_TICKS / 2,
+                schedule.glyph_wait(later, 0)
+            ),
+            0.5,
+            "a later charge's six minutes"
+        );
+        assert_eq!(
+            sweep_left(
+                rules::GLYPH_USE_COOLDOWN_TICKS,
+                schedule.glyph_wait(later, 1)
+            ),
+            1.0,
+            "the lock's seven seconds"
+        );
     }
 }
