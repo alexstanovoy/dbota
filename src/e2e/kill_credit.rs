@@ -5,7 +5,8 @@ use super::harness::{Client, MID, Server, scripted_seat};
 use bevy::{input::ButtonState, prelude::*};
 use bota_client_core::{Intent, IssuedOrder, Slot};
 use bota_proto::{
-    Cheat, CreepSide, EntityId, HeroId, ModifierSpec, Order, Target, Team, UnitKind, Vec2 as At,
+    Cheat, CreepSide, EntityId, EventKind, GoldAwardKind, HeroId, ModifierSpec, Order, Target,
+    Team, UnitKind, Vec2 as At,
 };
 use std::sync::{
     Arc,
@@ -213,6 +214,21 @@ fn assert_wallet_drawn(server: &Server, client: &mut Client) {
     });
 }
 
+fn death_award(client: &Client, victim: EntityId, kind: GoldAwardKind) -> Option<i32> {
+    let recipient = client.core().my_slot.unwrap();
+    client.core().feed.iter().find_map(|line| match &line.told {
+        Some(EventKind::Died {
+            unit,
+            awards: Some(awards),
+            ..
+        }) if *unit == victim => awards
+            .iter()
+            .find(|award| award.recipient == recipient && award.kind == kind)
+            .map(|award| award.amount),
+        _ => None,
+    })
+}
+
 #[test]
 fn a_tower_finish_credits_the_distant_damager_in_the_drawn_score_and_wallet() {
     let (server, mut client, foe, phase) = scene();
@@ -238,9 +254,16 @@ fn a_tower_finish_credits_the_distant_damager_in_the_drawn_score_and_wallet() {
     );
     assert_eq!(me.assists, 0, "a credited killer is not its own assister");
     // 7.42: "Hero kill bounty rescaled". The level-one bounty includes 135 First Blood gold.
-    assert!(
-        wallet(&client) - passive(&client) - before > 245,
-        "kill bounty and assist gold both reach the distant killer"
+    assert_eq!(
+        death_award(&client, foe, GoldAwardKind::KillBounty),
+        Some(245)
+    );
+    let assist =
+        death_award(&client, foe, GoldAwardKind::AssistGold).expect("the credited assist award");
+    assert_eq!(
+        wallet(&client) - passive(&client) - before,
+        245 + assist,
+        "exactly the reported bounty and assist gold reach the distant killer"
     );
     assert_eq!(
         client
@@ -527,17 +550,21 @@ fn shared_tower_finish(multiple: bool) {
     // 7.42: "Hero kill bounty rescaled". The level-one bounty is 110. After two
     // contributors claim First Blood, each receives (110 + 135) / 2 as the bounty.
     let bounty = if multiple { 122 } else { 110 };
-    if multiple {
-        assert!(
-            extra > bounty,
-            "a shared bounty and assist gold reach each damager: {extra}"
-        );
-    } else {
+    let assist = if multiple {
         assert_eq!(
-            extra, bounty,
-            "an undamaged tower kill pays the only enemy its base bounty, without First Blood"
+            death_award(&client, foe, GoldAwardKind::KillBounty),
+            Some(bounty)
         );
-    }
+        death_award(&client, foe, GoldAwardKind::AssistGold).expect("the credited assist award")
+    } else {
+        assert_eq!(death_award(&client, foe, GoldAwardKind::AssistGold), None);
+        0
+    };
+    assert_eq!(
+        extra,
+        bounty + assist,
+        "exactly the bounty and assist reach the wallet"
+    );
     assert_wallet_drawn(&server, &mut client);
     server.frozen(|| {
         client.until(
