@@ -17,7 +17,7 @@ use crate::units::{ModelBank, Unit};
 const SOON: Duration = Duration::from_secs(60);
 
 /// A Radiant seat that lights the Watcher at `at` once the game begins.
-fn radiant_lights(server: &Server, at: Vec2) {
+pub(super) fn radiant_lights(server: &Server, at: Vec2) {
     let mut stage = 0;
     scripted_seat(server, HeroId::PUDGE, move |session| {
         let Some(view) = session.current() else {

@@ -707,6 +707,22 @@ pub fn held_for(unit: &UnitView) -> Option<Team> {
     }
 }
 
+/// The side a unit is marked for under the player's eyes, by whose it is NOW: a side's own unit
+/// is that side's, a neutral objective is the side it is lit for, or else the side whose hero is
+/// working it (`workers`: [`crate::anim::Channels::workers`]), and anything else is nobody's.
+/// Every ring and mark that tells friend from foe takes its side from here, so no kind of
+/// objective is coloured by a rule of its own.
+pub fn standing(unit: &UnitView, workers: &[(EntityId, Team)]) -> Team {
+    held_for(unit)
+        .or_else(|| {
+            workers
+                .iter()
+                .find(|(objective, _)| *objective == unit.id)
+                .map(|(_, side)| *side)
+        })
+        .unwrap_or(Team::Neutral)
+}
+
 /// The side whose look a unit takes on: its own side's, or for a neutral building the one the
 /// map gives it (a Twin Gate, by the gate it is).
 pub fn look(unit: &UnitView) -> Option<Team> {

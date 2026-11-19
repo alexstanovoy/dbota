@@ -116,26 +116,31 @@ impl Pose {
 pub struct Channels(HashMap<EntityId, AbilityId>);
 
 impl Channels {
-    /// The map objectives heroes channel at (an Outpost captured, a Watcher lit): the wire
-    /// tells a cast's caster but not its target, so each hero channelling the ability an
-    /// objective's kind is worked with is taken to be at the nearest objective of that kind
-    /// within the ability's reach, edge to edge.
-    pub fn objectives(&self, view: &WorldView) -> HashSet<EntityId> {
+    /// The map objectives heroes channel at (an Outpost captured, a Watcher lit), each with the
+    /// side of the hero working it: the wire tells a cast's caster but not its target, so each hero
+    /// channelling the ability an objective's kind is worked with is taken to be at the nearest
+    /// objective of that kind within the ability's reach, edge to edge.
+    pub fn workers<'a>(
+        &'a self,
+        view: &'a WorldView,
+    ) -> impl Iterator<Item = (EntityId, Team)> + 'a {
         let place = |u: &UnitView| Vec2::new(u.pos.x.to_f32(), u.pos.y.to_f32());
-        self.0
-            .iter()
-            .filter_map(|(hero, ability)| {
-                let hero = view.unit(*hero)?;
-                let reach = bota_core::ability_def(*ability)?.range as f32;
-                view.units
-                    .iter()
-                    .filter(|u| bota_core::kind_def(u.kind).interact == Some(*ability))
-                    .map(|u| (u, place(u).distance(place(hero))))
-                    .filter(|(u, apart)| *apart <= reach + hero.bound.to_f32() + u.bound.to_f32())
-                    .min_by(|a, b| a.1.total_cmp(&b.1))
-                    .map(|(u, _)| u.id)
-            })
-            .collect()
+        self.0.iter().filter_map(move |(hero, ability)| {
+            let hero = view.unit(*hero)?;
+            let reach = bota_core::ability_def(*ability)?.range as f32;
+            view.units
+                .iter()
+                .filter(|u| bota_core::kind_def(u.kind).interact == Some(*ability))
+                .map(|u| (u, place(u).distance(place(hero))))
+                .filter(|(u, apart)| *apart <= reach + hero.bound.to_f32() + u.bound.to_f32())
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(u, _)| (u.id, hero.team))
+        })
+    }
+
+    /// The map objectives heroes channel at, whichever side works them.
+    pub fn objectives(&self, view: &WorldView) -> HashSet<EntityId> {
+        self.workers(view).map(|(objective, _)| objective).collect()
     }
 }
 

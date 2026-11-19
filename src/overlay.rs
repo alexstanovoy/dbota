@@ -106,6 +106,8 @@ struct Ctx<'a, 'w, 's> {
     ground: &'a Ground,
     index: &'a UnitIndex,
     units: &'a Query<'w, 's, &'static Unit>,
+    /// The map objectives a hero is working now, with the hero's side.
+    workers: &'a [(bota_proto::EntityId, Team)],
 }
 
 impl Ctx<'_, '_, '_> {
@@ -148,6 +150,7 @@ fn draw(
     ground: Res<Ground>,
     index: Res<UnitIndex>,
     units: Query<&'static Unit>,
+    channels: Res<crate::anim::Channels>,
     items: Query<(
         &crate::hud::ItemBox,
         &bevy::picking::hover::DirectlyHovered,
@@ -165,11 +168,13 @@ fn draw(
     let Some(view) = core.view() else {
         return;
     };
+    let workers: Vec<_> = channels.workers(view).collect();
     let ctx = Ctx {
         core,
         ground: &ground,
         index: &index,
         units: &units,
+        workers: &workers,
     };
     let show_all = args.show_ranges || fired.held(Action::ShowRanges);
     picks(&mut gizmos, &ctx);
@@ -297,7 +302,7 @@ fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             ctx,
             (body.at.x, body.at.y),
             crate::pick::ring_radius(unit),
-            team_color(unit.team).with_alpha(alpha),
+            team_color(crate::units::standing(unit, ctx.workers)).with_alpha(alpha),
             false,
         );
     }

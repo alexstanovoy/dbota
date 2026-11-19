@@ -128,6 +128,7 @@ mod watcher_capture;
 mod watcher_channel;
 mod watcher_colours;
 mod watcher_path;
+mod watcher_rings;
 mod watchers;
 mod window;
 mod wisdom_contest;
