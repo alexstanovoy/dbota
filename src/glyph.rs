@@ -11,7 +11,7 @@ use bevy::{
     picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
     ui_widgets::Button,
 };
-use bota_core::rules::Schedule;
+use bota_core::rules::{GLYPH_MAX_CHARGES, GLYPH_RECHARGE_TICKS, Schedule};
 
 use crate::hud::Docks;
 use crate::manifest::Manifest;
@@ -35,7 +35,7 @@ struct GlyphIcon {
 
 /// The dark sweep over the icon while the Glyph waits.
 #[derive(Component)]
-struct GlyphSweep;
+pub(crate) struct GlyphSweep;
 
 /// The badge with the charges held, and the number in it.
 #[derive(Component)]
@@ -186,11 +186,27 @@ fn sweep_left(ready_in: u32, wait: u32) -> f32 {
     (ready_in as f32 / wait.max(1) as f32).clamp(0.0, 1.0)
 }
 
-/// The button, shown to a player while the match runs: its icon, its sweep
-/// and its seconds.
+/// What the button last showed, so that nothing is built for a frame that changes nothing.
+#[derive(Default)]
+pub(crate) struct Shown {
+    /// The icon was the ready one; the seconds under it; the sweep's angle in half degrees and its
+    /// darkness in hundredths; the charges held.
+    waiting: Option<bool>,
+    seconds: Option<u32>,
+    sweep: Option<(u16, u8)>,
+    charges: Option<u8>,
+    /// When the charge now missing began to come back, as this client saw it: the wire tells the
+    /// seven seconds between uses and the charges held, not when the next charge arrives.
+    recharge_from: Option<u32>,
+    last_charges: Option<u8>,
+}
+
+/// The button, shown for the side the HUD is about (one's own, or the one shown to a watcher or
+/// in a replay): its icon, its sweep and its seconds, and the charges it holds.
 #[allow(clippy::type_complexity)]
 fn show(
     session: NonSend<Session>,
+    mut shown: Local<Shown>,
     mut frame: Single<&mut Visibility, (With<GlyphFrame>, Without<GlyphBadge>)>,
     mut icon: Single<(&GlyphIcon, &mut ImageNode), Without<GlyphSweep>>,
     mut sweep: Single<&mut BackgroundGradient, With<GlyphSweep>>,
@@ -200,53 +216,83 @@ fn show(
 ) {
     let core = &session.0;
     let rate = u32::from(core.tick_rate()).max(1);
-    // One's own side's Glyph, whose wait and charges the view tells.
+    // The Glyph of the side the HUD is about, whose wait and charges the view tells.
     let Some((ready_in, charges)) = core
-        .my_slot
-        .and_then(|_| core.glyph())
+        .glyph()
         .and_then(|glyph| glyph.ready_after.zip(glyph.charges))
     else {
         frame.set_if_neq(Visibility::Hidden);
         return;
     };
     frame.set_if_neq(Visibility::Inherited);
+    let clock = core.view().map_or(0, |view| view.game_tick());
     let waiting = ready_in > 0;
-    let (art, art_color) = match (&icon.0.ready, &icon.0.waiting, waiting) {
-        (Some(ready), _, false) => (ready.clone(), Color::WHITE),
-        (_, Some(dim), true) => (dim.clone(), Color::WHITE),
-        _ => (Handle::default(), Color::NONE),
-    };
-    let (_, image) = &mut *icon;
-    if image.image != art {
+    if shown.waiting != Some(waiting) {
+        shown.waiting = Some(waiting);
+        let (art, art_color) = match (&icon.0.ready, &icon.0.waiting, waiting) {
+            (Some(ready), _, false) => (ready.clone(), Color::WHITE),
+            (_, Some(dim), true) => (dim.clone(), Color::WHITE),
+            _ => (Handle::default(), Color::NONE),
+        };
+        let (_, image) = &mut *icon;
         image.image = art;
-    }
-    if image.color != art_color {
         image.color = art_color;
     }
-    // Dark over what is still to wait, clear over what has passed.
-    // Over the whole of the wait it is in (since 7.42: the first charge's from the clock's
-    // start, a later charge's six minutes, or the seven seconds between two uses).
-    let clock = core.view().map_or(0, |view| view.game_tick());
-    let wait = Schedule::of(core.pregame_ticks()).glyph_wait(clock, charges);
-    let left = sweep_left(ready_in, wait);
-    let dark = Color::srgba(0.0, 0.0, 0.0, if waiting { 0.68 } else { 0.0 });
-    let wanted = ui::split_disc((1.0 - left) * TAU, Color::NONE, dark);
-    if **sweep != wanted {
-        **sweep = wanted;
+    // The charge missing comes back over six minutes: counted from when it was seen to go, or from
+    // the first sight of a Glyph that lacks one.
+    let missing = charges < GLYPH_MAX_CHARGES;
+    let went = shown.last_charges.is_some_and(|before| charges != before);
+    if !missing {
+        shown.recharge_from = None;
+    } else if shown.recharge_from.is_none_or(|from| clock < from) || went {
+        shown.recharge_from = Some(clock);
     }
-    let text = if waiting {
-        ready_in.div_ceil(rate).to_string()
+    shown.last_charges = Some(charges);
+    // Dark over what is still to wait, clear over what has passed. While a use is locked out it
+    // runs over the lock's wait (since 7.42: the first charge's from the clock's start, a later
+    // charge's six minutes, or the seven seconds between two uses); with a charge missing and the
+    // Glyph usable, lighter, over the six minutes the charge takes.
+    let (left, alpha) = if waiting {
+        let wait = Schedule::of(core.pregame_ticks()).glyph_wait(clock, charges);
+        (sweep_left(ready_in, wait), 0.68)
+    } else if let Some(from) = shown.recharge_from {
+        let back = (from + GLYPH_RECHARGE_TICKS).saturating_sub(clock);
+        (sweep_left(back, GLYPH_RECHARGE_TICKS), 0.45)
     } else {
-        String::new()
+        (0.0, 0.0)
     };
-    seconds.set_if_neq(Text(text));
-    // None held, no badge (`.NoCharges #GlyphChargeCount`).
-    badge.set_if_neq(if charges > 0 {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    });
-    count.set_if_neq(Text(charges.to_string()));
+    let angle = ((1.0 - left) * 720.0) as u16;
+    let key = (angle, (alpha * 100.0) as u8);
+    if shown.sweep != Some(key) {
+        shown.sweep = Some(key);
+        ui::rebuilt();
+        **sweep = ui::split_disc(
+            f32::from(angle) / 720.0 * TAU,
+            Color::NONE,
+            Color::srgba(0.0, 0.0, 0.0, alpha),
+        );
+    }
+    let secs = if waiting { ready_in.div_ceil(rate) } else { 0 };
+    if shown.seconds != Some(secs) {
+        shown.seconds = Some(secs);
+        ui::rebuilt();
+        seconds.0 = if secs > 0 {
+            secs.to_string()
+        } else {
+            String::new()
+        };
+    }
+    if shown.charges != Some(charges) {
+        shown.charges = Some(charges);
+        ui::rebuilt();
+        // None held, no badge (`.NoCharges #GlyphChargeCount`).
+        badge.set_if_neq(if charges > 0 {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+        count.0 = charges.to_string();
+    }
 }
 
 /// A click on the button activates the Glyph.
@@ -260,9 +306,10 @@ fn click(
     }
 }
 
-/// The hover popup of the button: Dota's title and description, and the wait while it runs.
+/// The hover popup of the button: Dota's title and description, and the wait while it runs. The
+/// words are the install's; without them the popup says what the Glyph is in this client's own.
 pub fn tip(texts: &crate::dota_text::Texts, core: &bota_client_core::App) -> Option<String> {
-    let ready_in = core.my_slot.and_then(|_| core.glyph())?.ready_after?;
+    let ready_in = core.glyph()?.ready_after?;
     let word = |key: &str, own: &str| texts.label(key, &[]).unwrap_or_else(|| own.to_owned());
     let mut lines = format!(
         "{}\n{}",
@@ -272,17 +319,15 @@ pub fn tip(texts: &crate::dota_text::Texts, core: &bota_client_core::App) -> Opt
         ),
         word(
             "DOTA_Glossary_Map_Structures_Glyph_Desc",
-            "A shared Cooldown Ability that any player on the team can activate. This Ability makes all Structures invulnerable, and amplifies the attacking power of allied Towers."
+            "Makes the structures of the team invulnerable for a few seconds; the whole team shares it."
         )
     );
     if ready_in > 0 {
         let rate = u32::from(core.tick_rate().max(1));
-        // The word's template, where the install's text keeps its placeholder.
-        let template = texts
-            .label("DOTA_HUD_GlyphCooldown", &[])
-            .filter(|text| text.contains("{s:cooldown_time}"))
-            .unwrap_or_else(|| "Cooldown: {s:cooldown_time}".to_owned());
-        let wait = template.replace("{s:cooldown_time}", &ready_in.div_ceil(rate).to_string());
+        let secs = ready_in.div_ceil(rate).to_string();
+        let wait = texts
+            .label("DOTA_HUD_GlyphCooldown", &[("cooldown_time", secs.clone())])
+            .unwrap_or_else(|| format!("Cooldown: {secs}"));
         lines.push('\n');
         lines.push_str(&wait);
     }

@@ -120,6 +120,18 @@ fn the_glyph_has_the_games_popup_with_its_wait() {
     client.within(Duration::from_secs(20), "the Glyph's popup", |c| {
         said(c, "Glyph of Fortification")
     });
+    // The popup says the install's words, not the client's own: its description is the install's
+    // line, which the client's fallback is not.
+    let install = client
+        .world()
+        .resource::<crate::dota_text::Texts>()
+        .label("DOTA_Glossary_Map_Structures_Glyph_Desc", &[])
+        .expect("the install's description of the Glyph");
+    assert!(
+        said(&mut client, &install),
+        "the popup carries the install's description: {:?}",
+        super::hero_page::tooltip_words(&mut client)
+    );
     client.frames(10);
     assert!(
         said(&mut client, "Cooldown:"),
@@ -258,4 +270,88 @@ fn a_right_click_on_the_terrain_over_the_plates_clear_part_orders_a_move() {
             "scale {scale}: a right click at {spot} beside the minimap orders no move"
         );
     }
+}
+
+/// A recorded match in which Radiant's Glyph holds its charges.
+fn recorded_glyph() -> super::fog_pov::ReplayFile {
+    let mut game = super::fog_pov::Spectated::start("2");
+    game.cheat(bota_proto::Cheat::Refresh);
+    game.wait("a charge told", |driver, _| {
+        driver
+            .glyph()
+            .and_then(|glyph| glyph.charges)
+            .is_some_and(|n| n > 0)
+    });
+    for _ in 0..10 {
+        game.cheat(bota_proto::Cheat::Wtf { on: false });
+    }
+    game.save()
+}
+
+/// A watcher of everything, and a replay seen from a seat, are told the Glyph of the side shown and
+/// the button shows it, with its charges, as the Scan's does.
+#[test]
+fn a_replay_shows_the_glyph_of_the_side_it_is_seen_from_or_of_both_sides() {
+    let file = recorded_glyph();
+    for pov in [None, Some(0)] {
+        let mut client = super::fog_pov::replay_observed(&file, pov, &[], |_| {});
+        client.frames(10);
+        let held = glyph_charges(&client);
+        assert!(
+            held.is_some_and(|n| n > 0),
+            "{pov:?}: the stream tells charges: {held:?}"
+        );
+        let glyph = named(&mut client, "hud glyph");
+        let world = client.world();
+        assert!(
+            world
+                .get::<InheritedVisibility>(glyph)
+                .is_some_and(|seen| seen.get()),
+            "{pov:?}: the Glyph's button is drawn"
+        );
+        assert_eq!(
+            glyph_badge(&mut client),
+            held.map(|n| n.to_string()),
+            "{pov:?}: its badge tells the charges"
+        );
+    }
+}
+
+/// The darkest the Glyph's sweep is over the button, 0 when it is clear.
+fn glyph_cover(client: &mut Client) -> f32 {
+    let world = client.world_mut();
+    let gradient = world
+        .query_filtered::<&BackgroundGradient, With<crate::glyph::GlyphSweep>>()
+        .single(world)
+        .expect("the sweep");
+    gradient
+        .0
+        .iter()
+        .filter_map(|gradient| match gradient {
+            bevy::ui::Gradient::Conic(conic) => Some(conic),
+            _ => None,
+        })
+        .flat_map(|conic| conic.stops.iter())
+        .map(|stop| stop.color.to_srgba().alpha)
+        .fold(0.0, f32::max)
+}
+
+/// With one of two charges spent, the button is usable once the seven seconds between uses are out
+/// but still shows the cooldown face while the other charge is to come, as the game's does.
+#[test]
+fn the_glyph_shows_the_recharge_of_the_charge_still_to_come() {
+    let (_server, mut client) = scene();
+    client.cheat(bota_proto::Cheat::Refresh);
+    client.until("two charges", |c| glyph_charges(c) == Some(2));
+    press(&mut client, KeyCode::KeyJ);
+    client.until("a charge spent", |c| glyph_charges(c) == Some(1));
+    client.until("the seven seconds out", |c| {
+        c.core().glyph().and_then(|glyph| glyph.ready_after) == Some(0)
+    });
+    client.frames(5);
+    assert_eq!(glyph_charges(&client), Some(1), "one charge is held");
+    assert!(
+        glyph_cover(&mut client) > 0.2,
+        "the cooldown face is drawn while a charge is missing"
+    );
 }

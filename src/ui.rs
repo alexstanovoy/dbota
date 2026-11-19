@@ -444,6 +444,18 @@ pub enum Extent {
 #[derive(Component, Clone, Copy)]
 pub struct Overhangs;
 
+/// What the HUD's systems built anew (a gradient, a string): counted in the tests, which hold that a
+/// frame that changes nothing builds nothing.
+#[cfg(test)]
+pub(crate) static REBUILT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Notes that a system built something anew for the frame.
+#[inline]
+pub(crate) fn rebuilt() {
+    #[cfg(test)]
+    REBUILT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A panel of the in-match interface that stands on its own, not under the HUD's root (the shop's is the
 /// first): the layout tests (`e2e::hud_bounds`) walk it as they walk the HUD, so a
 /// panel that registers itself here is held inside the window, inside its holders and apart from the
