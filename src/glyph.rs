@@ -11,7 +11,7 @@ use bevy::{
     picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
     ui_widgets::Button,
 };
-use bota_core::rules::{GLYPH_MAX_CHARGES, GLYPH_RECHARGE_TICKS, GLYPH_STRUCTURE_TICKS, Schedule};
+use bota_core::rules::{GLYPH_MAX_CHARGES, GLYPH_RECHARGE_TICKS, Schedule};
 use bota_proto::{GlyphView, PlayerId, Team};
 
 use crate::hud::Docks;
@@ -216,14 +216,12 @@ struct GlyphObservation {
     team: Team,
     tick: u32,
     charges: u8,
-    ready_in: u32,
 }
 
 impl Recharge {
-    /// The wire tells when a use is legal. A recharge that began on another side or connection
-    /// stays unknown. An observed spend from full starts a new recharge, while a spend from one
-    /// leaves the existing recharge in place.
-    fn observe(&mut self, now: GlyphObservation, active_for: u32) -> Option<u32> {
+    /// Start a recharge when this client first sees the charge arrive or a full Glyph spent.
+    /// A snapshot may skip over the actual transition, so the sweep starts at the observed tick.
+    fn observe(&mut self, now: GlyphObservation) -> Option<u32> {
         let previous = self.last.replace(now).filter(|last| {
             last.game == now.game
                 && last.connection == now.connection
@@ -231,18 +229,8 @@ impl Recharge {
                 && last.tick <= now.tick
         });
         self.origin = match previous {
-            Some(last) if now.charges == 1 && last.charges == GLYPH_MAX_CHARGES => {
-                let elapsed = GLYPH_STRUCTURE_TICKS.checked_sub(active_for);
-                elapsed
-                    .filter(|_| active_for > 0)
-                    .and_then(|elapsed| now.tick.checked_sub(elapsed))
-                    // An order applied between snapshots can use the earlier snapshot's tick.
-                    .filter(|spent| *spent >= last.tick)
-            }
-            Some(last) if now.charges == 1 && last.charges == 0 => {
-                // While empty, the previous ready time tells exactly when the next charge lands.
-                (last.ready_in > 0 && last.tick.checked_add(last.ready_in) == Some(now.tick))
-                    .then_some(now.tick)
+            Some(last) if now.charges == 1 && matches!(last.charges, 0 | GLYPH_MAX_CHARGES) => {
+                Some(now.tick)
             }
             Some(_) if now.charges < GLYPH_MAX_CHARGES => self.origin,
             _ => None,
@@ -274,7 +262,6 @@ fn show(
             team,
             ready_after: Some(ready_in),
             charges: Some(charges),
-            active_for,
             ..
         }),
     ) = (core.view(), core.glyph())
@@ -289,17 +276,13 @@ fn show(
         shown.recharge = Recharge::default();
         None
     } else {
-        shown.recharge.observe(
-            GlyphObservation {
-                game: game.0,
-                connection: core.lobby.me,
-                team,
-                tick: view.tick,
-                charges,
-                ready_in,
-            },
-            active_for,
-        )
+        shown.recharge.observe(GlyphObservation {
+            game: game.0,
+            connection: core.lobby.me,
+            team,
+            tick: view.tick,
+            charges,
+        })
     };
     let waiting = ready_in > 0;
     if shown.waiting != Some(waiting) {
@@ -401,8 +384,40 @@ pub fn tip(texts: &crate::dota_text::Texts, core: &bota_client_core::App) -> Opt
 
 #[cfg(test)]
 mod tests {
-    use super::sweep_left;
+    use super::{GlyphObservation, Recharge, Team, sweep_left};
     use bota_core::rules::{self, Schedule};
+
+    fn observation(tick: u32, charges: u8) -> GlyphObservation {
+        GlyphObservation {
+            game: 1,
+            connection: None,
+            team: Team::Radiant,
+            tick,
+            charges,
+        }
+    }
+
+    #[test]
+    fn a_charge_arrival_across_skipped_ticks_starts_the_sweep_at_the_observed_tick() {
+        let mut recharge = Recharge::default();
+        assert_eq!(recharge.observe(observation(10, 0)), None);
+        assert_eq!(recharge.observe(observation(15, 1)), Some(15));
+        assert_eq!(recharge.observe(observation(16, 1)), Some(15));
+    }
+
+    #[test]
+    fn seeing_an_empty_glyph_gain_a_charge_starts_the_sweep() {
+        let mut recharge = Recharge::default();
+        assert_eq!(recharge.observe(observation(10, 0)), None);
+        assert_eq!(recharge.observe(observation(11, 1)), Some(11));
+    }
+
+    #[test]
+    fn a_glyph_spent_between_observations_starts_the_sweep_at_the_observed_tick() {
+        let mut recharge = Recharge::default();
+        assert_eq!(recharge.observe(observation(10, 2)), None);
+        assert_eq!(recharge.observe(observation(15, 1)), Some(15));
+    }
 
     /// Before the first charge the sweep runs over the first wait (270 s from the pregame's
     /// start on Dota's pregame), not a later charge's 360 s: full at the clock's start, half
