@@ -159,6 +159,59 @@ fn right_click_allies_follows_attacks_or_denies_as_set() {
     }
 }
 
+/// Dota 7.42, Observer and Sentry Wards: "Still can be hit by allies while at full health".
+#[test]
+fn right_click_attack_and_deny_send_attacks_at_full_health_allied_wards() {
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::ItemId;
+
+    for (mode, item) in [
+        ("attack", ItemId::OBSERVER_WARD),
+        ("deny", ItemId::SENTRY_WARD),
+    ] {
+        let server = Server::start(1, &[]);
+        let set = format!("right_click_allies={mode}");
+        let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--set", &set]);
+        client.stand_at(MID);
+        client.cheat(Cheat::Item { item });
+        client.until("the ward in the bag", |c| c.slot_of(item).is_some());
+        let slot = client.slot_of(item).expect("in the bag");
+        client.core_mut().act(Intent::Press {
+            slot: Slot::Item(slot),
+            ctrl: false,
+        });
+        client.core_mut().act(Intent::Aimed {
+            at: (MID.0 as f32 + 150.0, MID.1 as f32 + 150.0),
+            unit: None,
+        });
+        let ward = |client: &Client| {
+            client
+                .view()
+                .units
+                .iter()
+                .find(|unit| unit.kind == UnitKind::Ward && unit.team == client.me().team)
+                .map(|unit| unit.id)
+        };
+        client.until("the planted ward", |c| {
+            ward(c).is_some_and(|id| c.body(id).is_some())
+        });
+        let ward = ward(&client).expect("planted");
+        let unit = client.view().unit(ward).expect("shown");
+        assert_eq!((unit.hp, unit.max_hp), (8, 8));
+        assert_eq!(right_click(&mut client, ward).map(|(id, _)| id), Some(ward));
+        assert_eq!(
+            last_order(&client),
+            Some(Order::Attack {
+                target: Target::Unit(ward)
+            }),
+            "{mode}"
+        );
+        client.until("a pip removed from the allied ward", |c| {
+            c.view().unit(ward).is_some_and(|unit| unit.hp == 4)
+        });
+    }
+}
+
 /// Dota's default: with no setting touched, a right click on an own creep below half its
 /// health attacks it, the hero kills it and the game counts a deny; above half the click only
 /// follows.

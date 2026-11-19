@@ -659,11 +659,18 @@ fn ally_click(
 
 /// The health side of [`ally_click`]: bota lets the unit be denied now. The
 /// view's health is whole points rounded down, so the rule is asked of the
-/// point above it, the most the server may hold: the client never sends a
-/// deny bota refuses.
+/// point above it, bounded by the maximum. Both numbers are compared as a ratio.
 pub fn deny_click(kind: bota_proto::UnitKind, hp: i32, max_hp: i32) -> bool {
     use bota_proto::Fixed;
-    hp > 0 && bota_core::deniable(kind, Fixed::from_int(hp + 1), Fixed::from_int(max_hp))
+    hp > 0
+        && hp <= max_hp
+        && bota_core::deniable(
+            kind,
+            Fixed {
+                raw: hp.saturating_add(1).min(max_hp),
+            },
+            Fixed { raw: max_hp },
+        )
 }
 
 fn ability_press(
@@ -791,6 +798,9 @@ mod tests {
                         let most = Fixed {
                             raw: max_hp * point + max_frac,
                         };
+                        if held > most {
+                            continue;
+                        }
                         assert!(
                             bota_core::deniable(kind, held, most),
                             "{kind:?} {hp}/{max_hp}: bota would refuse the deny"

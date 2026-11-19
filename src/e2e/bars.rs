@@ -193,6 +193,7 @@ fn a_creeps_attack_on_a_courier_leaves_its_second_block_partly_full() {
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     // The hero stays at its fountain: the creeps have only the courier to attack.
+    client.cheat(Cheat::CreepSpawning { on: false });
     client.until("a courier", |c| c.core().my_courier().is_some());
     let courier = client.core().my_courier().expect("a courier");
     client.core_mut().send_order_to(
@@ -211,6 +212,24 @@ fn a_creeps_attack_on_a_courier_leaves_its_second_block_partly_full() {
             dx * dx + dy * dy < 400.0 * 400.0
         })
     });
+    let blows = std::rc::Rc::new(std::cell::Cell::new(0));
+    let received = blows.clone();
+    client.hold_incoming_after(move |message| {
+        let bota_proto::ServerMsg::Events { events, .. } = message else {
+            return false;
+        };
+        let mut landed = 0;
+        for event in events {
+            if let bota_proto::EventKind::Damaged { target, amount, .. } = event
+                && *target == courier
+            {
+                assert_eq!(*amount, 1, "each creep attack removes exactly one quarter");
+                landed += 1;
+            }
+        }
+        received.set(landed);
+        landed != 0
+    });
     client.cheat(Cheat::CreateCreeps {
         enemy: true,
         at: At::from_ints(MID.0 + 300, MID.1),
@@ -228,11 +247,17 @@ fn a_creeps_attack_on_a_courier_leaves_its_second_block_partly_full() {
         .and_then(|u| u.hit_health)
         .expect("exact health")
         .to_f32();
-    assert!(health > 4.0, "a creep, not a hero, bit it: {health}");
+    assert!(
+        (1..4).contains(&blows.get()),
+        "first volley: {} attacks",
+        blows.get()
+    );
+    let remaining = 8 - blows.get();
+    assert_eq!(health, remaining as f32);
     let widths = block_widths(&client, courier);
     assert_eq!(widths.len(), 2, "two blocks");
     let (full, bitten) = (widths[0], widths[1]);
-    let share = (health - 4.0) / 4.0;
+    let share = (remaining - 4) as f32 / 4.0;
     assert!(
         full > 0.0 && (bitten - full * share).abs() < 0.5,
         "{widths:?} at {health}"

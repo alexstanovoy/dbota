@@ -124,7 +124,12 @@ pub fn tick_marks(max_hp: i32, w: f32) -> Vec<(f32, bool)> {
 /// maximum. The health one block stands for and how many blocks there are;
 /// None for health that damage takes.
 pub fn hit_blocks(kind: UnitKind, max_hp: i32) -> Option<(f32, usize)> {
-    let block = bota_core::kind_def(kind).health_per_ranged_hit?;
+    use bota_proto::Fixed;
+    let max = Fixed::from_int(max_hp.clamp(1, Fixed::MAX.to_int()));
+    let block = bota_core::kind_def(kind)
+        .hit_count?
+        .taken(bota_core::Striker::RangedHero, max)
+        .to_int();
     let blocks = (max_hp.max(1) / block.max(1)).max(1) as usize;
     let blocks = blocks.min(MAX_SEGMENTS);
     Some((max_hp.max(1) as f32 / blocks as f32, blocks))
