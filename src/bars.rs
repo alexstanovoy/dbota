@@ -1,15 +1,15 @@
 //! Health bars over units, Dota's way: screen-space bars that keep their
 //! size, the health just lost trailing off, a small mark every 250 health
 //! and a big one every 1000 (`dota_health_per_vertical_marker`), level and
-//! name; health counted in hits (a courier's, a ward's) as one block a
-//! ranged hero's hit, the one being bitten partly filled.
+//! name; health counted in hits as pips, paired for Fragile units when
+//! viewed by a melee hero.
 //! Also the numbers and words that rise off units.
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bota_client_core::{Floater, FloaterKind};
-use bota_proto::{Team, UnitKind, UnitView};
+use bota_proto::{Team, UnitKind, UnitView, WorldView};
 
 use crate::config::Settings;
 use crate::map::Ground;
@@ -54,8 +54,9 @@ pub struct Bar {
     /// out for.
     ticks: Vec<Entity>,
     laid_for: (i32, u32),
-    /// One block a hit, for health counted in hits; empty otherwise.
+    /// The drawn groups of pips, and the layout they were spawned for.
     segments: Vec<Entity>,
+    hit_blocks: Option<HitBlocks>,
     mana: Option<Entity>,
     level: Option<Entity>,
     name: Option<crate::player_name::Label>,
@@ -119,27 +120,58 @@ pub fn tick_marks(max_hp: i32, w: f32) -> Vec<(f32, bool)> {
         .collect()
 }
 
-/// A unit's health counted in hits, as Dota draws it: one block a ranged
-/// hero's hit (a courier's two, a ward's two), each an equal share of its
-/// maximum. The health one block stands for and how many blocks there are;
-/// None for health that damage takes.
-pub fn hit_blocks(kind: UnitKind, max_hp: i32) -> Option<(f32, usize)> {
-    use bota_proto::Fixed;
-    let max = Fixed::from_int(max_hp.clamp(1, Fixed::MAX.to_int()));
-    let block = bota_core::kind_def(kind)
-        .hit_count?
-        .taken(bota_core::Striker::RangedHero, max)
-        .to_int();
-    let blocks = (max_hp.max(1) / block.max(1)).max(1) as usize;
-    let blocks = blocks.min(MAX_SEGMENTS);
-    Some((max_hp.max(1) as f32 / blocks as f32, blocks))
+pub(crate) fn melee_viewer(core: &bota_client_core::App, view: &WorldView) -> bool {
+    core.my_slot
+        .and_then(|slot| view.player(slot))
+        .and_then(|player| bota_core::hero_def(player.hero))
+        .is_some_and(|hero| hero.unit.projectile_speed.is_none())
 }
 
-/// How much of block `at` stands with `health` left: whole below the
-/// health, the one being bitten by its share, none past it (a creep's
-/// attack takes a third of a courier's block, a fifth of a ward's).
-pub fn block_fill(health: f32, block: f32, at: usize) -> f32 {
-    ((health - block * at as f32) / block.max(f32::EPSILON)).clamp(0.0, 1.0)
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HitBlocks {
+    pips: usize,
+    pips_per_hit: usize,
+}
+
+/// A pip is a ranged hero's hit. A melee hero sees Fragile pips in pairs.
+pub(crate) fn hit_blocks(live: &UnitView, melee: bool) -> Option<HitBlocks> {
+    use bota_proto::Fixed;
+    let count = bota_core::kind_def(live.kind).hit_count?;
+    let max = Fixed::from_int(live.max_hp.clamp(1, Fixed::MAX.to_int()));
+    let pip = count.taken(bota_core::Striker::RangedHero, max).to_int();
+    let pips = (live.max_hp.max(1) / pip.max(1)).max(1) as usize;
+    let paired = melee
+        && live.hit_health.is_some()
+        && matches!(count, bota_core::HitCount::Pips { fragile: true });
+    Some(HitBlocks {
+        pips: pips.min(MAX_SEGMENTS),
+        pips_per_hit: if paired { 2 } else { 1 },
+    })
+}
+
+pub(crate) struct HitBlock {
+    pub left: f32,
+    pub width: f32,
+    pub fill: f32,
+    pub paired: bool,
+}
+
+impl HitBlocks {
+    pub(crate) fn layout(self, live: &UnitView, width: f32) -> impl Iterator<Item = HitBlock> {
+        let pip_width = block_width(width, self.pips);
+        let pip_health = live.max_hp.max(1) as f32 / self.pips as f32;
+        let health = exact_health(live);
+        (0..self.pips).step_by(self.pips_per_hit).map(move |first| {
+            let pips = (self.pips - first).min(self.pips_per_hit);
+            HitBlock {
+                left: first as f32 * (pip_width + SEGMENT_GAP),
+                width: pips as f32 * (pip_width + SEGMENT_GAP) - SEGMENT_GAP,
+                fill: ((health - first as f32 * pip_health) / (pips as f32 * pip_health))
+                    .clamp(0.0, 1.0),
+                paired: pips == 2,
+            }
+        })
+    }
 }
 
 /// A unit's health exactly where it is counted in hits, whole otherwise.
@@ -150,7 +182,7 @@ pub fn exact_health(live: &UnitView) -> f32 {
 }
 
 /// The width of one whole block of a bar `w` wide with `blocks` of them.
-pub fn block_width(w: f32, blocks: usize) -> f32 {
+fn block_width(w: f32, blocks: usize) -> f32 {
     let gaps = SEGMENT_GAP * (blocks as f32 - 1.0);
     ((w - gaps) / blocks as f32).max(1.0)
 }
@@ -364,7 +396,6 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitV
     };
     let ghost = part(commands, Color::srgba(1.0, 0.9, 0.7, 0.85));
     let fill = part(commands, ui::HP_FOE);
-    let segments = spawn_segments(commands, root, live, (w, h));
     let hero = kind == UnitKind::Hero;
     let mana = hero.then(|| {
         let well = commands
@@ -454,7 +485,8 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitV
         fill,
         ticks: Vec::new(),
         laid_for: (0, 0),
-        segments,
+        segments: Vec::new(),
+        hit_blocks: None,
         mana,
         level,
         name,
@@ -463,30 +495,51 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitV
     }
 }
 
-/// One block a hit for health counted in hits, `SEGMENT_GAP` apart; none
-/// for health that damage takes.
-fn spawn_segments(
+fn lay_segments(
     commands: &mut Commands,
-    root: Entity,
+    bar: &mut Bar,
     live: &UnitView,
     (w, h): (f32, f32),
-) -> Vec<Entity> {
-    let Some((_, blocks)) = hit_blocks(live.kind, live.max_hp) else {
-        return Vec::new();
+    layout: Option<HitBlocks>,
+    color: Color,
+) {
+    if bar.hit_blocks == layout {
+        return;
+    }
+    bar.hit_blocks = layout;
+    for old in bar.segments.drain(..) {
+        commands.entity(old).despawn();
+    }
+    let Some(layout) = layout else {
+        return;
     };
-    let each = block_width(w, blocks);
-    (0..blocks)
-        .map(|at| {
-            let left = at as f32 * (each + SEGMENT_GAP);
-            commands
-                .spawn((
-                    ui::absolute(left, 0.0, each, h),
-                    BackgroundColor(ui::HP_FOE),
-                    ChildOf(root),
-                ))
-                .id()
-        })
-        .collect()
+    for block in layout.layout(live, w) {
+        let mut node = ui::absolute(block.left, 0.0, block.width * block.fill, h);
+        node.overflow = Overflow::clip();
+        let fill = commands
+            .spawn((
+                node,
+                BackgroundColor(color),
+                ui::visible(block.fill > 0.0),
+                ChildOf(bar.root),
+            ))
+            .id();
+        bar.segments.push(fill);
+        if block.paired {
+            // Keep the shaded pair in place as health recedes across it.
+            let edge = Color::srgba(0.0, 0.0, 0.0, 0.8);
+            let center = Color::srgba(0.0, 0.0, 0.0, 0.48);
+            commands.spawn((
+                ui::absolute(0.0, 0.0, block.width, h),
+                BackgroundGradient::from(LinearGradient::to_right(vec![
+                    edge.into(),
+                    center.into(),
+                    edge.into(),
+                ])),
+                ChildOf(fill),
+            ));
+        }
+    }
 }
 
 /// Lays the marks of a bar `w` wide out for its unit's maximum, spawning
@@ -550,6 +603,7 @@ fn bars(
     let (Some(view), Some(layer)) = (core.view(), &p.layer) else {
         return;
     };
+    let melee = melee_viewer(core, view);
     let layer = layer.0;
     let (camera_entity, camera) = *p.camera;
     let Ok(cam_gt) = p.transforms.compute_global_transform(camera_entity) else {
@@ -609,6 +663,15 @@ fn bars(
             );
             continue;
         }
+        let color = bar_color(core, live);
+        lay_segments(
+            &mut p.commands,
+            bar,
+            live,
+            (w, h),
+            hit_blocks(live, melee),
+            color,
+        );
         lay_ticks(&mut p.commands, bar, live.max_hp, (w, h));
         fill_bar(
             core,
@@ -617,6 +680,7 @@ fn bars(
             bar,
             corner,
             w,
+            color,
             &mut nodes,
             &mut texts,
             &mut versions,
@@ -636,11 +700,12 @@ fn bars(
 /// it from its unit, `w` wide.
 fn fill_bar(
     core: &bota_client_core::App,
-    view: &bota_proto::WorldView,
+    view: &WorldView,
     live: &UnitView,
     bar: &Bar,
     corner: Vec2,
     w: f32,
+    color: Color,
     nodes: &mut Query<(&mut Node, &mut Visibility, Option<&mut BackgroundColor>)>,
     texts: &mut Query<&mut Text>,
     versions: &mut Query<&mut crate::player_name::VersionRun>,
@@ -654,7 +719,6 @@ fn fill_bar(
     let max = live.max_hp.max(1) as f32;
     let share = live.hp.max(0) as f32 / max;
     let ghost = core.derived.ghost(live.id, live.hp) / max;
-    let color = bar_color(core, live);
     let blocks = !bar.segments.is_empty();
     set(
         nodes,
@@ -670,15 +734,13 @@ fn fill_bar(
         Some(!blocks),
         None,
     );
-    if let Some((block, blocks)) = hit_blocks(live.kind, live.max_hp) {
-        let (health, each) = (exact_health(live), block_width(w, blocks));
-        for (at, segment) in bar.segments.iter().enumerate() {
-            let fill = block_fill(health, block, at);
+    if let Some(layout) = bar.hit_blocks {
+        for (segment, block) in bar.segments.iter().zip(layout.layout(live, w)) {
             set(
                 nodes,
                 *segment,
-                |n| n.width = px(each * fill),
-                Some(fill > 0.0),
+                |n| n.width = px(block.width * block.fill),
+                Some(block.fill > 0.0),
                 Some(color),
             );
         }

@@ -678,13 +678,15 @@ fn bar_ticks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     );
 }
 
-/// Every shown bar of health counted in hits is one block a ranged hero's
-/// hit, the blocks apart, whole while their health is left and the one
-/// being bitten filled by its share.
+/// Every hit-count bar groups its pips by what the viewing hero can take per hit.
 fn bar_blocks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let mut told = Vec::new();
+    let core = &c.session.0;
+    let melee = core
+        .view()
+        .is_some_and(|view| crate::bars::melee_viewer(core, view));
     for (e, w, live) in shown_bars(c) {
-        let Some((block, blocks)) = crate::bars::hit_blocks(live.kind, live.max_hp) else {
+        let Some(layout) = crate::bars::hit_blocks(live, melee) else {
             continue;
         };
         let parts: Vec<(&Node, &Visibility)> = c
@@ -693,30 +695,28 @@ fn bar_blocks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
             .iter()
             .filter_map(|s| c.laid.get(*s).ok())
             .collect();
-        let health = crate::bars::exact_health(live);
-        let each = crate::bars::block_width(w, blocks);
-        let filled = parts.iter().enumerate().all(|(at, (n, v))| {
-            let fill = crate::bars::block_fill(health, block, at);
-            let width = match n.width {
-                Val::Px(width) => width,
-                _ => -1.0,
-            };
-            (**v != Visibility::Hidden) == (fill > 0.0)
-                && (fill == 0.0 || (width - each * fill).abs() < 0.5)
-        });
-        let edges: Vec<(f32, f32)> = parts
-            .iter()
-            .filter_map(|(n, _)| match n.left {
-                Val::Px(l) => Some((l, l + each)),
-                _ => None,
-            })
-            .collect();
-        let apart = edges.windows(2).all(|p| p[1].0 - p[0].1 >= 1.0);
-        let right = parts.len() == blocks && filled && apart;
-        told.push((live.kind, health, blocks, right));
+        let expected: Vec<_> = layout.layout(live, w).collect();
+        let right = parts.len() == expected.len()
+            && parts
+                .iter()
+                .zip(expected)
+                .all(|((node, visibility), block)| {
+                    let (Val::Px(left), Val::Px(width)) = (node.left, node.width) else {
+                        return false;
+                    };
+                    (**visibility != Visibility::Hidden) == (block.fill > 0.0)
+                        && (left - block.left).abs() < 0.5
+                        && (width - block.width * block.fill).abs() < 0.5
+                });
+        told.push((
+            live.kind,
+            crate::bars::exact_health(live),
+            parts.len(),
+            right,
+        ));
     }
     report(
-        "health counted in hits as one block a ranged hero's hit",
+        "hit-count health grouped into the viewing hero's hits",
         !told.is_empty() && told.iter().all(|(.., right)| *right),
         format!("bars (kind, health, blocks, right): {told:?}"),
     );

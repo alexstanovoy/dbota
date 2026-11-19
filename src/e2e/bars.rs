@@ -2,9 +2,11 @@
 //! sizes, and a ward's and a courier's health counted in hits.
 
 use bevy::prelude::*;
-use bota_proto::{Cheat, EntityId, HeroId, Team, UnitKind, Vec2 as At};
+use bota_proto::{
+    Cheat, EntityId, EventKind, Fixed, HeroId, Order, ServerMsg, Target, Team, UnitKind, Vec2 as At,
+};
 
-use super::harness::{Client, MID, Server, quiet_seat};
+use super::harness::{Client, MID, Server, quiet_seat, scripted_seat};
 
 /// The bar drawn over a unit: its node's size in interface pixels and its health's colour.
 fn bar(client: &Client, id: EntityId) -> Option<(f32, f32, Srgba)> {
@@ -116,13 +118,154 @@ fn blocks(client: &Client, id: EntityId) -> Option<(usize, usize)> {
     Some((segments.len(), standing))
 }
 
-/// A courier's and a planted ward's health is counted in hits (reported: hit-count
-/// bars and ward bars): their bars are two blocks, one a ranged hero's hit, both standing
-/// while the health is whole, at Dota's sizes (a courier's 50 by 6, a ward's 40 by 5).
 #[test]
-fn a_courier_and_a_ward_show_their_health_in_hits() {
+fn pudge_sees_fragile_pips_and_takes_both_with_one_attack() {
+    let server = Server::start(2, &[]);
+    let (mut client, courier) = enemy_courier_at_mid(&server, HeroId::PUDGE);
+    assert!(
+        fragile_mark_is_drawn(&client, courier),
+        "Pudge sees the Fragile mark"
+    );
+    assert_eq!(
+        blocks(&client, courier),
+        Some((1, 1)),
+        "two pips are joined"
+    );
+    attack_courier_once(&mut client, courier, 8);
+    assert!(
+        client.view().unit(courier).is_none(),
+        "one swing kills the courier"
+    );
+}
+
+#[test]
+fn shadow_fiend_sees_plain_pips_and_takes_one_with_one_attack() {
+    let server = Server::start(2, &[]);
+    let (mut client, courier) = enemy_courier_at_mid(&server, HeroId::SHADOW_FIEND);
+    assert!(
+        !fragile_mark_is_drawn(&client, courier),
+        "Shadow Fiend sees plain pips"
+    );
+    assert_eq!(blocks(&client, courier), Some((2, 2)), "two separate pips");
+    attack_courier_once(&mut client, courier, 4);
+    assert_eq!(
+        client.view().unit(courier).and_then(|unit| unit.hit_health),
+        Some(Fixed::from_int(4)),
+        "one full pip remains after the first attack"
+    );
+    assert_eq!(
+        blocks(&client, courier),
+        Some((2, 1)),
+        "one pip is still drawn"
+    );
+}
+
+fn enemy_courier_at_mid(server: &Server, hero: HeroId) -> (Client, EntityId) {
+    let spot = At::from_ints(MID.0 + 650, MID.1 - 150);
+    let mut sent = false;
+    scripted_seat(server, HeroId::SHADOW_FIEND, move |session| {
+        let Some(courier) = session.own_courier().filter(|_| !sent) else {
+            return Vec::new();
+        };
+        sent = true;
+        vec![bota_client_core::IssuedOrder::courier(
+            courier.id,
+            Order::Cheat {
+                cheat: Cheat::Teleport { at: spot },
+            },
+        )]
+    });
+    let mut client = Client::join(server, hero, &[]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.stand_at(MID);
+    let arrived = |client: &Client| {
+        let courier = client.view().units.iter().find(|unit| {
+            unit.kind == UnitKind::Courier
+                && unit.team != client.me().team
+                && unit.hit_health == Some(Fixed::from_int(8))
+                && (unit.pos.x - spot.x).abs() < Fixed::from_int(20)
+                && (unit.pos.y - spot.y).abs() < Fixed::from_int(20)
+        })?;
+        (bar(client, courier.id).is_some()
+            && blocks(client, courier.id).is_some_and(|(_, standing)| standing > 0))
+        .then_some(courier.id)
+    };
+    client.until("the enemy courier at mid with full health drawn", |c| {
+        arrived(c).is_some()
+    });
+    let courier = arrived(&client).expect("the enemy courier's two-pip bar");
+    (client, courier)
+}
+
+fn attack_courier_once(client: &mut Client, courier: EntityId, quarters: i32) {
+    let hero = client.me().id;
+    let landed = std::rc::Rc::new(std::cell::Cell::new(None));
+    let received = landed.clone();
+    client.hold_incoming_after(move |message| {
+        let ServerMsg::Events { events, .. } = message else {
+            return false;
+        };
+        let hit = events.iter().find_map(|event| match event {
+            EventKind::Damaged {
+                source: Some(source),
+                target,
+                amount,
+                inflictor: None,
+                ..
+            } if *source == hero && *target == courier => Some(*amount),
+            _ => None,
+        });
+        received.set(hit);
+        hit.is_some()
+    });
+    client.core_mut().send_order_to(
+        None,
+        Order::Attack {
+            target: Target::Unit(courier),
+        },
+    );
+    client.until("the hero's first attack landed on the courier", |_| {
+        landed.get().is_some()
+    });
+    assert_eq!(
+        landed.get(),
+        Some(quarters),
+        "quarters lost on the first attack"
+    );
+    client.frames(2);
+}
+
+fn fragile_mark_is_drawn(client: &Client, id: EntityId) -> bool {
+    let bars = client.world().resource::<crate::bars::Bars>();
+    let Some(body) = client.body(id) else {
+        return false;
+    };
+    bars.segments(body).iter().any(|segment| {
+        client
+            .world()
+            .get::<Children>(*segment)
+            .is_some_and(|children| {
+                children.iter().any(|mark| {
+                    client.world().get::<BackgroundGradient>(mark).is_some()
+                        && client
+                            .world()
+                            .get::<InheritedVisibility>(mark)
+                            .is_some_and(|shown| shown.get())
+                        && client
+                            .world()
+                            .get::<ComputedNode>(mark)
+                            .is_some_and(|node| node.size().min_element() > 0.0)
+                })
+            })
+    })
+}
+
+/// A melee hero sees a pair on a courier and two plain pips on a ward.
+/// Their bars keep Dota's sizes (a courier's 50 by 6, a ward's 40 by 5).
+#[test]
+fn a_melee_hero_sees_plain_ward_pips_and_paired_courier_pips() {
     let server = Server::start(1, &[]);
-    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    let mut client = Client::join(&server, HeroId::PUDGE, &[]);
     client.stand_at(MID);
     client.cheat(Cheat::Item {
         item: bota_proto::ItemId::OBSERVER_WARD,
@@ -158,13 +301,21 @@ fn a_courier_and_a_ward_show_their_health_in_hits() {
     let (w, h, _) = bar(&client, ward).expect("barred");
     assert_eq!((w, h), (40.0 * crate::ui::DOTA, 5.0 * crate::ui::DOTA));
     assert_eq!(blocks(&client, ward), Some((2, 2)), "a ward's blocks");
+    assert!(
+        !fragile_mark_is_drawn(&client, ward),
+        "a ward has plain pips"
+    );
     // The courier waits at the fountain, where the camera goes back to.
     let courier = client.core().my_courier().expect("a courier");
     client.core_mut().pinned = Some(bota_client_core::Pin::Unit(courier));
     client.until("the courier barred", |c| bar(c, courier).is_some());
     let (w, h, _) = bar(&client, courier).expect("barred");
     assert_eq!((w, h), (50.0 * crate::ui::DOTA, 6.0 * crate::ui::DOTA));
-    assert_eq!(blocks(&client, courier), Some((2, 2)), "a courier's blocks");
+    assert_eq!(
+        blocks(&client, courier),
+        Some((1, 1)),
+        "a courier's paired block"
+    );
 }
 
 /// The width each block of a unit's bar is drawn, nought for one hidden.
