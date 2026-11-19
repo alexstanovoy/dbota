@@ -267,3 +267,50 @@ fn the_level_badge_is_a_copper_rim_a_gold_progress_ring_a_black_disc_and_a_gold_
         "a ring of progress between the rim and the disc: {outer:?} {inner:?}"
     );
 }
+
+/// The level badge on a top-bar portrait lets the pointer through to the portrait: over the badge
+/// the portrait is the node directly hovered, so a click selects its hero and an item dropped
+/// there is handed over.
+#[test]
+fn the_pointer_over_a_top_bar_level_badge_is_over_the_portrait() {
+    use bevy::picking::hover::DirectlyHovered;
+    let (_server, mut client) = hud_of(HeroId::SHADOW_FIEND);
+    let mut checked = 0;
+    for team in ["Radiant", "Dire"] {
+        for n in 0..5 {
+            let badge = format!("hud seat level {team} {n}");
+            let world = client.world_mut();
+            let found = world
+                .query::<(Entity, &Name)>()
+                .iter(world)
+                .find(|(_, name)| name.as_str() == badge)
+                .map(|(entity, _)| entity);
+            let Some(ring) = found else { continue };
+            let laid = world
+                .get::<ComputedNode>(ring)
+                .is_some_and(|node| node.size().min_element() > 0.0);
+            if !laid {
+                continue;
+            }
+            let at = client.centre_of(ring).expect("placed");
+            client.mouse(at);
+            let world = client.world_mut();
+            let hovered: Vec<bool> = world
+                .query::<(&crate::hud::SeatBox, &DirectlyHovered)>()
+                .iter(world)
+                .filter(|(_, hovered)| hovered.get())
+                .map(|_| true)
+                .collect();
+            assert_eq!(
+                hovered.len(),
+                1,
+                "{team} {n}: the pointer over the level badge at {at} is directly over one portrait"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 2,
+        "the badges of both seats were tried: {checked}"
+    );
+}

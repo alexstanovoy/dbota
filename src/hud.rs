@@ -1722,6 +1722,7 @@ fn spawn_seat_level(kit: &mut Spawner, card: Entity, seat: Place) {
                 ..default()
             },
             BackgroundColor(Color::BLACK),
+            Pickable::IGNORE,
             ChildOf(ring),
         ))
         .id();
@@ -1729,6 +1730,7 @@ fn spawn_seat_level(kit: &mut Spawner, card: Entity, seat: Place) {
         Readout::SeatLevel(seat),
         ui::text("", &kit.fonts.bold, SEAT_BADGE * 0.55, LEVEL_GOLD),
         ui::shadow(),
+        Pickable::IGNORE,
         ChildOf(disc),
     ));
 }
