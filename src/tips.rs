@@ -566,7 +566,9 @@ fn item_tip(
             None => line,
         });
     }
-    if slot >= bota_client_core::INVENTORY_SLOTS && slot != bota_client_core::TOWN_PORTAL_SLOT {
+    if bota_core::item_def(i.id)
+        .is_some_and(|def| !bota_core::can_use_item_slot(usize::from(slot), def))
+    {
         content
             .hints
             .push("Drag it into the inventory to use it.".to_string());

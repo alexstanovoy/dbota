@@ -54,6 +54,45 @@ fn a_backpack_items_icon_is_greyed_against_the_inventorys() {
     );
 }
 
+#[test]
+fn a_backpacked_banner_draws_as_usable_and_can_be_planted() {
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::UnitKind;
+
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
+    client.stand_at(super::harness::MID);
+    let item = ItemId::ROSHANS_BANNER;
+    client.cheat(Cheat::Item { item });
+    let from = client.slot_of(item).expect("the Banner in the bag");
+    let slot = bota_client_core::INVENTORY_SLOTS;
+    client.core_mut().act(Intent::Swap { from, to: slot });
+    client.until("the Banner in the backpack", |c| {
+        c.slot_of(item) == Some(slot)
+    });
+    client.frames(5);
+    assert_eq!(icon_tint(&mut client, slot), Some(Color::WHITE));
+
+    let here = client.me().pos;
+    let target = client
+        .screen_of((here.x.to_f32() + 180., here.y.to_f32()))
+        .expect("ground in view");
+    let box_node = client.item_box(slot).expect("the Banner's backpack box");
+    client.hover_ui(box_node, std::time::Duration::from_secs(10));
+    client.click(MouseButton::Left);
+    assert_eq!(client.core().aiming, Some(Slot::Item(slot)));
+    client.mouse(target);
+    client.click(MouseButton::Left);
+    client.until("the server accepted and planted the Banner", |c| {
+        c.slot_of(item).is_none()
+            && c.view()
+                .units
+                .iter()
+                .any(|unit| unit.kind == UnitKind::Banner)
+    });
+}
+
 /// The edge colour of an item slot's box.
 fn edge(client: &mut Client, slot: u8) -> Color {
     let item_box = client.item_box(slot).expect("the slot box");

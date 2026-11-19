@@ -2549,6 +2549,10 @@ fn item_face(
     }?;
     let mana = unit.map_or(0, |u| u.mana);
     let look = item_look(Some(&item), slot, mana);
+    let slot_number = usize::from(slot);
+    let inactive_backpack = bota_core::in_backpack(slot_number)
+        && bota_core::item_def(item.id)
+            .is_none_or(|def| !bota_core::can_use_item_slot(slot_number, def));
     let held = core.held_item == Some(slot);
     let rate = u32::from(core.tick_rate().max(1));
     Some(SlotFace {
@@ -2612,7 +2616,7 @@ fn item_face(
         lock: (item.locked == Some(true))
             .then(|| manifest.file("hud.item_combine_lock"))
             .flatten(),
-        kind: if (INVENTORY_SLOTS..BAG_SLOTS).contains(&slot) || item.mute_left > 0 {
+        kind: if inactive_backpack || item.mute_left > 0 {
             FaceKind::InactiveItem
         } else {
             FaceKind::Item
