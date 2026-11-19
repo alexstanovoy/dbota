@@ -261,6 +261,13 @@ pub(crate) enum Part {
 #[derive(Component, Clone, Copy)]
 pub(crate) struct PartOf(pub(crate) Entity);
 
+/// The ground of an item cell under its well (`#1a1c1d88`), and the art that makes the cell: a
+/// part of the cell, so that the tests find it.
+const CELL_GROUND: Color = Color::srgba(0.102, 0.11, 0.114, 0.533);
+
+#[derive(Component)]
+pub(crate) struct CellArt;
+
 /// The plate the Glyph and the Scan stand on, its width in Dota's pixels.
 const GLYPH_PLATE: f32 = 74.0;
 
@@ -1162,8 +1169,33 @@ fn spawn_items(kit: &mut Spawner, bar: Entity) {
                 .entry::<Node>()
                 .and_modify(|mut node| node.margin = UiRect::top(px(BACKPACK_GAP)));
         }
+        spawn_cell_art(kit, item);
     }
     spawn_round_slots(kit, bar);
+}
+
+/// What makes an empty item box a cell: the game's well under the icon, a dark face with a lighter
+/// edge (`.InventoryItem #ButtonSize`), and its faint bevel over it.
+fn spawn_cell_art(kit: &mut Spawner, item: Entity) {
+    kit.commands
+        .entity(item)
+        .insert(BackgroundColor(CELL_GROUND));
+    let fill = ui::fill();
+    kit.commands.spawn((
+        CellArt,
+        fill.clone(),
+        ui::art(kit.manifest, kit.server, "hud.item_well"),
+        ZIndex(-1),
+        Pickable::IGNORE,
+        ChildOf(item),
+    ));
+    kit.commands.spawn((
+        CellArt,
+        fill,
+        ui::art(kit.manifest, kit.server, "hud.item_bevel"),
+        Pickable::IGNORE,
+        ChildOf(item),
+    ));
 }
 
 /// Dota's round slots right of the inventory: the neutral item's on top
