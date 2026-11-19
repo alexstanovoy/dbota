@@ -8,7 +8,7 @@ use bevy::{prelude::*, transform::TransformSystems};
 use bota_client_core::{Flight, radians};
 use bota_proto::{EntityId, Team, TetherHead, TetherView};
 use dbota_particles::Effect;
-use heatel::particle::{FloatInput, Operator};
+use heatel::particle::{FloatInput, Operator, System};
 
 use super::line::{At, Attach, Trigger};
 use super::rules::{Rule, Rules};
@@ -33,6 +33,7 @@ struct Key {
 #[derive(Resource, Default)]
 struct Flying {
     held: HashMap<Key, (Handle, u32)>,
+    endings: Vec<Handle>,
     frame: u32,
     tick: u32,
     viewer: Option<Team>,
@@ -44,7 +45,12 @@ impl Flying {
             for (_, (handle, _)) in self.held.drain() {
                 playing.cancel(handle);
             }
+            for handle in self.endings.drain(..) {
+                playing.cancel(handle);
+            }
         }
+        self.endings
+            .retain(|handle| playing.get_mut(*handle).is_some());
         self.tick = tick;
         self.viewer = viewer;
         self.frame = self.frame.wrapping_add(1);
@@ -77,13 +83,28 @@ impl Flying {
             if *frame == self.frame {
                 return true;
             }
-            if rules
+            let tethered = rules
                 .get(key.rule)
-                .is_some_and(|rule| rule.fx.at == At::Chain)
-            {
+                .is_some_and(|rule| rule.fx.at == At::Chain);
+            let still_visible = tethered
+                && sight.core().view().is_some_and(|view| {
+                    view.tethers.iter().any(|tether| {
+                        tether.id == key.projectile
+                            && self.viewer.is_none_or(|team| tether.viewer == team)
+                    })
+                });
+            if key.span.is_some() || still_visible {
+                // Clipped spans and heads can disappear as vision changes.
                 playing.cancel(*handle);
-            } else {
-                playing.finish_flight(*handle, sight);
+                return false;
+            }
+            playing.finish_flight(*handle, sight);
+            if tethered && let Some(instance) = playing.get_mut(*handle) {
+                // Detach the trail from the hand and retire the flight model.
+                instance.hide_systems(|def| {
+                    !def.model_draws.is_empty() || maintains_chain(&def.system)
+                });
+                self.endings.push(*handle);
             }
             false
         });
@@ -385,6 +406,20 @@ impl FlightPresentation<'_, '_> {
             };
             visible_head = self.place_tether(rule, effect, key, position, draws);
             if let Some(handle) = visible_head {
+                if tether
+                    .head
+                    .is_some_and(|head| head.returning && head.origin.is_some())
+                    && let Some(projectile) = sight
+                        .core()
+                        .view()
+                        .and_then(|view| view.projectile(tether.id))
+                {
+                    self.playing.note_flight(
+                        handle,
+                        projectile,
+                        sight.knowledge(projectile.seen_by),
+                    );
+                }
                 let model = source
                     .and_then(|unit| self.unit_index.0.get(&unit.id))
                     .and_then(|entity| self.units.get(*entity).ok())
@@ -514,11 +549,7 @@ impl FlightPresentation<'_, '_> {
         } = position;
         let instance = self.playing.get_mut(handle).expect("a held effect");
         instance.show_systems(|def| {
-            let chain = def
-                .system
-                .operators
-                .iter()
-                .any(|op| matches!(op.class, Operator::MaintainSequentialPath(_)));
+            let chain = maintains_chain(&def.system);
             match draws {
                 TetherDraws::All => true,
                 TetherDraws::Head => !chain,
@@ -548,6 +579,13 @@ impl FlightPresentation<'_, '_> {
         });
         Some(handle)
     }
+}
+
+fn maintains_chain(system: &System) -> bool {
+    system
+        .operators
+        .iter()
+        .any(|operator| matches!(operator.class, Operator::MaintainSequentialPath(_)))
 }
 
 fn tip_point(rule: &Rule) -> Option<usize> {

@@ -184,7 +184,10 @@ fn record(
     let (mut hand, mut parent, mut chain) = (None, Vec::new(), Vec::new());
     let mut blur_anchors = Vec::new();
     for instance in playing.instances_of(effect) {
-        hand = Some(instance.nodes[0].control_points[0].position);
+        // A fading trail keeps its last control points for simulation.
+        if !instance.ending() {
+            hand = Some(instance.nodes[0].control_points[0].position);
+        }
         for node in &instance.nodes {
             let def = &effect.defs[node.def];
             if !instance.shows_system(node.def) || !def.path.ends_with("/pudge_meathook_blur.vpcf")
@@ -1532,6 +1535,58 @@ fn review_rewinding_and_pausing_recreates_the_launch_pose_without_return_trails(
     assert!(
         frame.blur.iter().all(|point| point.distance(head) < 70.0),
         "rewind kept the return's blur"
+    );
+}
+
+#[test]
+fn rewinding_a_completed_hook_leaves_no_return_trail_in_the_paused_view() {
+    let file = record_throws(false, 1, MID);
+    let mut client = replay_client(&file, 0, MID);
+    let effect = client
+        .world()
+        .resource::<crate::particles::Library>()
+        .effect("hero.pudge.hook")
+        .expect("the hook")
+        .clone();
+    let endings = |client: &Client| {
+        client
+            .world()
+            .resource::<crate::particles::Playing>()
+            .drawn_endings(&effect)
+    };
+    client.within(SOON, "a visible launch", |client| {
+        client
+            .world()
+            .resource::<Frames>()
+            .0
+            .last()
+            .is_some_and(|frame| frame.head().is_some())
+    });
+    let launch = client.view().clone();
+    client.within(
+        SOON,
+        "a completed hook draws its returning trail",
+        |client| endings(client) > 0,
+    );
+
+    replace_replay(&mut client, &file, vec![launch.clone()], true);
+    client.within(SOON, "the paused launch and its vision", |client| {
+        client
+            .core()
+            .view()
+            .is_some_and(|view| view.tick == launch.tick)
+            && client
+                .world()
+                .resource::<crate::fog::FogGrid>()
+                .worked_out_at()
+                == Some(launch.tick)
+    });
+    let before = endings(&client);
+    client.frames(3);
+    assert_eq!(
+        endings(&client),
+        before,
+        "the paused launch still draws the completed return"
     );
 }
 

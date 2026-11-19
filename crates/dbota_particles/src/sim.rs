@@ -277,6 +277,16 @@ impl Instance {
         }
     }
 
+    /// Hides part of a previously selected set without revealing its hidden systems.
+    pub fn hide_systems(&mut self, hidden: impl Fn(&super::library::Def) -> bool) {
+        let mask = self
+            .draws
+            .get_or_insert_with(|| vec![true; self.effect.defs.len()]);
+        for (show, def) in mask.iter_mut().zip(&self.effect.defs) {
+            *show &= !hidden(def);
+        }
+    }
+
     pub fn shows_system(&self, def: usize) -> bool {
         self.draws.as_ref().is_none_or(|mask| mask[def])
     }
