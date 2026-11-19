@@ -457,7 +457,7 @@ fn both_scores_of_the_top_bar_are_white() {
 }
 
 #[test]
-fn consuming_a_shard_changes_the_hud_to_the_installed_active_mark() {
+fn consuming_a_shard_draws_its_active_mark() {
     use bota_client_core::{Intent, Slot};
     use bota_proto::Cheat;
 

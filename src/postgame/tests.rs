@@ -393,6 +393,8 @@ fn a_match_stopped_before_a_minute_of_play_shows_no_rates() {
         bought_back_at: None,
         buyback: None,
         upgrades: None,
+        scepter_active: None,
+        current_net_worth: None,
     };
     let stats = |seconds: u32| MatchStats {
         duration: (90 + seconds) * 30,

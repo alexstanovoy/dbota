@@ -952,22 +952,18 @@ fn spawn_aghs_mark(kit: &mut Spawner, row: Entity) {
 }
 
 fn aghs_icons(session: NonSend<Session>, mut icons: Query<(&AghsIcon, &mut ImageNode)>) {
-    let (player, unit, kit) = subject(&session.0);
+    let (player, _, _) = subject(&session.0);
     let upgrades = player
         .and_then(|player| player.upgrades)
         .unwrap_or_default();
-    let items = unit
-        .map(|unit| unit.items.as_slice())
-        .or_else(|| kit.map(|kit| kit.items.as_slice()))
-        .unwrap_or_default();
-    let scepter_equipped = items
-        .iter()
-        .take(usize::from(INVENTORY_SLOTS))
-        .flatten()
-        .any(|item| item.id == bota_core::SCEPTER_ITEM && item.mute_left == 0);
+    let scepter_active = player
+        .and_then(|player| player.scepter_active)
+        .unwrap_or(false);
     for (icon, mut art) in &mut icons {
-        let on = icon.upgrade.held(upgrades)
-            || icon.upgrade == bota_core::HeroUpgrade::Scepter && scepter_equipped;
+        let on = match icon.upgrade {
+            bota_core::HeroUpgrade::Shard => upgrades.shard,
+            bota_core::HeroUpgrade::Scepter => scepter_active,
+        };
         let next = if on { &icon.active } else { &icon.inactive };
         if art.image != *next {
             art.image = next.clone();
