@@ -71,6 +71,75 @@ class RoutingTests(unittest.TestCase):
         self.assertIsNone(router.route("src/unnamed.rs"))
 
 
+class RepositoryRoutingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        config, cls.groups, cls.routes = test_groups.load()
+        cls.router = test_groups.load_router(config, cls.groups, cls.routes)
+
+    def selected(self, path):
+        self.assertTrue((test_groups.ROOT / path).is_file(), f"missing routing fixture: {path}")
+        chosen, unknown = test_groups.affected(self.router, self.groups, [path])
+        self.assertEqual(unknown, [])
+        return {group.name for group in chosen}
+
+    def test_effect_changes_reach_rendering_and_simulated_particle_import(self):
+        for path, wanted in (
+            ("src/fx/flies.rs", {"client_fx", "client_fog"}),
+            ("crates/dbota_particles/src/sim.rs", {"client_fx", "client_fog", "import"}),
+            ("crates/dbota_particles/src/ops.rs", {"client_fx", "client_fog", "import"}),
+            ("src/particles/playing.rs", {"client_fx", "client_fog", "import"}),
+            ("src/anim.rs", {"client_fx", "client_fog", "client_world"}),
+            ("src/bolt.rs", {"client_fx", "client_fog"}),
+        ):
+            with self.subTest(path=path):
+                self.assertGreaterEqual(self.selected(path), wanted)
+
+    def test_tooltip_band_changes_reach_every_screen_that_draws_it(self):
+        self.assertEqual(self.selected("src/tip_band.rs"),
+                         {"client_cache", "client_guard", "client_menu", "client_pregame", "client_shop"})
+
+    def test_hud_layout_walk_covers_the_talent_panel(self):
+        self.assertIn("client_hud", self.selected("src/talents.rs"))
+
+    def test_full_map_drawers_run_for_loading_terrain_geometry_and_import(self):
+        for path in ("src/cachefs.rs", "src/terrain.rs", "src/map.rs", "src/mapfile.rs", "src/map_props.rs",
+                     "src/layers.rs", "src/shadow_casters.rs", "src/trees.rs", "src/water.rs", "src/import.rs",
+                     "crates/dbota_import/src/import.rs", "assets-manifest/manifest.txt"):
+            with self.subTest(path=path):
+                self.assertGreaterEqual(self.selected(path), {"client_world", "client_fog", "client_fx"})
+
+    def test_shared_client_harness_reaches_its_consumers(self):
+        self.assertGreaterEqual(self.selected("src/e2e/harness.rs"),
+                                {"client_cache", "client_shop", "client_world", "client_fog"})
+        self.assertGreaterEqual(self.selected("src/e2e/hero_voice.rs"),
+                                {"client_audio", "client_hud", "client_world"})
+
+    def test_private_sound_fixture_only_runs_its_own_suite_and_guard(self):
+        self.assertEqual(self.selected("src/e2e/creep_sounds.rs"), {"client_audio", "client_guard"})
+
+    def test_new_unowned_fixture_selects_every_group_and_fails_routing_check(self):
+        path = "src/e2e/brand_new_fixture.rs"
+        chosen, unknown = test_groups.affected(self.router, self.groups, [path])
+        self.assertEqual(unknown, [path])
+        self.assertEqual([group.name for group in chosen], [group.name for group in self.groups])
+        files = [*test_groups.every_file(), path]
+        self.assertIn(f"no group or route names {path}",
+                      test_groups.check_routing(self.router, self.groups, self.routes, files))
+
+    def test_repository_routing_check_accepts_every_existing_module(self):
+        self.assertEqual(test_groups.check_routing(
+            self.router, self.groups, self.routes, test_groups.every_file()), [])
+
+    def test_gate_requires_a_group_owner_even_for_an_explicitly_routed_fixture(self):
+        path = "src/e2e/only_a_route.rs"
+        groups = [group("client", ["src/client.rs"])]
+        routes = [([path], ["client"])]
+        self.assertEqual(test_groups.check_routing(
+            test_groups.Router(groups, routes), groups, routes, ["src/client.rs", path]),
+            [f"no group owns end-to-end module {path}"])
+
+
 class ImportTests(unittest.TestCase):
     def edges(self, sources):
         files = sorted(sources)

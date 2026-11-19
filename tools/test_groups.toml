@@ -51,6 +51,19 @@ paths = [
 ]
 groups = ["client_*"]
 
+# Shop tooltips, pregame hero tooltips and the hero page share the same renderer.
+[[route]]
+paths = ["src/tip_band.rs", "src/tips.rs"]
+groups = ["client_menu", "client_pregame", "client_shop"]
+
+# Cached terrain and scenery feed the world scene, its fog and grounded effects.
+[[route]]
+paths = [
+    "src/terrain.rs", "src/mapfile.rs", "src/map_props.rs", "src/layers.rs", "src/shadow_casters.rs",
+    "src/trees.rs", "src/import.rs",
+]
+groups = ["client_world", "client_fog", "client_fx"]
+
 [[route]]
 # documents, the licence, the fuzz targets and deny.toml (the gate's own steps)
 paths = ["**.md", "LICENSE", ".gitignore", "deny.toml", "fuzz/**", "tools/*.sh", "tools/inspect_gltf.py", "tools/subset_fonts.py"]
@@ -66,6 +79,8 @@ tests = [{ package = "dbota", target = "test:client_guard" }]
 
 [[group]]
 name = "import"
+# The importer checks which simulated particle classes stay out of the cache.
+also_paths = ["crates/dbota_particles/**", "src/particles/**"]
 about = "the asset importer: its units, the golden comparisons and the cache index (the ignored install tests are the gate's)"
 paths = ["crates/dbota_import/src/**", "crates/dbota_import/tests/**"]
 tests = [{ package = "dbota_import" }]
@@ -93,6 +108,7 @@ paths = [
     "src/theme.rs",
     "src/session.rs",
     "src/steering.rs",
+    "src/e2e/mod.rs",
     "src/e2e/harness.rs",
     "src/config.rs",
     "src/input.rs",
@@ -332,6 +348,7 @@ tests = [
 
 [[group]]
 name = "client_fx"
+also_paths = ["src/anim.rs", "src/bolt.rs"]
 about = "particle effects, spell and building effects and the light and water they sit in"
 paths = [
     "src/fx/**",
@@ -606,6 +623,10 @@ tests = [
 
 [[group]]
 name = "client_fog"
+# Visible producers depend on the effect simulation and on the positions drawn this frame.
+also_paths = [
+    "src/fx.rs", "src/fx/**", "src/particles/**", "crates/dbota_particles/**", "src/anim.rs", "src/bolt.rs",
+]
 about = "the fog of war and what is visible through it, with the minimap"
 paths = [
     "src/minimap/**",
@@ -634,6 +655,8 @@ tests = [
 
 [[group]]
 name = "client_hud"
+# The bounds walk includes the hero's talent and item panels and also runs with the shop open.
+also_paths = ["src/talents.rs", "src/stats.rs", "src/stats/**", "src/bag.rs", "src/shop/**"]
 about = "the in-game interface: bars, the feed, the scoreboard, pings, rings and the Scan button"
 paths = [
     "src/scan.rs",

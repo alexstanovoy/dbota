@@ -935,6 +935,8 @@ def check_routing(router: Router, groups: list[Group], routes: list[tuple[list[s
     for path in files:
         if router.route(path) is None:
             errors.append(f"no group or route names {path}")
+        elif path.startswith("src/e2e/") and path.endswith(".rs") and not router.owners(path):
+            errors.append(f"no group owns end-to-end module {path}")
     for group in groups:
         for pattern in [*group.paths, *group.also_paths]:
             if not any(glob_regex(pattern).match(f) for f in files):
