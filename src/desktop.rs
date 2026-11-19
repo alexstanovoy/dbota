@@ -191,7 +191,11 @@ fn dialog(title: &str, folder: bool) -> Result<Option<PathBuf>, NoDialog> {
         zenity.arg("--directory");
     }
     let mut kdialog = std::process::Command::new("kdialog");
-    let selection = if folder { "--getexistingdirectory" } else { "--getopenfilename" };
+    let selection = if folder {
+        "--getexistingdirectory"
+    } else {
+        "--getopenfilename"
+    };
     kdialog.args(["--title", title, selection, "."]);
     match run_dialog(&mut zenity) {
         Err(NoDialog::Missing) => run_dialog(&mut kdialog),

@@ -81,7 +81,9 @@ pub fn plugin(app: &mut App) {
     #[cfg(not(test))]
     app.add_systems(
         Update,
-        super::avatar_picker::drive.after(drive).before(super::screens::draw),
+        super::avatar_picker::drive
+            .after(drive)
+            .before(super::screens::draw),
     );
     app.init_resource::<super::lobby_scroll::Positions>()
         .init_resource::<super::service_page::Place>()

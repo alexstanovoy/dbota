@@ -49,10 +49,13 @@ fn pick() -> Result<Receiver<Selection>, String> {
 fn read_chosen_file() -> Selection {
     use std::io::Read;
 
-    let path = crate::desktop::ask_file("Choose a PNG or JPEG image").map_err(|error| match error {
-        crate::desktop::NoDialog::Missing => "No system file chooser is available.".to_owned(),
-        crate::desktop::NoDialog::Failed(message) => format!("Could not open the image chooser: {message}"),
-    })?;
+    let path =
+        crate::desktop::ask_file("Choose a PNG or JPEG image").map_err(|error| match error {
+            crate::desktop::NoDialog::Missing => "No system file chooser is available.".to_owned(),
+            crate::desktop::NoDialog::Failed(message) => {
+                format!("Could not open the image chooser: {message}")
+            }
+        })?;
     let Some(path) = path else {
         return Ok(None);
     };
@@ -74,7 +77,9 @@ fn read_chosen_file() -> Selection {
         return Err(too_large());
     }
     let mut bytes = Vec::new();
-    file.take(limit + 1).read_to_end(&mut bytes).map_err(unreadable)?;
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(unreadable)?;
     if bytes.len() > INPUT_BYTES {
         return Err(too_large());
     }
@@ -106,7 +111,9 @@ fn pick() -> Result<Receiver<Selection>, String> {
                 if value.is_null() {
                     return Ok(None);
                 }
-                let bytes = value.dyn_into::<js_sys::Uint8Array>().map_err(|_| unavailable())?;
+                let bytes = value
+                    .dyn_into::<js_sys::Uint8Array>()
+                    .map_err(|_| unavailable())?;
                 if bytes.length() as usize > INPUT_BYTES {
                     return Err(too_large());
                 }
