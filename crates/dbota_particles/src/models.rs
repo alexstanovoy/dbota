@@ -213,10 +213,9 @@ fn place_particles(
             continue;
         };
         let matrix = source_matrix(models, &scene, node, i, (radius_scale, roll_scale));
-        out.push(Placed {
-            model,
-            transform: Transform::from_matrix(to_bevy(matrix, units_per_metre)),
-        });
+        let mut transform = Transform::from_matrix(to_bevy(matrix, units_per_metre));
+        transform.translation -= transform.rotation * (transform.scale * d.attachment);
+        out.push(Placed { model, transform });
     }
 }
 

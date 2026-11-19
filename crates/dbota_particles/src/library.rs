@@ -68,6 +68,8 @@ pub struct Draw {
 pub struct ModelDraw {
     pub renderer: usize,
     pub skins: Vec<ModelSkin>,
+    /// The model-space socket placed at the particle, in glTF metres.
+    pub attachment: Vec3,
 }
 
 /// One material group of a renderer's weighted model list.
@@ -166,6 +168,7 @@ impl Library {
         let textures = self.textures(&root, assets)?;
         let materials = materials(&root)?;
         let models = self.models(&root, assets)?;
+        let carried = carried_models(&root)?;
         let mut parsed = Vec::with_capacity(systems.len());
         for entry in systems {
             let path = entry
@@ -189,7 +192,7 @@ impl Library {
                     .map(str::to_owned),
             );
             def.draws = self.draws(&def.system, &textures, &materials, &distortion);
-            def.model_draws = model_draws(&def.system, &models);
+            def.model_draws = model_draws(&def.system, &models, &carried);
         }
         self.effects.insert(name.to_owned(), Arc::new(effect));
         Ok(unsupported)
@@ -379,9 +382,64 @@ impl Library {
     }
 }
 
-/// The model renderers of `system` the client draws: those whose models come from their list
-/// (one whose model a control point carries draws that model, and the client binds none).
-pub(super) fn model_draws(system: &System, models: &HashMap<(String, u16), u16>) -> Vec<ModelDraw> {
+/// The model the file binds to each control point a model renderer reads its model from
+/// (`control_point_models`), as the game's engine does for the entity at the point.
+pub(super) struct BoundModel {
+    pub path: String,
+    pub attachment: Vec3,
+}
+
+fn carried_models(root: &Value) -> Result<HashMap<u8, BoundModel>, String> {
+    let mut carried = HashMap::new();
+    for entry in root
+        .get("control_point_models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let point = entry
+            .get("control_point")
+            .and_then(Value::as_u64)
+            .and_then(|point| u8::try_from(point).ok())
+            .filter(|point| *point < 64)
+            .ok_or("a control point model without a control point")?;
+        let vmdl = entry
+            .get("vmdl")
+            .and_then(Value::as_str)
+            .ok_or("a control point model without a model")?;
+        let attachment = match entry.get("attachment") {
+            None | Some(Value::Null) => Vec3::ZERO,
+            Some(value) => {
+                let coordinates: [f32; 3] = serde_json::from_value(value.clone())
+                    .map_err(|_| format!("control point {point} has invalid model attachment"))?;
+                let attachment = Vec3::from(coordinates);
+                if !attachment.is_finite() {
+                    return Err(format!(
+                        "control point {point} has non-finite model attachment"
+                    ));
+                }
+                attachment
+            }
+        };
+        let model = BoundModel {
+            path: vmdl.to_owned(),
+            attachment,
+        };
+        if carried.insert(point, model).is_some() {
+            return Err(format!("control point {point} carries two models"));
+        }
+    }
+    Ok(carried)
+}
+
+/// The model renderers of `system` the client draws: those whose models come from their list,
+/// and those that read their model from a control point the file binds a model to (one whose
+/// control point carries none draws nothing).
+pub(super) fn model_draws(
+    system: &System,
+    models: &HashMap<(String, u16), u16>,
+    carried: &HashMap<u8, BoundModel>,
+) -> Vec<ModelDraw> {
     system
         .renderers
         .iter()
@@ -390,13 +448,18 @@ pub(super) fn model_draws(system: &System, models: &HashMap<(String, u16), u16>)
             let Renderer::Models(m) = &r.class else {
                 return None;
             };
-            if m.model_input.is_some() {
-                return None;
-            }
+            let listed;
+            let (choices_of, attachment): (&[(String, f32)], Vec3) = match m.model_input {
+                None => (&m.models, Vec3::ZERO),
+                Some(point) => {
+                    let binding = carried.get(&(point.index() as u8))?;
+                    listed = [(binding.path.clone(), 1.0)];
+                    (&listed, binding.attachment)
+                }
+            };
             let skins = (0..64)
                 .filter_map(|skin| {
-                    let choices: Vec<_> = m
-                        .models
+                    let choices: Vec<_> = choices_of
                         .iter()
                         .map(|(path, weight)| (models.get(&(path.clone(), skin)).copied(), *weight))
                         .collect();
@@ -415,7 +478,11 @@ pub(super) fn model_draws(system: &System, models: &HashMap<(String, u16), u16>)
                         })
                 })
                 .collect();
-            Some(ModelDraw { renderer, skins })
+            Some(ModelDraw {
+                renderer,
+                skins,
+                attachment,
+            })
         })
         .collect()
 }

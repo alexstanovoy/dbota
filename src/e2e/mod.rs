@@ -56,6 +56,7 @@ mod hero_page;
 mod hero_voice;
 mod hero_walk;
 mod home_hero;
+mod hook;
 mod hud_bounds;
 mod hud_cells;
 mod hud_layout;

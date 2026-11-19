@@ -61,6 +61,27 @@ pub fn operate(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &m
                 parts.set_vector(target, i, value);
             }
         }
+        Operator::RemapDirectionToTransformToVector {
+            transform,
+            field,
+            scale,
+            offset_rotation_degrees,
+            offset_axis,
+            normalize,
+        } => {
+            let origin = scene.transform_at(transform, scene.age).position;
+            let target = slot(*field);
+            for i in 0..parts.len() {
+                let delta = parts.vectors[store::POSITION][i] - origin;
+                let direction = super::shape::direction_from(
+                    delta,
+                    *offset_rotation_degrees,
+                    *offset_axis,
+                    *normalize,
+                );
+                parts.set_vector(target, i, direction * *scale);
+            }
+        }
         Operator::RemapVelocityToVector {
             field,
             scale,

@@ -28,11 +28,11 @@ use heatel::tooltips::Wanted;
 use heatel::world::{Band, EntityLump, ExportedWorld, WorldOptions, export_world, lighting};
 use heatel::{Error, Model, Resource, Result, Sound, Source, Texture, Vpk};
 
-use crate::catalog::{self, Catalog, FileKind, Id, Line, LineError};
+use crate::catalog::{self, Catalog, ControlPointModel, FileKind, Id, Line, LineError};
 use crate::text::{
-    DEFAULT_SOUND_LEVEL, ParticleMaterial, ParticleModel, ParticleTexture, ResolvedEvent,
-    ambient_txt, background_png, buildings_txt, effect_stem, expression_txt, labels_json,
-    lighting_txt, lipsync_txt, particle_json, phonemes_txt, portraits_txt, shop_json,
+    DEFAULT_SOUND_LEVEL, ParticleMaterial, ParticleModel, ParticleModelBinding, ParticleTexture,
+    ResolvedEvent, ambient_txt, background_png, buildings_txt, effect_stem, expression_txt,
+    labels_json, lighting_txt, lipsync_txt, particle_json, phonemes_txt, portraits_txt, shop_json,
     sound_events_txt, sound_mixer_txt, soundscape_files, soundscapes_txt, styles_json,
     tooltips_json, tree_model_path, tree_models, trees_txt, wanted, wave_cache_path,
 };
@@ -52,7 +52,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 48;
+pub const IMPORT_REV: u32 = 51;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -360,6 +360,8 @@ pub enum Item {
         logical: String,
         src: String,
         out: String,
+        /// The model each control point a model renderer reads its model from carries.
+        models: Vec<ControlPointModel>,
     },
     /// A sound written as WAV or MP3, and the lip sync of a voice line beside it
     /// ([`lipsync_path`]).
@@ -544,6 +546,7 @@ impl Plan {
                         logical: f.logical.clone(),
                         src: f.src.clone(),
                         out: f.out.clone(),
+                        models: f.models.clone(),
                     },
                     FileKind::Expression => Item::Expression {
                         logical: f.logical.clone(),
@@ -1288,8 +1291,9 @@ fn make(
         Item::Particle {
             src: path,
             out: dest,
+            models,
             ..
-        } => particle(src, pak, path, dest, out),
+        } => particle(src, pak, path, dest, models, out),
         Item::Sound {
             src: path,
             out: dest,
@@ -1408,7 +1412,14 @@ pub fn check_font(bytes: &[u8]) -> std::result::Result<(), String> {
 
 /// The particle system `path` (`x.vpcf_c`) with its children, after the textures they draw
 /// with. A child that does not read is reported and left out: its parent plays without it.
-fn particle(src: &impl Source, pak: &Vpk, path: &str, dest: &str, out: &mut Out<'_>) -> Result<()> {
+fn particle(
+    src: &impl Source,
+    pak: &Vpk,
+    path: &str,
+    dest: &str,
+    control_point_models: &[ControlPointModel],
+    out: &mut Out<'_>,
+) -> Result<()> {
     let root = path.strip_suffix("_c").unwrap_or(path);
     let mut systems: Vec<(String, System)> = Vec::new();
     let mut queue = VecDeque::from([root.to_owned()]);
@@ -1459,17 +1470,84 @@ fn particle(src: &impl Source, pak: &Vpk, path: &str, dest: &str, out: &mut Out<
             Err(err) => out.report.failed.push((vtex.to_owned(), err.to_string())),
         }
     }
-    let models = particle_models(src, pak, &systems, dir, out);
+    let mut models = particle_models(src, pak, &systems, dir, out);
+    let bindings = particle_bindings(
+        src,
+        pak,
+        &systems,
+        dir,
+        control_point_models,
+        out,
+        &mut models,
+    )?;
     out.put(
         dest,
-        &particle_json(root, &systems, &textures, &materials, &models)?,
+        &particle_json(root, &systems, &textures, &materials, &models, &bindings)?,
     )
+}
+
+fn particle_bindings<'a>(
+    src: &impl Source,
+    pak: &Vpk,
+    systems: &[(String, System)],
+    dir: &str,
+    bindings: &'a [ControlPointModel],
+    out: &mut Out<'_>,
+    models: &mut Vec<ParticleModel>,
+) -> Result<Vec<ParticleModelBinding<'a>>> {
+    let mut resolved = Vec::new();
+    for binding in bindings {
+        let point = binding.point;
+        let selectors: Vec<_> = systems
+            .iter()
+            .flat_map(|(_, system)| &system.renderers)
+            .filter_map(|renderer| match &renderer.class {
+                Renderer::Models(model)
+                    if model
+                        .model_input
+                        .is_some_and(|cp| cp.index() == usize::from(point)) =>
+                {
+                    Some(&model.skin)
+                }
+                _ => None,
+            })
+            .collect();
+        if selectors.is_empty() {
+            return Err(malformed(
+                "particle",
+                format!("no model renderer reads control point {point}"),
+            ));
+        }
+        let vmdl = binding.vmdl.as_str();
+        let model = match export_particle_skins(src, pak, vmdl, &selectors, dir, out, models) {
+            Ok(model) => model,
+            Err(error) => {
+                out.report.failed.push((vmdl.to_owned(), error.to_string()));
+                continue;
+            }
+        };
+        let attachment = binding
+            .attachment
+            .as_deref()
+            .map(|name| {
+                model.attachment_position(name).ok_or_else(|| {
+                    malformed("particle model", format!("{vmdl}: no attachment {name}"))
+                })
+            })
+            .transpose()?;
+        resolved.push(ParticleModelBinding {
+            point,
+            vmdl,
+            attachment,
+        });
+    }
+    Ok(resolved)
 }
 
 /// The models the systems' model renderers draw from their lists, each exported once as a
 /// glTF file under `dir/models/` (with its images beside it); one that does not export is
 /// reported, and its particles draw nothing. A renderer whose model a control point carries
-/// draws that model instead, which the client does not bind: its list is left out.
+/// draws that model instead: its list is left out.
 fn particle_models(
     src: &impl Source,
     pak: &Vpk,
@@ -1506,7 +1584,7 @@ fn export_particle_skins(
     dir: &str,
     out: &mut Out<'_>,
     models: &mut Vec<ParticleModel>,
-) -> Result<()> {
+) -> Result<Model> {
     let path = format!("{vmdl}_c");
     let bytes = read_from(src, &[pak], &path)?;
     let resource = Resource::parse(&bytes)?;
@@ -1563,7 +1641,7 @@ fn export_particle_skins(
             skin: skin as u16,
         });
     }
-    Ok(())
+    Ok(source)
 }
 
 fn particle_model_path(dir: &str, vmdl: &str, skin: usize) -> String {
@@ -2026,7 +2104,7 @@ fn later(src: &impl Source, packages: &[&Vpk], job: &Pending, out: &mut Out<'_>)
             let pak = packages
                 .last()
                 .ok_or_else(|| malformed("import", "no main package"))?;
-            return particle(src, pak, vpcf, &job.path, out);
+            return particle(src, pak, vpcf, &job.path, &[], out);
         }
         Later::Sound(vsnd) => {
             let bytes = read_from(src, packages, vsnd)?;

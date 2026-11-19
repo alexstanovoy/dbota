@@ -275,6 +275,10 @@ struct Feeds {
     charges: f32,
     /// Where the user stands, in the world.
     caster: Option<Vec3>,
+    /// The caster's drawn model scale when it is bound as an object.
+    caster_scale: Option<f32>,
+    flight_tip: Vec3,
+    flight_speed: f32,
     /// The side the unit is held for: 0 the Radiant, 1 the Dire.
     side: f32,
     /// How far the unit sees now, or for the side it is lit for.
@@ -336,7 +340,21 @@ fn feed(
             }
             Feed::Vector(vector) => *vector,
             Feed::Place(attach) => place_of(place(attach)),
-            Feed::Caster => place_of(feeds.caster.unwrap_or_else(|| place(&Attach::Origin))),
+            Feed::Caster => {
+                let at = place_of(feeds.caster.unwrap_or_else(|| place(&Attach::Origin)));
+                if let Some(scale) = feeds.caster_scale {
+                    instance.bind_control_point(*point, at, Mat3::IDENTITY, scale);
+                    continue;
+                }
+                at
+            }
+            Feed::FlightTip => {
+                instance.drive_control_point(*point, place_of(feeds.flight_tip));
+                continue;
+            }
+            Feed::FlightSpeed => Vec3::new(feeds.flight_speed, 0.0, 0.0),
+            // The authored timer is secondary to the authoritative end of a held flight.
+            Feed::FlightLifetime => Vec3::new(f32::MAX, 0.0, 0.0),
             Feed::Side => Vec3::new(feeds.side, 0.0, 0.0),
             Feed::Sight => Vec3::new(feeds.sight, 0.0, 0.0),
             Feed::Gathered(share, plus) => *share * feeds.gathered + *plus,

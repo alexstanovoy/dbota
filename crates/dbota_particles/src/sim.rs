@@ -69,6 +69,8 @@ pub struct Node {
     /// Which control points have been placed (bit `cp`): one placed the first time has no
     /// previous place to move from.
     placed: u64,
+    /// Control points whose positions come from the host for the lifetime of the effect.
+    driven: u64,
     emitters: Vec<EmitterState>,
     /// What each pre-emission operator, initializer and operator keeps from step to step.
     pre_done: Vec<bool>,
@@ -237,6 +239,14 @@ impl Instance {
                 point.previous = position;
             }
             point.face(forward);
+        }
+    }
+
+    /// Drives a point from the host. Particle operators may read it as usual.
+    pub fn drive_control_point(&mut self, cp: usize, position: Vec3) {
+        self.set_control_point(cp, position, Vec3::ZERO, false);
+        for node in &mut self.nodes {
+            node.driven |= 1 << cp;
         }
     }
 
@@ -479,6 +489,7 @@ impl Node {
             control_points: [ControlPoint::default(); 64],
             snapshot_defs: vec![def],
             placed: 0,
+            driven: 0,
             emitters: vec![EmitterState::default(); system.emitters.len()],
             pre_done: vec![false; system.pre_emission.len()],
             inits: vec![InitMemory::default(); system.initializers.len()],
@@ -507,6 +518,7 @@ impl Node {
         ) = (false, 0.0, true, true);
         self.control_points = [ControlPoint::default(); 64];
         self.placed = 0;
+        self.driven = 0;
         self.emitters
             .iter_mut()
             .for_each(|e| *e = EmitterState::default());
@@ -525,6 +537,9 @@ impl Node {
     /// Takes a control point an operator set, keeping where the old one was; one placed the
     /// first time jumps there (a missile's head locked to it does not fly in from the origin).
     fn place(&mut self, cp: usize, point: ControlPoint) {
+        if self.driven & 1 << cp != 0 {
+            return;
+        }
         let previous = if self.placed & 1 << cp == 0 {
             point.position
         } else {

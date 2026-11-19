@@ -5,13 +5,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use bevy::prelude::*;
+use bevy::{prelude::*, transform::TransformSystems};
 use bota_client_core::Flight;
 use bota_proto::EntityId;
+use heatel::particle::{FloatInput, Operator};
 
-use super::line::{At, Trigger};
+use super::line::{At, Attach, Trigger};
 use super::rules::Rules;
-use super::{Feeds, feed, place_of};
+use super::{Feeds, attach_point, feed, place_of};
 use crate::effects::{MISSILE_HEIGHT, Shooters, steer};
 use crate::map::Ground;
 use crate::particles::{EffectSight, Handle, Library, Playing};
@@ -30,16 +31,35 @@ pub(super) fn plugin(app: &mut App) {
             First,
             crate::loading::reset::<Flying>.in_set(crate::loading::Begin),
         )
-        .add_systems(Update, flies.after(crate::units::Placed));
+        .add_systems(
+            PostUpdate,
+            flies
+                .after(TransformSystems::Propagate)
+                .before(crate::particles::Simulation),
+        );
 }
 
 /// Where a flight is, in the world's frame.
-fn at(ground: &Ground, flight: &Flight) -> Vec3 {
-    Vec3::new(
-        flight.x,
-        ground.at(flight.x, flight.y) + MISSILE_HEIGHT,
-        -flight.y,
-    )
+fn at(ground: &Ground, flight: &Flight, height: f32) -> Vec3 {
+    Vec3::new(flight.x, ground.at(flight.x, flight.y) + height, -flight.y)
+}
+
+/// A directly placed chain tip uses the ground offset authored for its root particle.
+fn chain_height(effect: &dbota_particles::Effect) -> f32 {
+    effect.defs[0]
+        .system
+        .operators
+        .iter()
+        .find_map(|operator| {
+            let Operator::MovementPlaceOnGround(movement) = &operator.class else {
+                return None;
+            };
+            match movement.offset {
+                FloatInput::Literal(height) if !movement.scale_offset => Some(height),
+                _ => None,
+            }
+        })
+        .unwrap_or(MISSILE_HEIGHT)
 }
 
 /// The missile of each key a rule follows: itself, or for a chain the one farthest from its
@@ -88,6 +108,18 @@ fn flies(
     let mut alive: HashSet<(usize, EntityId)> = HashSet::new();
     for (n, rule) in rules.of(Trigger::Flies) {
         let fx = &rule.fx;
+        let Some(effect) = fx
+            .particle
+            .as_deref()
+            .and_then(|name| library.as_deref()?.effect(name))
+        else {
+            continue;
+        };
+        let height = if fx.at == At::Chain {
+            chain_height(effect)
+        } else {
+            MISSILE_HEIGHT
+        };
         let own = shown.iter().filter(|f| rule.names(f.missile.inflictor));
         let stands = |id| {
             sight
@@ -96,28 +128,20 @@ fn flies(
         };
         for (key, flight) in followed(fx.at == At::Chain, own, stands) {
             alive.insert((n, key));
-            let tip = at(&ground, flight);
+            let tip = at(&ground, flight, height);
             let dir = Vec3::new(flight.x - flight.tail_x, 0.0, -(flight.y - flight.tail_y));
-            let hand = flight
+            let source = flight
                 .missile
                 .source
-                .and_then(|source| bodies.launch(source))
-                .unwrap_or(tip);
+                .and_then(|source| sight.visible_unit(source));
             let handle = match flying.0.get(&(n, key)).copied() {
                 Some(handle) => handle,
                 None => {
-                    let Some(handle) = fx
-                        .particle
-                        .as_deref()
-                        .and_then(|name| library.as_deref()?.effect(name))
-                        .and_then(|effect| {
-                            playing.hold(
-                                effect,
-                                key.idx ^ key.generation,
-                                EffectSight::Projectile(flight.missile.id),
-                            )
-                        })
-                    else {
+                    let Some(handle) = playing.hold(
+                        effect,
+                        key.idx ^ key.generation,
+                        EffectSight::Projectile(flight.missile.id),
+                    ) else {
                         continue;
                     };
                     flying.0.insert((n, key), handle);
@@ -134,20 +158,42 @@ fn flies(
             else {
                 continue;
             };
+            let hand = source.map_or(tip, |unit| match &fx.attach {
+                Attach::Origin => bodies.launch(unit.id).unwrap_or(tip),
+                attach => attach_point(&ground, &bodies, unit, attach),
+            });
             instance.set_control_point(LAUNCH, place_of(hand), Vec3::ZERO, false);
             if fx.at == At::Chain {
                 instance.set_control_point(TIP, place_of(tip), Vec3::ZERO, false);
             } else {
                 steer(tip + dir, dir, &mut playing, handle);
             }
-            feed(fx, Some(handle), &mut playing, &Feeds::default(), &|_| tip);
+            let feeds = Feeds {
+                caster: source.map(|unit| attach_point(&ground, &bodies, unit, &Attach::Origin)),
+                caster_scale: source.map(|unit| bodies.object_scale(unit.id)),
+                flight_tip: tip,
+                flight_speed: dir.length() * bota_core::rules::TICKS_PER_SECOND as f32,
+                ..Feeds::default()
+            };
+            feed(fx, Some(handle), &mut playing, &feeds, &|attach| {
+                source.map_or(tip, |unit| attach_point(&ground, &bodies, unit, attach))
+            });
         }
     }
     flying.0.retain(|key, handle| {
-        let keep = alive.contains(key);
-        if !keep {
+        if alive.contains(key) {
+            return true;
+        }
+        // A tether has no geometry once its travelling endpoint ceases to exist.
+        if rules
+            .0
+            .get(key.0)
+            .is_some_and(|rule| rule.fx.at == At::Chain)
+        {
+            playing.cancel(*handle);
+        } else {
             playing.finish_flight(*handle, &sight);
         }
-        keep
+        false
     });
 }

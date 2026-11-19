@@ -143,7 +143,11 @@ fn model_skin_effect() -> Arc<Effect> {
         (("models/example.vmdl".to_owned(), 0), 7),
         (("models/example.vmdl".to_owned(), 5), 42),
     ]);
-    effect.defs[0].model_draws = super::library::model_draws(&effect.defs[0].system, &loaded);
+    effect.defs[0].model_draws = super::library::model_draws(
+        &effect.defs[0].system,
+        &loaded,
+        &std::collections::HashMap::new(),
+    );
     Arc::new(effect)
 }
 
@@ -164,7 +168,8 @@ fn model_draws_map_heatel_groups_to_loaded_geometry_and_cache_their_weights() {
         (("b".to_owned(), 0), 8),
         (("a".to_owned(), 5), 42),
     ]);
-    let draws = super::library::model_draws(&def.system, &loaded);
+    let draws =
+        super::library::model_draws(&def.system, &loaded, &std::collections::HashMap::new());
     assert_eq!(draws.len(), 1);
     assert_eq!(draws[0].skins.len(), 2);
     assert_eq!(
@@ -177,6 +182,32 @@ fn model_draws_map_heatel_groups_to_loaded_geometry_and_cache_their_weights() {
         vec![(Some(42), 2.0), (None, 3.0), (None, 100.0)]
     );
     assert_eq!(draws[0].skins[1].total_weight, 2.0);
+}
+
+#[test]
+fn a_renderer_reading_its_model_from_a_control_point_draws_the_model_the_file_binds_there() {
+    let mut effect = model_skin_effect();
+    let def = &mut Arc::get_mut(&mut effect).expect("unique effect").defs[0];
+    let heatel::particle::Renderer::Models(model) = &mut def.system.renderers[0].class else {
+        panic!("models");
+    };
+    model.models.clear();
+    model.model_input = Some(point(7));
+    let loaded = std::collections::HashMap::from([(("models/hook.vmdl".to_owned(), 0), 9)]);
+    let binding = || super::library::BoundModel {
+        path: "models/hook.vmdl".to_owned(),
+        attachment: Vec3::new(1.0, 2.0, 3.0),
+    };
+    let bound = std::collections::HashMap::from([(7, binding())]);
+    let draws = super::library::model_draws(&def.system, &loaded, &bound);
+    assert_eq!(draws.len(), 1, "control point 7's model is drawn");
+    assert_eq!(draws[0].skins[0].models, vec![(Some(9), 1.0)]);
+    assert_eq!(draws[0].attachment, Vec3::new(1.0, 2.0, 3.0));
+    let other = std::collections::HashMap::from([(6, binding())]);
+    assert!(
+        super::library::model_draws(&def.system, &loaded, &other).is_empty(),
+        "a model bound to another control point is not this renderer's"
+    );
 }
 
 #[test]

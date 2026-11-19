@@ -49,6 +49,15 @@ pub struct ParticleFrame {
     pub(super) placed: Vec<Placed>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl ParticleFrame {
+    /// The models drawn this frame: each one's index in the library's models and its placement
+    /// in Bevy's frame.
+    pub fn models(&self) -> impl Iterator<Item = (u16, Transform)> + '_ {
+        self.placed.iter().map(|p| (p.model, p.transform))
+    }
+}
+
 /// One look's cards: their range in the frame's buffer and their centre, by which the batch
 /// is sorted among the other transparent things.
 #[derive(Clone, Debug)]

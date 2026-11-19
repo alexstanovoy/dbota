@@ -105,6 +105,17 @@ pub struct File {
     pub logical: String,
     pub src: String,
     pub out: String,
+    /// For a particle (`models=<control point>:<vmdl>[,..]`): the model the game's engine binds to
+    /// each control point a model renderer reads its model from.
+    pub models: Vec<ControlPointModel>,
+}
+
+/// The model bound to a particle control point, and the socket placed at the particle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ControlPointModel {
+    pub point: u8,
+    pub vmdl: String,
+    pub attachment: Option<String>,
 }
 
 /// A sound line (`sound <logical> <vsnd> <out> event=<name>`); variants share the logical name.
@@ -443,6 +454,40 @@ impl<'a> Fields<'a> {
     }
 }
 
+/// `7:models/x.vmdl,9:models/y.vmdl`: the model each named control point carries, each point once.
+fn control_point_models(text: Option<&str>) -> Result<Vec<ControlPointModel>, String> {
+    let mut models: Vec<ControlPointModel> = Vec::new();
+    for item in text.into_iter().flat_map(|text| text.split(',')) {
+        let (point, vmdl) = item
+            .split_once(':')
+            .ok_or_else(|| format!("'models=' item '{item}' is not <control point>:<vmdl>"))?;
+        let point: u8 = point
+            .parse()
+            .ok()
+            .filter(|point| *point < 64)
+            .ok_or_else(|| format!("'models=' control point '{point}' is not 0 to 63"))?;
+        let (vmdl, attachment) = match vmdl.split_once('@') {
+            Some((vmdl, name)) if name.starts_with("attach_") && !name.contains('@') => {
+                (vmdl, Some(name.to_owned()))
+            }
+            Some((_, name)) => return Err(format!("'models=' has invalid attachment '{name}'")),
+            None => (vmdl, None),
+        };
+        if !vmdl.ends_with(".vmdl") {
+            return Err(format!("'models=' model '{vmdl}' is not a .vmdl"));
+        }
+        if models.iter().any(|model| model.point == point) {
+            return Err(format!("'models=' names control point {point} twice"));
+        }
+        models.push(ControlPointModel {
+            point,
+            vmdl: vmdl.to_owned(),
+            attachment,
+        });
+    }
+    Ok(models)
+}
+
 fn number(what: &str, text: &str) -> Result<f64, String> {
     text.parse::<f64>()
         .ok()
@@ -493,7 +538,14 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
             }))
         }
         "texture" | "particle" | "expression" | "phonemes" | "font" => {
-            let f = Fields::of(rest, &[])?;
+            let f = Fields::of(
+                rest,
+                if *kind == "particle" {
+                    &["models"]
+                } else {
+                    &[]
+                },
+            )?;
             let [logical, src, out] = f.exactly::<3>(kind)?;
             let kind = match *kind {
                 "texture" => FileKind::Texture,
@@ -507,6 +559,7 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
                 logical: own(logical),
                 src: own(src),
                 out: own(out),
+                models: control_point_models(f.get("models"))?,
             }))
         }
         "sound" => {
@@ -860,6 +913,63 @@ mod tests {
                 .expect_err("invalid toggle"),
             "no state 'toggle=maybe'"
         );
+    }
+
+    #[test]
+    fn a_particle_line_binds_models_to_control_points_and_refuses_a_malformed_binding() {
+        let line = |text: &str| {
+            let words: Vec<&str> = text.split_whitespace().collect();
+            manifest_line(&words)
+        };
+        let Ok(Line::File(file)) =
+            line("particle p p.vpcf_c p.json models=7:models/h.vmdl@attach_chain,9:models/g.vmdl")
+        else {
+            panic!("a particle line with models reads")
+        };
+        assert_eq!(
+            file.models,
+            vec![
+                ControlPointModel {
+                    point: 7,
+                    vmdl: "models/h.vmdl".to_owned(),
+                    attachment: Some("attach_chain".to_owned())
+                },
+                ControlPointModel {
+                    point: 9,
+                    vmdl: "models/g.vmdl".to_owned(),
+                    attachment: None
+                },
+            ]
+        );
+        for (text, why) in [
+            (
+                "particle p p.vpcf_c p.json models=7",
+                "is not <control point>:<vmdl>",
+            ),
+            (
+                "particle p p.vpcf_c p.json models=64:models/h.vmdl",
+                "is not 0 to 63",
+            ),
+            (
+                "particle p p.vpcf_c p.json models=7:models/h.vmdl,7:models/g.vmdl",
+                "names control point 7 twice",
+            ),
+            (
+                "particle p p.vpcf_c p.json models=7:models/h.glb",
+                "is not a .vmdl",
+            ),
+            (
+                "particle p p.vpcf_c p.json models=7:models/h.vmdl@missing",
+                "invalid attachment 'missing'",
+            ),
+            (
+                "texture t t.vtex_c t.png models=7:models/h.vmdl",
+                "no field 'models='",
+            ),
+        ] {
+            let error = line(text).expect_err(text);
+            assert!(error.contains(why), "{text}: {error}");
+        }
     }
 
     /// The committed files read with no error, and an injected typo is told with its line.

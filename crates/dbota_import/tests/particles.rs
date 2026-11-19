@@ -16,8 +16,8 @@ use heatel::{DirSource, Resource, Vpk, find_game_dir};
 
 /// The classes of the manifest's effects the client leaves out, each with why. (A model
 /// renderer whose model a control point carries, the town portal's image of the hero at its end,
-/// is read but draws nothing: the client binds no model to a control point.)
-const LEFT_OUT: [&str; 48] = [
+/// is read but draws nothing unless the manifest binds a model to that control point.)
+const LEFT_OUT: [&str; 46] = [
     // Camera shake (Requiem of Souls) and the model a control point carries (the town portal's
     // image of the hero), and the rune, ward, teleport and lotus effects' finer operators (status
     // effects, parent-kill inheritance, paths, oscillation, rotation and culling): the client
@@ -33,7 +33,6 @@ const LEFT_OUT: [&str; 48] = [
     "C_INIT_InitFromParentKilled",
     "C_INIT_InitSkinnedPositionFromCPSnapshot",
     "C_INIT_NormalOffset",
-    "C_INIT_RadiusFromCPObject",
     "C_INIT_RandomNamedModelSequence",
     "C_INIT_RemapNamedModelSequenceToScalar",
     "C_INIT_RemapScalarToVector",
@@ -58,7 +57,6 @@ const LEFT_OUT: [&str; 48] = [
     "C_OP_OscillateScalar",
     "C_OP_RemapCPtoScalar",
     "C_OP_RemapCPtoVector",
-    "C_OP_RemapDirectionToCPToVector",
     "C_OP_RemapSpeed",
     "C_OP_RemapSpeedtoCP",
     "C_OP_RemapTransformOrientationToYaw",
@@ -286,6 +284,23 @@ fn installed_model_requests(source: &DirSource, pak: &Vpk) -> ModelRequests {
     let mut queue = installed_particle_roots(source);
     let mut seen = BTreeSet::new();
     let mut requests = ModelRequests::new();
+    // The models the manifest binds to a particle's control points are exported beside it too.
+    for line in include_str!("../../../assets-manifest/manifest.txt").lines() {
+        let words: Vec<_> = line.split_whitespace().collect();
+        if words.first() != Some(&"particle") {
+            continue;
+        }
+        let dir = words[3].rsplit_once('/').map_or("", |(dir, _)| dir);
+        let bound = words.iter().filter_map(|word| word.strip_prefix("models="));
+        for item in bound.flat_map(|list| list.split(',')) {
+            let (_, vmdl) = item.split_once(':').expect("<control point>:<vmdl>");
+            let vmdl = vmdl.split_once('@').map_or(vmdl, |(path, _)| path);
+            requests
+                .entry((dir.to_owned(), vmdl.to_owned()))
+                .or_default()
+                .insert(Some(0));
+        }
+    }
     while let Some((path, dir)) = queue.pop() {
         if !seen.insert((path.clone(), dir.clone())) {
             continue;

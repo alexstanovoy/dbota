@@ -280,9 +280,16 @@ pub struct ParticleModel {
     pub skin: u16,
 }
 
+/// A resolved model binding and its optional placement socket in glTF metres.
+pub struct ParticleModelBinding<'a> {
+    pub point: u8,
+    pub vmdl: &'a str,
+    pub attachment: Option<[f32; 3]>,
+}
+
 /// A particle file: `{"version", "root", "systems": [{"path", "system"}], "textures":
 /// [{"vtex", "file", "sheet"}], "materials": [{"vmat", "vtex", "blend", "sheets"}], "models":
-/// [{"vmdl", "file", "skin"}]}`, the root system first, each system as heatel's serde form of
+/// [{"vmdl", "file", "skin"}], "control_point_models": [{"control_point", "vmdl"}]}`, the root system first, each system as heatel's serde form of
 /// [`System`] (children by path), a sheet as its sequences of `{"clamp", "frames": [[display
 /// time, cropped u0 v0 u1 v1, uncropped u0 v0 u1 v1]]}` or `null`.
 pub fn particle_json(
@@ -291,6 +298,7 @@ pub fn particle_json(
     textures: &[ParticleTexture],
     materials: &[ParticleMaterial],
     models: &[ParticleModel],
+    control_point_models: &[ParticleModelBinding<'_>],
 ) -> Result<Vec<u8>> {
     let systems: Vec<Json> = systems
         .iter()
@@ -314,6 +322,16 @@ pub fn particle_json(
         .iter()
         .map(|m| json!({ "vmdl": m.vmdl, "file": m.file, "skin": m.skin }))
         .collect();
+    let carried: Vec<Json> = control_point_models
+        .iter()
+        .map(|binding| {
+            json!({
+                "control_point": binding.point,
+                "vmdl": binding.vmdl,
+                "attachment": binding.attachment,
+            })
+        })
+        .collect();
     to_vec(
         "particle",
         &json!({
@@ -323,6 +341,7 @@ pub fn particle_json(
             "textures": textures,
             "materials": materials,
             "models": models,
+            "control_point_models": carried,
         }),
     )
 }

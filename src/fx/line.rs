@@ -98,6 +98,12 @@ pub enum Feed {
     Place(Attach),
     /// Where the user stands: the hero that plucked a lotus.
     Caster,
+    /// The position of the missile this line follows.
+    FlightTip,
+    /// The missile's speed in world units per second, in x.
+    FlightSpeed,
+    /// The projectile owner controls when the effect stops.
+    FlightLifetime,
     /// The side the unit is held for, in x: 0 the Radiant, 1 the Dire (`units::held_for`).
     Side,
     /// How far the unit sees now, or sees for the side it is lit for, in x.
@@ -246,7 +252,9 @@ impl Fx {
                 "side" => fx.side = Some(side_of(value)?),
                 "look" => fx.look = Some(side_of(value)?),
                 _ => match key.strip_prefix("cp").and_then(|n| n.parse::<usize>().ok()) {
-                    Some(point) if point > 0 => fx.feeds.push((point, feed_of(value)?)),
+                    Some(point) if (1..64).contains(&point) => {
+                        fx.feeds.push((point, feed_of(value)?));
+                    }
                     _ => return Err(format!("cannot read '{word}'")),
                 },
             }
@@ -306,10 +314,22 @@ impl Fx {
         if !worn && self.side.is_some() {
             return Err("only a worn line asks which side holds the unit".to_owned());
         }
-        if !matches!(self.at, At::Unit | At::Caster | At::CasterBefore)
-            && self.attach != Attach::Origin
+        if !matches!(
+            self.at,
+            At::Unit | At::Caster | At::CasterBefore | At::Chain
+        ) && self.attach != Attach::Origin
         {
             return Err("only an effect at a unit is attached to it".to_owned());
+        }
+        if self.trigger != Trigger::Flies
+            && self.feeds.iter().any(|(_, feed)| {
+                matches!(
+                    feed,
+                    Feed::FlightTip | Feed::FlightSpeed | Feed::FlightLifetime
+                )
+            })
+        {
+            return Err("flight control points require a flight".to_owned());
         }
         if self.trigger == Trigger::Flies && self.sound.is_some() {
             return Err("a flight plays no sound".to_owned());
@@ -379,6 +399,9 @@ fn feed_of(value: &str) -> Result<Feed, String> {
         "mode" => Feed::Mode,
         "charges" => Feed::Charges,
         "caster" => Feed::Caster,
+        "flight_tip" => Feed::FlightTip,
+        "flight_speed" => Feed::FlightSpeed,
+        "flight_lifetime" => Feed::FlightLifetime,
         "side" => Feed::Side,
         "sight" => Feed::Sight,
         "model_radius" => Feed::ModelRadius,

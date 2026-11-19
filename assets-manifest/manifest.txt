@@ -37,10 +37,12 @@
 #   texture <logical> <vpk .vtex_c> <out .png>
 #   font    <logical> <loose file under game/dota: panorama/fonts/x.otf> <out .otf>
 #           a typeface the install keeps beside its packages, copied whole once it reads as one.
-#   particle <logical> <vpk .vpcf_c> <out .json>
+#   particle <logical> <vpk .vpcf_c> <out .json> [models=<control point>:<vpk .vmdl>[@<attachment>][,...]]
 #           a particle system and every child under it, read into typed definitions, as one JSON file
 #           (dbota_import's particle_json); their textures as KTX2 under textures/ beside it, with their
-#           sprite sheets in the JSON. The client simulates and draws them (src/particles/).
+#           sprite sheets in the JSON. The client simulates and draws them (src/particles/). A model renderer that
+#           reads its model from a control point (Dota's engine puts the model of the entity there: a hook's
+#           head) draws the bound model. An optional attachment places that socket at the particle.
 #   sound   <logical> <vpk .vsnd_c> <out .wav|.mp3> event=<Dota sound event that plays it>
 #           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
 #           in the game and stay MP3 (out .mp3). Events with several variants list one line per variant;
@@ -94,6 +96,8 @@
 #                 now, or sees for the side it is lit for, in x) | gathered:<x,y,z>[+<x,y,z>] (the first vector times the
 #                 share of the unit's countdown run, 0 to 1, plus the second)
 #                 | model_radius (the worn body's imported render-bounds radius)
+#                 | flight_tip (the missile's position) | flight_speed (world units per second, in x)
+#                 | flight_lifetime (the missile owns the effect's lifetime)
 #           whose: for a worn line, only the effects the wearer put on itself (own) or another put on it (foreign)
 #           stacks: for a worn line, only while the effect holds that many
 #           side: for a worn line, only while the unit is held for that side
@@ -445,7 +449,7 @@ particle hero.nevermore.frenzy particles/units/heroes/hero_nevermore/nevermore_s
 particle hero.nevermore.requiem_head particles/units/heroes/hero_nevermore/nevermore_requiem_head.vpcf_c particles/nevermore_requiem_head.json
 particle hero.nevermore.raze_debuff particles/units/heroes/hero_nevermore/nevermore_shadowraze_debuff.vpcf_c particles/nevermore_shadowraze_debuff.json
 # Pudge: Meat Hook with its chain, the hit, Rot, Dismember, Flesh Heap and Meat Shield
-particle hero.pudge.hook particles/units/heroes/hero_pudge/pudge_meathook.vpcf_c particles/pudge_meathook.json
+particle hero.pudge.hook particles/units/heroes/hero_pudge/pudge_meathook.vpcf_c particles/pudge_meathook.json models=7:models/heroes/pudge/righthook.vmdl@attach_chain
 particle hero.pudge.hook_impact particles/units/heroes/hero_pudge/pudge_meathook_impact.vpcf_c particles/pudge_meathook_impact.json
 particle hero.pudge.rot particles/units/heroes/hero_pudge/pudge_rot.vpcf_c particles/pudge_rot.json
 particle hero.pudge.rot_recipient particles/units/heroes/hero_pudge/pudge_rot_recipient.vpcf_c particles/pudge_rot_recipient.json
@@ -593,7 +597,7 @@ fx ability.nevermore_shadowraze*.worn at=unit particle=hero.nevermore.raze_debuf
 # Pudge: Meat Hook (the throw, the chain and its head in flight, the hit), Rot (the ring on Pudge, the
 # rot on those it reaches), Dismember, Meat Shield
 fx ability.pudge_meat_hook.cast at=caster sound=sound.pudge.hook_throw
-fx ability.pudge_meat_hook.flies at=chain particle=hero.pudge.hook cp2=2200,0,0 cp3=10,0,0 cp4=1,0,0
+fx ability.pudge_meat_hook.flies at=chain attach=attach_weapon_chain_rt particle=hero.pudge.hook cp2=flight_speed cp3=flight_lifetime cp4=1,0,0 cp6=flight_tip cp7=caster
 fx ability.pudge_meat_hook.hit at=unit attach=attach_hitloc particle=hero.pudge.hook_impact sound=sound.pudge.hook_impact
 fx ability.pudge_meat_hook.worn at=unit disable=4 pose=flail
 fx ability.pudge_rot.worn at=unit whose=own particle=hero.pudge.rot sound=sound.pudge.rot cp1=250,1,250

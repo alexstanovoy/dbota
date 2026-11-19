@@ -21,6 +21,7 @@ pub fn writes(init: &Initializer) -> u64 {
         | Initializer::RandomColor { field, .. }
         | Initializer::RemapParticleCountToScalar { field, .. } => bit(*field),
         Initializer::RandomSequence { .. } => bit(Field::SEQUENCE_NUMBER),
+        Initializer::RadiusFromCpObject { .. } => bit(Field::RADIUS),
         Initializer::RandomYawFlip { .. } => bit(Field::YAW),
         Initializer::CreateWithinSphere(s) => {
             let position = if s.output == Field::POSITION {
@@ -207,6 +208,12 @@ pub fn initialize(
                 batch
                     .parts
                     .set_scalar(slot, i, current + (target - current) * s);
+            }
+        }
+        Initializer::RadiusFromCpObject { control_point } => {
+            let scale = scene.control_points[control_point.index()].object_scale;
+            for i in first..len {
+                batch.parts.set_scalar(slot(Field::RADIUS), i, scale);
             }
         }
         Initializer::RandomColor { min, max, field } => {
