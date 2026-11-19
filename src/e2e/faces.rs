@@ -21,13 +21,13 @@
 //! (its face trailing its sound's start by the line's lead), starting at each of [`PHASES`]
 //! instants of the expression's loop, and taken over halfway by the next line at every
 //! [`TAKEOVER_EVERY`]th, in frames of 2 ms (the idle) and 4 ms (a line). A frame on which a weight
-//! moves more than [`EXAMINE`], or all of them together more than [`EXAMINE_TOTAL`], is halved
-//! down to [`FINEST`], following the half all the weights together move more in: a jump is a
+//! moves by more than half [`JUMP`] off what the frames on either side say it should (motion moves
+//! alike on neighbouring frames, whatever its sign; a jump moves one frame alone), or all of them
+//! together by more than half [`TOTAL_JUMP`], is halved down to [`FINEST`], following the half all the weights together move more in: a jump is a
 //! change still more than [`JUMP`] in a weight there, or more than [`TOTAL_JUMP`] in all of them
 //! together (a jump does not shrink as the step does; motion does). No speed is capped: a frame
-//! with no jump moves a weight up to 0.123 in 4 ms (Pudge's line 25 started 3480 ms into the loop,
-//! weight 7) and all of them together up to 0.553 (Pudge's line 159 started 2780 ms in), 0.0019
-//! and 0.0086 in [`FINEST`]. No jump is allowed anywhere: a line that ends, or that another takes
+//! with no jump moves a weight up to 0.158 in 4 ms and all of them together up to 1.087 (Pudge's
+//! lines taking over one another), 0.0025 and 0.017 in [`FINEST`]. No jump is allowed anywhere: a line that ends, or that another takes
 //! over, is let go of gradually ([`crate::talk::RELEASE`]), and so are three lines said within a
 //! fifth of a second of each other.
 //!
@@ -60,23 +60,18 @@ const STEP: f32 = 0.002;
 /// How far a line's clock may be off a drawn frame's step: the client's f32 clock is exact to a
 /// few hundred microseconds over its first half hour.
 const CLOCK_SLACK: f32 = 0.000_25;
-/// A change of a morph weight bigger than this at once is a jump.
-const JUMP: f32 = 0.1;
-/// The step a frame is halved down to when judging a jump: 1/64 of a line's frame. The fastest
-/// motion (0.123 of a weight and 0.553 of all together in a 4 ms frame) moves 0.0019 and 0.0086
-/// in it, a fiftieth of [`JUMP`] and a twenty-third of [`TOTAL_JUMP`], and the clock
-/// ([`MAX_CLOCK`] seconds of f32) resolves it to within 4 µs.
+/// A change of a morph weight bigger than this at once is a jump: eight times the most any weight
+/// moves in [`FINEST`] without one (0.0025, a 4 ms frame moving it 0.158: Pudge's line 26 taking
+/// over 25).
+const JUMP: f32 = 0.02;
+/// The step a frame is halved down to when judging a jump: 1/64 of a line's frame, which the
+/// clock ([`MAX_CLOCK`] seconds of f32) resolves to within 4 µs.
 const FINEST: f32 = LINE_STEP / 64.0;
-/// A frame on which a weight moves more than this is halved to see whether it jumped: a jump
-/// over [`JUMP`] hides from it only behind three times as much opposite motion of that weight in
-/// the same frame.
-const EXAMINE: f32 = JUMP / 4.0;
 /// A change of all morph weights together (the sum of their changes) bigger than this at once is
-/// a jump too: a pop spread over several weights, each under [`JUMP`] (four weights by 0.06 is
-/// one).
-const TOTAL_JUMP: f32 = 0.2;
-/// A frame on which all weights together move more than this is halved too.
-const EXAMINE_TOTAL: f32 = TOTAL_JUMP / 4.0;
+/// a jump too, a pop spread over several weights each under [`JUMP`]: 2.4 times the most all of
+/// them move in [`FINEST`] without one (0.017, a 4 ms frame moving them 1.087: Pudge's line 69
+/// taking over 68 while 68 is let go).
+const TOTAL_JUMP: f32 = 0.04;
 /// The latest instant the copy is posed at, in seconds.
 const MAX_CLOCK: f32 = 32.0;
 /// Instants of the idle expression's loop each line starts at, [`PHASE_STEP`] apart: 7 s, a
@@ -597,8 +592,9 @@ impl<'a> Played<'a> {
     }
 
     /// Plays `frames` frames of `step` seconds from `start`, saying `script`, each checked
-    /// against the one before: a frame on which a weight moves more than [`EXAMINE`] (or all of
-    /// them together more than [`EXAMINE_TOTAL`]) is halved down to [`FINEST`], and holds a jump
+    /// against the one before: a frame on which a weight moves by more than half [`JUMP`] off
+    /// what the frames on either side say it should (or all of them together by more than half
+    /// [`TOTAL_JUMP`]) is halved down to [`FINEST`], and holds a jump
     /// when the change is still more than [`JUMP`] in a weight there (or [`TOTAL_JUMP`] in all).
     fn play(
         &mut self,
@@ -609,22 +605,48 @@ impl<'a> Played<'a> {
     ) -> Vec<String> {
         let halvings = (step / FINEST).log2().round() as u32;
         let at = |frame: usize| start + frame as f32 * step;
-        let mut last = self.at(at(0), script);
+        let faces: Vec<_> = (0..=frames).map(|k| self.at(at(k), script)).collect();
+        let change = |k: usize| -> Option<Vec<f32>> {
+            let (a, b) = (&faces.get(k.checked_sub(1)?)?.0, &faces.get(k)?.0);
+            Some(b.iter().zip(a).map(|(b, a)| b - a).collect())
+        };
         let mut out = Vec::new();
-        for frame in 0..frames {
-            let now = self.at(at(frame + 1), script);
-            let (i, by) = largest_change(&last.0, &now.0);
-            let total = total_change(&last.0, &now.0);
-            let jump = (by > EXAMINE || total > EXAMINE_TOTAL)
-                .then(|| self.halve((at(frame), &last), (at(frame + 1), &now), halvings, script))
+        for frame in 1..=frames {
+            let this = change(frame).expect("a frame's change");
+            // What the frames around it say it should move: motion moves alike on frames side by
+            // side whatever its sign or speed, a jump moves one frame alone.
+            let around: Vec<Vec<f32>> = [frame - 1, frame + 1]
+                .into_iter()
+                .filter_map(change)
+                .collect();
+            let off = |w: usize| {
+                let expected =
+                    around.iter().map(|d| d[w]).sum::<f32>() / around.len().max(1) as f32;
+                (this[w] - expected).abs()
+            };
+            let alone = (0..this.len()).map(off).fold(0.0, f32::max);
+            let alone_total: f32 = (0..this.len()).map(off).sum();
+            let (before, after) = (&faces[frame - 1], &faces[frame]);
+            let jump = (alone > JUMP / 2.0 || alone_total > TOTAL_JUMP / 2.0)
+                .then(|| {
+                    self.halve(
+                        (at(frame - 1), before),
+                        (at(frame), after),
+                        halvings,
+                        script,
+                    )
+                })
                 .flatten();
             match jump {
                 Some((said, what)) => out.push(format!(
                     "{phase} frame {frame}: {what} at once; said {said:?}"
                 )),
-                None => fastest.note((by, total), || format!("{phase} frame {frame}, weight {i}")),
+                None => {
+                    let (i, by) = largest_change(&before.0, &after.0);
+                    let total = total_change(&before.0, &after.0);
+                    fastest.note((by, total), || format!("{phase} frame {frame}, weight {i}"));
+                }
             }
-            last = now;
         }
         out
     }
