@@ -541,7 +541,10 @@ impl Mixer {
     ) -> Option<Entity> {
         match self.start(commands, now, request, source) {
             Started::Loop(entity) => Some(entity),
-            Started::Once => self.voices.last().map(|voice| voice.entity),
+            Started::Once => self.voices.last_mut().map(|voice| {
+                voice.ends = None;
+                voice.entity
+            }),
             Started::Refused => None,
         }
     }

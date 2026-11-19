@@ -841,6 +841,72 @@ mod start_under_the_balance {
     }
 
     #[test]
+    fn an_audible_voice_resumes_after_the_mixer_clock_passes_its_normal_end() {
+        use crate::mixer::{Mixer as GameMixer, Request};
+
+        let (mixer, samples) = silent_mixer();
+        let clock = Clock::new(samples.sample_rate());
+        let output = Silent {
+            mixer,
+            stop: Arc::new(AtomicBool::new(false)),
+            worker: None,
+            presentation: clock.clone(),
+            opened: Instant::now(),
+        };
+        let mut render = Render::new(samples, clock.clone());
+        let tracked = VoiceClock::new(1.0);
+        let mut world = World::new();
+        world.insert_resource(Output(Device::new(|_| Some(Stream::Silent(output)))));
+        let mut sources = Assets::<AudioSource>::default();
+        let source = sources.add(constant_source());
+        world.insert_resource(sources);
+        world.insert_resource(Settings::default());
+        world.insert_resource(GameMixer::default());
+        world.resource_scope(|world, mut mixer: Mut<GameMixer>| {
+            let mut commands = world.commands();
+            let request = Request {
+                event: "spoken",
+                channel: Channel::Voices,
+                ..Request::default()
+            };
+            let player = mixer
+                .start_heard(&mut commands, Duration::ZERO, &request, source)
+                .expect("the voice admitted");
+            commands.entity(player).insert(tracked.clone());
+        });
+        world.flush();
+        world.run_system_once(play_queued).expect("play queued");
+        let mut buffer = [0.0; PULL];
+        render.fill(&mut buffer, 0.0);
+        let channels = usize::from(SILENT_CHANNELS);
+        let first = buffer
+            .chunks_exact(channels)
+            .position(|frame| peak(frame) > 0.01)
+            .expect("the first buffer had voice PCM");
+        let before = peak(&buffer);
+        world
+            .run_system_once(
+                |mut commands: Commands,
+                 mut mixer: ResMut<GameMixer>,
+                 mut tuned: Query<&mut Tuned>| {
+                    mixer.tick(&mut commands, Duration::from_secs(11), &mut tuned, None);
+                },
+            )
+            .expect("advance the mixer while the output is stalled");
+        render.fill(&mut buffer, 11.0);
+        assert!(
+            (peak(&buffer[buffer.len() / 2..]) - before).abs() < 0.002,
+            "the mixer clock clipped the resumed voice's PCM"
+        );
+        let played = tracked.played(&clock, clock.frame_at(11.01), true);
+        let expected = (buffer.len() / channels - first) as f32 / SILENT_RATE as f32 + 0.01;
+        assert!(
+            matches!(played, Played::At(at) if (at - expected).abs() < 0.0002),
+            "the resumed buffer's audible media position should be {expected:.4}, got {played:?}"
+        );
+    }
+
+    #[test]
     fn a_sound_started_under_a_mute_is_silent_from_its_first_sample() {
         for channel in Channel::ALL {
             for mode in [PlaybackSettings::ONCE, PlaybackSettings::LOOP] {
