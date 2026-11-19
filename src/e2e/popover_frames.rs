@@ -26,6 +26,7 @@ const WINDOWS: [&str; 3] = ["1920x1080", "1280x720", "2877x1642"];
 /// What a popover is and where it is drawn on one frame: the words it holds and its rectangle.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct Seen {
+    entity: Entity,
     words: String,
     rect: Rect,
 }
@@ -60,7 +61,11 @@ pub(super) fn seen<T: Component>(client: &mut Client) -> Option<Seen> {
         .map(|(_, text)| text)
         .collect::<Vec<_>>()
         .join(" | ");
-    Some(Seen { words, rect })
+    Some(Seen {
+        entity: root,
+        words,
+        rect,
+    })
 }
 
 /// What the popovers drew on each frame of a run.
@@ -736,16 +741,25 @@ fn context_help_at_1024x600_and_scale_2_is_shown_inside_the_window_and_not_over_
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             std::time::Duration::from_millis(10),
         ));
+    // Other pages can leave an anchor in the world while their popups are hidden.
+    let world = client.world_mut();
+    let other_row = world.spawn(Node::default()).id();
+    world.spawn((
+        crate::ui::help::placement::Anchor {
+            row: other_row,
+            side: crate::ui::help::Side::Above,
+        },
+        Visibility::Hidden,
+    ));
     fonts_ready(&mut client);
     client.mouse(Vec2::ZERO);
     // Every control of the page that has context help, each reached by the keyboard in turn.
     let names: Vec<String> = {
         let world = client.world_mut();
         world
-            .query::<&Name>()
+            .query_filtered::<&Name, With<crate::ui::help::Hint>>()
             .iter(world)
             .map(|name| name.as_str().to_owned())
-            .filter(|name| name.starts_with("about "))
             .collect()
     };
     assert!(names.len() >= 2, "the page has several helps: {names:?}");
@@ -760,14 +774,29 @@ fn context_help_at_1024x600_and_scale_2_is_shown_inside_the_window_and_not_over_
             complaints.push(format!("{name}: the help is not shown"));
             continue;
         };
+        let control = super::help_widgets::button(&mut client, &name).expect("the focused control");
         let row = {
             let world = client.world_mut();
+            assert_eq!(
+                world
+                    .get::<ChildOf>(help.entity)
+                    .expect("the popup belongs to a control")
+                    .parent(),
+                control,
+                "{name}: the visible popup belongs to the focused control"
+            );
             let row = world
-                .query::<&crate::ui::help::placement::Anchor>()
-                .iter(world)
-                .next()
-                .expect("an anchor")
+                .get::<crate::ui::help::placement::Anchor>(help.entity)
+                .expect("the visible popup's anchor")
                 .row;
+            assert_eq!(
+                world
+                    .get::<ChildOf>(control)
+                    .expect("the control is in a row")
+                    .parent(),
+                row,
+                "{name}: the bounds check must use the focused control's row"
+            );
             let node = world.get::<ComputedNode>(row).expect("laid out");
             let at = world
                 .get::<bevy::ui::UiGlobalTransform>(row)
