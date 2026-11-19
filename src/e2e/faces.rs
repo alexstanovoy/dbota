@@ -1600,3 +1600,47 @@ fn playback_clock_catches_up_without_jumping_when_a_buffer_returns() {
         "the jaw never rejoined: {previous:?}"
     );
 }
+
+#[test]
+fn a_covered_portrait_leaves_the_camera_untouched_until_shown() {
+    use bevy::input::ButtonState;
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::PUDGE, &[]);
+    client.cheat(Cheat::StartGame);
+    super::hud_layout::on_screen(&mut client);
+    client.until("the portrait has drawn a pose", |c| {
+        c.world().resource::<Stage>().drawing()
+    });
+    let camera = client
+        .world_mut()
+        .query_filtered::<Entity, With<crate::portrait::PortraitCamera>>()
+        .single(client.world())
+        .expect("the portrait camera");
+    let toggle = |c: &mut Client| {
+        c.key(KeyCode::Escape, ButtonState::Pressed);
+        c.key(KeyCode::Escape, ButtonState::Released);
+    };
+    toggle(&mut client);
+    assert!(!client.world().resource::<crate::ui::HudShown>().0);
+    let tagged = {
+        let mut camera = client
+            .world_mut()
+            .get_mut::<Transform>(camera)
+            .expect("camera transform");
+        camera.translation.x += 16.0;
+        camera.translation
+    };
+    client.frames(3);
+    assert_eq!(
+        client.world().get::<Transform>(camera).unwrap().translation,
+        tagged,
+        "the hidden portrait re-aimed its camera"
+    );
+    toggle(&mut client);
+    client.frames(3);
+    assert_ne!(
+        client.world().get::<Transform>(camera).unwrap().translation,
+        tagged,
+        "the visible portrait stopped tracking its actor"
+    );
+}
