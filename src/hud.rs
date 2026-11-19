@@ -370,7 +370,6 @@ pub(crate) fn xp_share(level: u8, xp: i32) -> f32 {
 
 /// The level ring, gold over the share of the way to the next level.
 pub(crate) fn xp_ring(share: f32) -> BackgroundGradient {
-    ui::rebuilt();
     let gold = LEVEL_GOLD;
     let empty = Color::srgb(0.224, 0.224, 0.224);
     ui::split_disc(share.clamp(0.0, 1.0) * TAU, gold, empty)
@@ -413,11 +412,14 @@ fn menu_buttons(
 ) {
     let primary_held = mouse.pressed(MouseButton::Left);
     for (hovered, pressed, mut image) in &mut buttons {
-        image.color = if hovered.get() || (pressed && primary_held) {
+        let colour = if hovered.get() || (pressed && primary_held) {
             Color::WHITE
         } else {
             Color::srgba(0.8, 0.87, 1.0, 0.5)
         };
+        if image.color != colour {
+            image.color = colour;
+        }
     }
 }
 
@@ -472,27 +474,51 @@ pub fn plugin(app: &mut App) {
         .add_observer(level_up_press)
         .add_systems(PreStartup, spawn_docks)
         .add_systems(Startup, spawn_hud)
-        .add_systems(
-            Update,
-            (
-                readouts,
-                gauges,
-                // A drop is drawn in the frame it is let go: its preview is made by `boxes`.
-                slots.after(crate::input::boxes),
-                portrait,
-                xp,
-                level_ups,
-                innate,
-                ability_row,
-            )
-                .run_if(crate::select::match_or_tactical),
+        .add_systems(Update, updates());
+}
+
+pub(crate) fn updates() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    (
+        (
+            readouts,
+            gauges,
+            xp,
+            level_ups,
+            innate,
+            ability_row,
+            // The preview is made by `boxes` in the frame the item is dropped.
+            slots.after(crate::input::boxes),
+            portrait,
         )
-        .add_systems(
-            Update,
-            (time_of_day, seats, seat_deaths, menu_buttons, frame_rate)
-                .run_if(|k: Res<crate::session::MatchKnown>| k.0),
-        )
-        .add_systems(Update, behind_the_pick);
+            .run_if(crate::select::match_or_tactical),
+        (time_of_day, seats, seat_deaths, menu_buttons, frame_rate)
+            .run_if(|k: Res<crate::session::MatchKnown>| k.0),
+        behind_the_pick,
+    )
+        .into_configs()
+}
+
+/// The inputs shared by HUD systems that paint snapshots. Selection can change between
+/// snapshots, and a seat or a match can change without its new clock advancing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HudFrame {
+    game: u32,
+    connection: Option<bota_proto::PlayerId>,
+    view: Option<(u32, Option<Team>)>,
+    seat: Option<bota_proto::SlotId>,
+    selected: Option<bota_proto::EntityId>,
+}
+
+impl HudFrame {
+    pub(crate) fn new(core: &Core, game: u32) -> Self {
+        Self {
+            game,
+            connection: core.lobby.me,
+            view: core.view().map(|view| (view.tick, view.viewer)),
+            seat: core.my_slot,
+            selected: core.selected,
+        }
+    }
 }
 
 /// The whole HUD stays away while the hero pick or the strategy screen has
@@ -918,7 +944,6 @@ fn ability_row(
         return;
     }
     *applied = Some(count);
-    ui::rebuilt();
     let pitch = if count <= 4 {
         ABILITY_PITCH_FEW
     } else {
@@ -2021,16 +2046,48 @@ fn unlearned(id: AbilityId) -> AbilityView {
     }
 }
 
-/// Every text of the HUD: the panel's whatever it is about, the rest once
-/// the match has a view.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ReadoutFrame {
+    hud: HudFrame,
+    hero: Option<HeroId>,
+    winner: Option<Team>,
+    aborted: bool,
+    redialing: bool,
+    lost: bool,
+}
+
+#[derive(Default)]
+struct ReadoutState {
+    frame: Option<ReadoutFrame>,
+    console: Option<String>,
+}
+
+/// Match text follows snapshots, selection and local notices, including text typed while paused.
 fn readouts(
     session: NonSend<Session>,
+    game: Res<crate::main_menu::GameEpoch>,
     labels: Res<crate::dota_text::Texts>,
     mut texts: Query<(&Readout, &mut Text)>,
+    mut drawn: Local<ReadoutState>,
 ) {
     let core = &session.0;
-    let (p, unit, _) = subject(core);
     let hero = subject_hero(core);
+    let frame = ReadoutFrame {
+        hud: HudFrame::new(core, game.0),
+        hero,
+        winner: core.over.as_ref().map(|(team, _)| *team),
+        aborted: core.aborted.is_some(),
+        redialing: core.source.is_redialing(),
+        lost: core.lost,
+    };
+    let console_changed = drawn.console != core.console;
+    if drawn.frame.replace(frame) == Some(frame) && !console_changed && !labels.is_changed() {
+        return;
+    }
+    if console_changed {
+        drawn.console.clone_from(&core.console);
+    }
+    let (p, unit, _) = subject(core);
     for (readout, mut text) in &mut texts {
         let s = match (
             panel_text(&labels, core, p, unit, hero, *readout),
@@ -2122,25 +2179,43 @@ fn frame_rate(
     time: Res<Time<Real>>,
     mut text: Single<&mut Text, With<FrameRate>>,
     mut span: Local<(u32, f32)>,
+    mut drawn: Local<Option<FrameRateSample>>,
 ) {
+    let elapsed = time.delta_secs();
+    if elapsed == 0.0 {
+        return;
+    }
     span.0 += 1;
-    span.1 += time.delta_secs();
+    span.1 += elapsed;
     if span.1 < FRAME_RATE_SPAN {
         return;
     }
-    let fps = span.0 as f32 / span.1;
-    *span = (0, 0.0);
     let source = &session.0.source;
+    let sample = FrameRateSample {
+        fps: (span.0 as f32 / span.1).round_ties_even() as u32,
+        ping: source.ping().map(|ping| ping.as_millis()),
+        orders: source.order_latency().map(|latency| latency.as_millis()),
+    };
+    *span = (0, 0.0);
+    if drawn.replace(sample) == Some(sample) {
+        return;
+    }
     let mut told = String::new();
-    if let Some(ping) = source.ping() {
-        told += &format!("ping {} ms   ", ping.as_millis());
+    if let Some(ping) = sample.ping {
+        told += &format!("ping {ping} ms   ");
     }
-    // Dota's `dota_report_order_latency`: how long a click takes to be received.
-    if let Some(latency) = source.order_latency() {
-        told += &format!("orders {} ms   ", latency.as_millis());
+    if let Some(orders) = sample.orders {
+        told += &format!("orders {orders} ms   ");
     }
-    told += &format!("{fps:.0} fps");
+    told += &format!("{} fps", sample.fps);
     text.set_if_neq(Text(told));
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FrameRateSample {
+    fps: u32,
+    ping: Option<u128>,
+    orders: Option<u128>,
 }
 
 /// The game clock, negative before the horn.
@@ -2539,9 +2614,18 @@ fn item_action(slot: u8) -> Option<Action> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SlotFrame {
+    hud: HudFrame,
+    hero: Option<HeroId>,
+    held: Option<u8>,
+    aiming: Option<bota_client_core::Slot>,
+}
+
 /// Fills every slot box with what is in it.
 fn slots(
     session: NonSend<Session>,
+    game: Res<crate::main_menu::GameEpoch>,
     manifest: Res<Manifest>,
     settings: Res<Settings>,
     server: Res<AssetServer>,
@@ -2569,8 +2653,23 @@ fn slots(
         Without<AbilityBox>,
     >,
     mut faces: Local<Vec<(Entity, Option<SlotFace>)>>,
+    mut drawn: Local<Option<SlotFrame>>,
 ) {
     let core = &session.0;
+    let frame = SlotFrame {
+        hud: HudFrame::new(core, game.0),
+        hero: subject_hero(core),
+        held: core.held_item,
+        aiming: core.aiming,
+    };
+    if drawn.replace(frame) == Some(frame)
+        && !manifest.is_changed()
+        && !settings.is_changed()
+        && !bag.is_changed()
+        && !settling.is_changed()
+    {
+        return;
+    }
     let (_, unit, kit) = subject(core);
     faces.clear();
     for (entity, ability, item, mut border, mut visibility) in &mut boxes {
@@ -2731,8 +2830,10 @@ fn portrait(
     drawn: Res<crate::portrait::Portrait>,
     mut image: Single<&mut ImageNode, (With<Portrait>, Without<PortraitRender>)>,
     mut render: Single<(&mut ImageNode, &mut Visibility), With<PortraitRender>>,
+    mut fallback: Local<Option<(Option<HeroId>, bool)>>,
 ) {
     if let Some((model, backdrop)) = &drawn.shown {
+        *fallback = None;
         if render.0.image != *model {
             render.0.image = model.clone();
         }
@@ -2754,12 +2855,15 @@ fn portrait(
     }
     render.1.set_if_neq(Visibility::Hidden);
     let core = &session.0;
-    let p = subject(core).0;
-    let path = subject_hero(core).and_then(|h| manifest.portrait(h.0));
-    // Nothing in place of a portrait the cache has not, rather than white.
+    let hero = subject_hero(core);
+    let dead = subject(core).0.is_some_and(lies_dead);
+    if fallback.replace((hero, dead)) == Some((hero, dead)) && !manifest.is_changed() {
+        return;
+    }
+    let path = hero.and_then(|h| manifest.portrait(h.0));
     let tint = if path.is_none() {
         Color::NONE
-    } else if p.is_some_and(lies_dead) {
+    } else if dead {
         Color::srgb(0.3, 0.3, 0.3)
     } else {
         Color::WHITE
@@ -2785,10 +2889,14 @@ fn time_of_day(
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     mut image: Single<&mut ImageNode, With<DayNight>>,
+    mut drawn: Local<Option<bool>>,
 ) {
     let Some(night) = crate::daylight::night(&session.0) else {
         return;
     };
+    if drawn.replace(night) == Some(night) && !manifest.is_changed() {
+        return;
+    }
     let name = if night { "hud.night" } else { "hud.day" };
     let path = manifest.file(name);
     let tint = if path.is_some() {
@@ -2804,6 +2912,8 @@ fn time_of_day(
 /// player holds is hidden.
 fn seats(
     session: NonSend<Session>,
+    game: Res<crate::main_menu::GameEpoch>,
+    mut drawn: Local<Option<HudFrame>>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     colours: Res<crate::player_colour::PlayerColours>,
@@ -2816,6 +2926,10 @@ fn seats(
     let Some(view) = core.view() else {
         return;
     };
+    let frame = HudFrame::new(core, game.0);
+    if drawn.replace(frame) == Some(frame) && !manifest.is_changed() && !colours.is_changed() {
+        return;
+    }
     for (SeatColumn(place), mut node) in &mut columns {
         let display = if seat_of(view, *place).is_some() {
             Display::Flex
@@ -2871,15 +2985,22 @@ fn seat_portrait(manifest: &Manifest, p: &PlayerView) -> Option<String> {
 /// the respawn seconds, and no health.
 fn seat_deaths(
     session: NonSend<Session>,
+    game: Res<crate::main_menu::GameEpoch>,
+    mut drawn: Local<Option<HudFrame>>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     mut washes: ResMut<Assets<Washed>>,
     mut deaths: Query<(&SeatDeath, &mut Node, Option<&MaterialNode<Washed>>)>,
     mut wells: Query<(&SeatAlive, &mut Node), Without<SeatDeath>>,
 ) {
-    let Some(view) = session.0.view() else {
+    let core = &session.0;
+    let Some(view) = core.view() else {
         return;
     };
+    let frame = HudFrame::new(core, game.0);
+    if drawn.replace(frame) == Some(frame) && !manifest.is_changed() {
+        return;
+    }
     let dead = |seat: Place| seat_of(view, seat).is_some_and(lies_dead);
     let shown = |on: bool| if on { Display::Flex } else { Display::None };
     for (SeatDeath(seat), mut node, wash) in &mut deaths {

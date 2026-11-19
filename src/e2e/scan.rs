@@ -256,7 +256,7 @@ fn a_right_click_and_escape_lay_the_aim_of_scan_down() {
 
 /// A recorded match in which Radiant's seat scans the Dire fountain once, saved while the scan
 /// still looks.
-fn recorded_scan() -> super::fog_pov::ReplayFile {
+pub(super) fn recorded_scan() -> super::fog_pov::ReplayFile {
     let mut game = super::fog_pov::Spectated::start("2");
     game.cheat(Cheat::Refresh);
     game.wait("a charge told", |driver, _| {

@@ -1,6 +1,9 @@
 //! The cells of the in-match HUD as a player meets them before they hold anything: the top bar's
 //! ten places, the inventory's cells, and the ability row as wide as the hero's abilities need.
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bota_proto::HeroId;
@@ -315,27 +318,81 @@ fn the_pointer_over_a_top_bar_level_badge_is_over_the_portrait() {
     );
 }
 
-/// A frame that changes nothing builds nothing for the HUD's panel, its top bar, its ability row and
-/// its Glyph: the player at 240 Hz in 4K pays for no gradient or string rebuilt for a still panel.
-#[test]
-fn a_still_hud_builds_nothing_anew_on_the_frames_that_change_nothing() {
-    let (_server, mut client) = hud_of(HeroId::SHADOW_FIEND);
-    // Nothing moves in what these show: the hero stands at the start, its experience and its
-    // abilities are as they are, and the Glyph holds both its charges, with no wait running.
-    client.cheat(bota_proto::Cheat::Refresh);
-    client.until("both charges of the Glyph", |c| {
-        c.core().glyph().and_then(|glyph| glyph.charges) == Some(2)
-            && c.core().glyph().and_then(|glyph| glyph.ready_after) == Some(0)
+struct CountingAllocator;
+
+thread_local! {
+    static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+fn count_allocation() {
+    let _ = ALLOCATIONS.try_with(|count| {
+        if let Some(n) = count.get() {
+            count.set(Some(n + 1));
+        }
     });
-    client.frames(30);
-    let built = || crate::ui::REBUILT.with(std::cell::Cell::get);
-    let before = built();
-    client.frames(60);
-    assert_eq!(
-        built(),
-        before,
-        "the panel, the top bar, the ability row or the Glyph built something anew on a still frame"
+}
+
+// SAFETY: each operation forwards the caller's arguments unchanged to System.
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        count_allocation();
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        count_allocation();
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn realloc(&self, address: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        count_allocation();
+        unsafe { System.realloc(address, layout, size) }
+    }
+
+    unsafe fn dealloc(&self, address: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(address, layout) }
+    }
+}
+
+/// Measure the production HUD update systems separately from Bevy's renderer and the rest of the
+/// client. An active Scan exercises the minimap rings and the received radar data while paused.
+#[test]
+fn the_paused_hud_updates_without_allocating() {
+    let file = super::scan::recorded_scan();
+    let mut client = super::fog_pov::replay_from_side(&file, 0);
+    assert!(
+        client
+            .core()
+            .scan()
+            .is_some_and(|side| !side.radars.is_empty())
     );
+    assert!(
+        matches!(&client.core().source, bota_client_core::Source::Replay(player) if player.paused)
+    );
+    let world = client.world_mut();
+    assert!(world.resource::<crate::session::MatchKnown>().0);
+    world
+        .resource_mut::<Time<Real>>()
+        .advance_by(std::time::Duration::ZERO);
+    let mut schedule = Schedule::default();
+    schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::default());
+    schedule.add_systems((
+        crate::hud::updates(),
+        crate::glyph::updates(),
+        crate::scan::updates(),
+    ));
+    for _ in 0..3 {
+        schedule.run(world);
+    }
+    ALLOCATIONS.with(|count| count.set(Some(0)));
+    schedule.run(world);
+    let allocations = ALLOCATIONS
+        .with(|count| count.replace(None))
+        .expect("counting enabled");
+    assert_eq!(allocations, 0, "heap allocations in one paused HUD update");
 }
 
 /// Each side's score in the top bar is white, as the game's, not green and red.

@@ -333,7 +333,6 @@ fn show(
     let key = (angle, (alpha * 100.0) as u8);
     if shown.sweep != Some(key) {
         shown.sweep = Some(key);
-        ui::rebuilt();
         **sweep = ui::split_disc(
             f32::from(angle) / 720.0 * TAU,
             Color::NONE,
@@ -343,7 +342,6 @@ fn show(
     let secs = if waiting { ready_in.div_ceil(rate) } else { 0 };
     if shown.seconds != Some(secs) {
         shown.seconds = Some(secs);
-        ui::rebuilt();
         seconds.0 = if secs > 0 {
             secs.to_string()
         } else {
@@ -352,7 +350,6 @@ fn show(
     }
     if shown.charges != Some(charges) {
         shown.charges = Some(charges);
-        ui::rebuilt();
         // None held, no badge (`.NoCharges #GlyphChargeCount`).
         badge.set_if_neq(if charges > 0 {
             Visibility::Inherited

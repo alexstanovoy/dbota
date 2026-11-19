@@ -60,13 +60,19 @@ pub(crate) const FOUND_COLOUR: Color = Color::srgb(0.82, 0.34, 0.34);
 pub(crate) const PREVIEW_COLOUR: Color = Color::srgb(0.3, 0.76, 0.32);
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, spawn)
+    app.init_resource::<DisplayedScan>()
+        .add_systems(Startup, spawn)
         .add_observer(click)
-        .add_systems(
-            Update,
-            (show, minimap_rings).run_if(|k: Res<MatchKnown>| k.0),
-        )
+        .add_systems(Update, updates())
         .add_systems(PostUpdate, draw.after(crate::camera::CursorPicked));
+}
+
+pub(crate) fn updates() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    (
+        sample,
+        (show, minimap_rings).run_if(|k: Res<MatchKnown>| k.0),
+    )
+        .chain()
 }
 
 fn spawn(
@@ -145,10 +151,49 @@ fn shown(core: &Core) -> Option<(ScanSide, u32)> {
     Some((core.scan()?, tick))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ScanFrameKey {
+    hud: crate::hud::HudFrame,
+    event_tick: Option<u32>,
+}
+
+#[derive(Default, Resource)]
+struct DisplayedScan(Option<(ScanSide, u32)>);
+
+/// Scan facts can arrive after their snapshot. Read once when either part changes so the
+/// button, minimap and world draw all use the same sample.
+fn sample(
+    session: NonSend<Session>,
+    game: Res<crate::main_menu::GameEpoch>,
+    mut read: Local<Option<ScanFrameKey>>,
+    mut displayed: ResMut<DisplayedScan>,
+) {
+    let core = &session.0;
+    let key = ScanFrameKey {
+        hud: crate::hud::HudFrame::new(core, game.0),
+        event_tick: core.session().and_then(|session| session.last_event_tick()),
+    };
+    if read.replace(key) != Some(key) {
+        let scan = shown(core);
+        if displayed.0 != scan {
+            displayed.0 = scan;
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ScanButtonState {
+    charges: u8,
+    remaining: Option<u32>,
+    aiming: bool,
+}
+
 /// The button: its icon, its sweep, its badge.
 #[allow(clippy::type_complexity)]
 fn show(
     session: NonSend<Session>,
+    displayed: Res<DisplayedScan>,
+    mut drawn: Local<Option<ScanButtonState>>,
     mut frame: Single<&mut Visibility, (With<ScanFrame>, Without<ScanBadge>)>,
     mut icon: Single<(&ScanIcon, &mut ImageNode), Without<ScanSweep>>,
     mut sweep: Single<&mut BackgroundGradient, With<ScanSweep>>,
@@ -157,28 +202,37 @@ fn show(
     mut button: Single<&mut BackgroundColor, (With<ScanButton>, Without<ScanSweep>)>,
 ) {
     let core = &session.0;
-    let Some((side, now)) = shown(core) else {
+    let Some((side, now)) = &displayed.0 else {
+        *drawn = None;
         frame.set_if_neq(Visibility::Hidden);
         return;
     };
-    frame.set_if_neq(Visibility::Inherited);
     let charges = side.ledger.charges;
-    let (art, art_color) = match (&icon.0.on, &icon.0.off, charges) {
-        (_, Some(off), 0) => (off.clone(), Color::WHITE),
-        (Some(on), _, _) => (on.clone(), Color::WHITE),
-        _ => (Handle::default(), Color::NONE),
+    let remaining = side.ledger.next_in(*now);
+    let state = ScanButtonState {
+        charges,
+        remaining,
+        aiming: core.scan_aim,
     };
-    let (_, image) = &mut *icon;
-    if image.image != art {
-        image.image = art;
+    let previous = drawn.replace(state);
+    if previous == Some(state) {
+        return;
     }
-    if image.color != art_color {
-        image.color = art_color;
+    frame.set_if_neq(Visibility::Inherited);
+    if previous.is_none_or(|old| (old.charges == 0) != (charges == 0)) {
+        let (art, colour) = match (&icon.0.on, &icon.0.off, charges) {
+            (_, Some(off), 0) => (off.clone(), Color::WHITE),
+            (Some(on), _, _) => (on.clone(), Color::WHITE),
+            _ => (Handle::default(), Color::NONE),
+        };
+        let (_, image) = &mut *icon;
+        image.image = art;
+        image.color = colour;
     }
     // Dark over what is still to wait for the next charge, clear over what has passed; no cover
     // at all while every charge is held.
     let waiting = charges < SCAN_MAX_CHARGES;
-    let left = side.ledger.next_in(now).map_or(0.0, |ticks| {
+    let left = remaining.map_or(0.0, |ticks| {
         (ticks as f32 / SCAN_RECHARGE_TICKS as f32).clamp(0.0, 1.0)
     });
     let dark = Color::srgba(0.0, 0.0, 0.0, if waiting { 0.87 } else { 0.0 });
@@ -191,7 +245,9 @@ fn show(
     } else {
         Visibility::Hidden
     });
-    count.set_if_neq(Text(charges.to_string()));
+    if previous.is_none_or(|old| old.charges != charges) {
+        count.0 = charges.to_string();
+    }
     // The aim taken up lights the plate behind the icon.
     let plate = if core.scan_aim {
         Color::srgb(0.18, 0.4, 0.2)
@@ -230,6 +286,7 @@ fn draw(
     session: NonSend<Session>,
     ground: Res<Ground>,
     cursor: Res<CursorGround>,
+    displayed: Res<DisplayedScan>,
 ) {
     let core = &session.0;
     let radius = SCAN_RADIUS as f32;
@@ -238,7 +295,7 @@ fn draw(
     {
         ring(&mut gizmos, &ground, at, radius, PREVIEW_COLOUR);
     }
-    let Some((side, _)) = shown(core) else {
+    let Some((side, _)) = &displayed.0 else {
         return;
     };
     for radar in &side.radars {
@@ -263,10 +320,11 @@ fn draw(
 /// appears: its diameter is the rule's radius twice over, to the map's scale.
 fn minimap_rings(
     mut commands: Commands,
-    session: NonSend<Session>,
+    displayed: Res<DisplayedScan>,
     frame: Option<Single<Entity, With<MinimapFrame>>>,
     mut rings: Query<(&mut Node, &mut BorderColor, &mut Visibility), With<MinimapRing>>,
     made: Query<(), With<MinimapRing>>,
+    added: Query<(), Added<MinimapRing>>,
 ) {
     let Some(frame) = frame else {
         return;
@@ -289,10 +347,14 @@ fn minimap_rings(
         }
         return;
     }
-    let shown: Vec<bota_proto::RadarView> = shown(&session.0)
-        .map(|(side, _)| side.radars)
-        .unwrap_or_default();
-    let mut radars = shown.iter();
+    if !displayed.is_changed() && added.is_empty() {
+        return;
+    }
+    let mut radars = displayed
+        .0
+        .as_ref()
+        .into_iter()
+        .flat_map(|(side, _)| &side.radars);
     for (mut node, mut border, mut visibility) in &mut rings {
         let Some(radar) = radars.next() else {
             visibility.set_if_neq(Visibility::Hidden);

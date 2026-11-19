@@ -444,21 +444,6 @@ pub enum Extent {
 #[derive(Component, Clone, Copy)]
 pub struct Overhangs;
 
-// What the HUD's systems built anew on this thread (a gradient, a string): counted in the tests,
-// which hold that a frame that changes nothing builds nothing. The systems that count run on the
-// main thread, as the tests' client does.
-#[cfg(test)]
-thread_local! {
-    pub(crate) static REBUILT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// Notes that a system built something anew for the frame.
-#[inline]
-pub(crate) fn rebuilt() {
-    #[cfg(test)]
-    REBUILT.with(|count| count.set(count.get() + 1));
-}
-
 /// A panel of the in-match interface that stands on its own, not under the HUD's root (the shop's is the
 /// first): the layout tests (`e2e::hud_bounds`) walk it as they walk the HUD, so a
 /// panel that registers itself here is held inside the window, inside its holders and apart from the
