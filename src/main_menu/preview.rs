@@ -49,7 +49,7 @@ fn hover_preview(
     args: Res<crate::Args>,
     preview: Option<Res<super::Preview>>,
     fonts: Res<crate::ui::Fonts>,
-    server: Res<AssetServer>,
+    font_assets: Res<Assets<Font>>,
     mut pointer: Pointer,
     mut state: Local<HoverState>,
 ) {
@@ -72,10 +72,7 @@ fn hover_preview(
         Some("match-decline") => "about declining".to_owned(),
         _ => return,
     };
-    if !fonts
-        .all()
-        .all(|font| server.is_loaded_with_dependencies(font))
-    {
+    if !fonts.all().all(|font| font_assets.contains(font.id())) {
         return;
     }
     let Some((_, _, at)) = pointer

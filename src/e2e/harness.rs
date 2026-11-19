@@ -848,8 +848,8 @@ impl Client {
                 .get_resource::<crate::ui::Fonts>()
                 .is_some_and(|fonts| {
                     let server = world.resource::<AssetServer>();
-                    server.is_loaded_with_dependencies(&fonts.bold)
-                        && server.is_loaded_with_dependencies(&fonts.regular)
+                    crate::loading::settled(server, &fonts.bold)
+                        && crate::loading::settled(server, &fonts.regular)
                 });
             let visible = target.is_some_and(|node| {
                 world

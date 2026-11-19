@@ -328,8 +328,8 @@ fn selection_survives_the_minimap(client: &mut Client, mine: Team) {
             let fonts = world.resource::<crate::ui::Fonts>();
             let assets = world.resource::<AssetServer>();
             world.resource::<crate::loading::Loading>().done()
-                && assets.is_loaded_with_dependencies(&fonts.bold)
-                && assets.is_loaded_with_dependencies(&fonts.regular)
+                && crate::loading::settled(assets, &fonts.bold)
+                && crate::loading::settled(assets, &fonts.regular)
                 && world
                     .get::<InheritedVisibility>(frame)
                     .is_some_and(|shown| shown.get())

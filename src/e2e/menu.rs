@@ -70,8 +70,8 @@ fn hover_button(client: &mut Client, button: Entity) {
                 return false;
             };
             let server = world.resource::<AssetServer>();
-            server.is_loaded_with_dependencies(&fonts.bold)
-                && server.is_loaded_with_dependencies(&fonts.regular)
+            crate::loading::settled(server, &fonts.bold)
+                && crate::loading::settled(server, &fonts.regular)
         },
     );
     client.within(

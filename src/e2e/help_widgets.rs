@@ -482,7 +482,7 @@ pub(super) fn fonts_ready(client: &mut Client) {
         };
         fonts
             .all()
-            .all(|font| server.is_loaded_with_dependencies(font))
+            .all(|font| crate::loading::settled(server, font))
     });
 }
 

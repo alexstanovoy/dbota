@@ -220,7 +220,7 @@ fn interface_fonts_ready(client: &mut Client) -> bool {
     let server = world.resource::<AssetServer>();
     fonts
         .all()
-        .all(|font| server.is_loaded_with_dependencies(font))
+        .all(|font| crate::loading::settled(server, font))
 }
 
 fn checkbox_click(client: &mut Client, name: &str) {
