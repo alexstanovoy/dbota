@@ -401,6 +401,9 @@ pub struct Args {
     /// `await:menu`, `shot:FILE`, `wait:SECONDS`.
     #[arg(long, value_name = "STEPS")]
     pub script: Option<String>,
+    /// Debug: trace these comma-separated cache image paths when drawn in the match UI.
+    #[arg(long, value_delimiter = ',')]
+    pub trace_ui_art: Vec<String>,
 }
 
 /// What else than playing dbota can do.

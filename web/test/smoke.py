@@ -1162,6 +1162,28 @@ def check_sound_page(directory):
     server.shutdown()
 
 
+def check_ui_art_page(directory):
+    """The real browser renderer prepares the two hero icons and active tooltip band."""
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        try:
+            page.goto(base + "?cache=http&gpu=webgl2")
+            wait_console(
+                page, console,
+                r"ui-art: drew icons/abilities/nevermore_dark_lord.png, icons/abilities/nevermore_frenzy.png, "
+                r"hud/item_tooltip_active_psd.png",
+                180, "the match HUD's prepared texture batches",
+            )
+            assert any("dbota: drawing with webgl2" in line for line in console), console
+            assert page.locator("#dbota").is_visible()
+            page.screenshot(path=str(HERE.parent.parent / "temp/smoke-ui-art.png"))
+            assert not problems, problems
+            print("match HUD: 3 drawn textures at the browser image budget")
+        finally:
+            browser.close()
+            server.shutdown()
+
+
 def check_speech_page(directory):
     """A queued voice leaves the drawn mouth still until the audio context can run."""
     with sync_playwright() as p:
@@ -2055,6 +2077,7 @@ def main():
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
     ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
     ap.add_argument("--cursor-input-page", type=pathlib.Path, help="a replay build: the cursor with a real mouse (X server)")
+    ap.add_argument("--ui-art-page", type=pathlib.Path, help="a match replay with a traced HUD and active item tooltip")
     ap.add_argument("--boot-page", type=pathlib.Path, help="any build: every way the start can go wrong ends on a screen")
     ap.add_argument("--busy-page", type=pathlib.Path, help="any build: a busy server's 503 is waited for and tried once more")
     ap.add_argument("--pixels-page", type=pathlib.Path, help="a replay build: the canvas drawn at its device pixels")
@@ -2074,6 +2097,8 @@ def main():
         check_served_cache(args.served_page)
     if args.sound_page:
         check_sound_page(args.sound_page)
+    if args.ui_art_page:
+        check_ui_art_page(args.ui_art_page)
     if args.speech_page:
         check_speech_page(args.speech_page)
     if args.launch_page:

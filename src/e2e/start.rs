@@ -328,3 +328,50 @@ fn a_slow_loading_keeps_the_connection_and_enters_the_match() {
     client.frames(30);
     assert!(!client.core().lost, "still connected in the match");
 }
+
+fn prepare_art_hud(app: &mut App) {
+    app.add_systems(
+        PostStartup,
+        |mut commands: Commands,
+         mut camera: Single<
+            (Entity, &mut bevy::camera::RenderTarget),
+            With<crate::camera::RtsCamera>,
+        >,
+         mut images: ResMut<Assets<Image>>,
+         window: Single<&Window>| {
+            let image = images.add(Image::new_target_texture(
+                window.physical_width(),
+                window.physical_height(),
+                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                None,
+            ));
+            *camera.1 = bevy::camera::RenderTarget::Image(image.into());
+            commands
+                .entity(camera.0)
+                .insert(bevy::ui::IsDefaultUiCamera);
+        },
+    );
+}
+
+#[test]
+fn shadow_fiends_icons_and_the_active_item_header_reach_match_draw_batches() {
+    let server = Server::start(2, &[]);
+    super::harness::quiet_seat(&server, HeroId::PUDGE);
+    let mut client = Client::join_rendered(
+        &server,
+        HeroId::SHADOW_FIEND,
+        &[
+            "--trace-ui-art",
+            "icons/abilities/nevermore_dark_lord.png,icons/abilities/nevermore_frenzy.png,hud/item_tooltip_active_psd.png",
+            "--tip",
+            "item:35",
+        ],
+        prepare_art_hud,
+    );
+    super::hud_layout::on_screen(&mut client);
+    client.within(
+        std::time::Duration::from_secs(20),
+        "both hero icons and the item header in textured UI batches",
+        |c| c.world().resource::<crate::script::art::Trace>().drawn(),
+    );
+}
