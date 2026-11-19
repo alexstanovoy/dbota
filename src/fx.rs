@@ -279,6 +279,8 @@ struct Feeds {
     caster_scale: Option<f32>,
     flight_tip: Vec3,
     flight_speed: f32,
+    flight_lifetime: f32,
+    flight_caught: bool,
     /// The side the unit is held for: 0 the Radiant, 1 the Dire.
     side: f32,
     /// How far the unit sees now, or for the side it is lit for.
@@ -353,8 +355,12 @@ fn feed(
                 continue;
             }
             Feed::FlightSpeed => Vec3::new(feeds.flight_speed, 0.0, 0.0),
-            // The authored timer is secondary to the authoritative end of a held flight.
-            Feed::FlightLifetime => Vec3::new(f32::MAX, 0.0, 0.0),
+            Feed::FlightLifetime => {
+                instance.set_root_duration(*point, feeds.flight_lifetime);
+                continue;
+            }
+            Feed::FlightFree => Vec3::new((!feeds.flight_caught) as u8 as f32, 0.0, 0.0),
+            Feed::FlightCaught => Vec3::new(feeds.flight_caught as u8 as f32, 0.0, 0.0),
             Feed::Side => Vec3::new(feeds.side, 0.0, 0.0),
             Feed::Sight => Vec3::new(feeds.sight, 0.0, 0.0),
             Feed::Gathered(share, plus) => *share * feeds.gathered + *plus,

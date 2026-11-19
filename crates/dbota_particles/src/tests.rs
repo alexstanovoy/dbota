@@ -114,6 +114,7 @@ fn model_skin_effect() -> Arc<Effect> {
     let renderer = Models {
         models: vec![("models/example.vmdl".to_owned(), 1.0)],
         model_input: None,
+        equipment_slot: None,
         original_model: false,
         ignore_normal: true,
         orient_z: false,
@@ -205,8 +206,55 @@ fn a_renderer_reading_its_model_from_a_control_point_draws_the_model_the_file_bi
     assert_eq!(draws[0].attachment, Vec3::new(1.0, 2.0, 3.0));
     let other = std::collections::HashMap::from([(6, binding())]);
     assert!(
-        super::library::model_draws(&def.system, &loaded, &other).is_empty(),
+        super::library::model_draws(&def.system, &loaded, &other)[0]
+            .skins
+            .is_empty(),
         "a model bound to another control point is not this renderer's"
+    );
+}
+
+#[test]
+fn a_bound_equipment_slot_draws_the_runtime_model_at_its_own_socket() {
+    use super::library::{Library, ParticleModel};
+    use bevy::asset::Handle;
+
+    let mut effect = model_skin_effect();
+    let def = &mut Arc::get_mut(&mut effect).expect("unique effect").defs[0];
+    let heatel::particle::Renderer::Models(renderer) = &mut def.system.renderers[0].class else {
+        panic!("models");
+    };
+    renderer.model_input = Some(point(7));
+    renderer.equipment_slot = Some("weapon".to_owned());
+    renderer.skin = FloatInput::Literal(0.0);
+    def.model_draws =
+        super::library::model_draws(&def.system, &Default::default(), &Default::default());
+
+    let path = "models/equipped.vmdl";
+    let socket = Vec3::new(0.4, 0.3, 0.0);
+    let library = Library {
+        models: vec![ParticleModel {
+            source: path.to_owned(),
+            attachment: socket,
+            skin: 0,
+            file: "equipped.glb".to_owned(),
+            gltf: Handle::default(),
+        }],
+        ..Library::default()
+    };
+    let mut instance = Instance::new(effect, 1);
+    instance.advance(0.02, None);
+    instance.bind_models(&library, |point, slot| {
+        (point == 7 && slot == Some("weapon")).then_some(path)
+    });
+    let mut placed = Vec::new();
+    let world_units = 100.0;
+    super::models::gather(&instance, &mut placed, world_units);
+    let draw = placed.first().expect("the equipped model is drawn");
+    let span = draw.transform.translation.distance(draw.socket);
+    let expected_span = draw.transform.scale.x * socket.length();
+    assert!(
+        (span - expected_span).abs() < 0.001,
+        "socket {span} world units from its model, expected {expected_span}"
     );
 }
 
@@ -232,6 +280,9 @@ fn a_full_model_budget_drops_only_the_new_model_and_keeps_the_effect() {
     let mut library = Library {
         models: (0..MAX_MODELS)
             .map(|i| ParticleModel {
+                source: String::new(),
+                skin: 0,
+                attachment: Vec3::ZERO,
                 file: format!("kept_{i}.glb"),
                 gltf: Handle::default(),
             })
@@ -1920,7 +1971,7 @@ fn a_normal_oriented_rope_interpolates_its_drawn_width_between_endpoint_normals(
         up: Vec3::Z,
     };
     let mut cards = [Vec::new()];
-    super::draw::draw(&instance, &eye, None, &mut cards);
+    super::draw::draw(&instance, &eye, None, &mut cards, None);
     assert_eq!(cards[0].len(), 2, "two tessellated rope cards");
     // At the common midpoint N=(Y+Z)/sqrt(2), T=X. Source Z-up is converted to drawn Y-up.
     let expected = Vec3::new(
@@ -2394,7 +2445,7 @@ fn a_renderers_authored_depth_bias_reaches_its_cards() {
         up: Vec3::Z,
     };
     let mut lists = vec![Vec::<Quad>::new(); library.looks.len()];
-    draw(&instance, &eye, None, &mut lists);
+    draw(&instance, &eye, None, &mut lists, None);
     let quads: Vec<&Quad> = lists.iter().flatten().collect();
     assert_eq!(quads.len(), 1);
     assert_eq!(quads[0].depth_bias, 5.0);

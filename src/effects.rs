@@ -344,9 +344,9 @@ fn missiles(
     if sight.core().view().is_none() {
         return;
     }
-    let shown = sight.flights();
-    let mut alive = Vec::with_capacity(shown.len());
-    for f in &shown {
+    let mut alive = Vec::new();
+    for f in sight.flights() {
+        let f = &f;
         let flight = f
             .missile
             .inflictor

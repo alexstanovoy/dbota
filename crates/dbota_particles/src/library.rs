@@ -83,6 +83,9 @@ pub struct ModelSkin {
 /// A model particles are drawn as: its glTF file, loaded once.
 pub struct ParticleModel {
     pub file: String,
+    pub(crate) source: String,
+    pub(crate) skin: u16,
+    pub(crate) attachment: Vec3,
     pub gltf: Handle<bevy::gltf::Gltf>,
 }
 
@@ -167,8 +170,8 @@ impl Library {
         }
         let textures = self.textures(&root, assets)?;
         let materials = materials(&root)?;
-        let models = self.models(&root, assets)?;
         let carried = carried_models(&root)?;
+        let models = self.models(&root, &carried, assets)?;
         let mut parsed = Vec::with_capacity(systems.len());
         for entry in systems {
             let path = entry
@@ -326,12 +329,22 @@ impl Library {
 }
 
 impl Library {
+    pub(super) fn available_model(&self, source: &str, skin: u16) -> Option<(u16, Vec3)> {
+        let model = self
+            .models
+            .iter()
+            .enumerate()
+            .find(|(_, model)| model.source == source && model.skin == skin);
+        model.map(|(index, model)| (index as u16, model.attachment))
+    }
+
     /// Models keyed by full `.vmdl` path and material-group index, each geometry file loaded
     /// once. A model exceeding the shared geometry budget is warned about and omitted;
     /// the effect keeps its other renderers and previously loaded models.
     fn models(
         &mut self,
         root: &Value,
+        bindings: &HashMap<u8, BoundModel>,
         assets: &dyn crate::AssetSource,
     ) -> Result<HashMap<(String, u16), u16>, String> {
         let mut out = HashMap::new();
@@ -360,11 +373,19 @@ impl Library {
             if skin >= 64 {
                 return Err(format!("model skin {skin}"));
             }
+            let attachment = bindings
+                .iter()
+                .filter(|(_, binding)| binding.path == vmdl)
+                .min_by_key(|(point, _)| *point)
+                .map_or(Vec3::ZERO, |(_, binding)| binding.attachment);
             let index = match self.models.iter().position(|m| m.file == file) {
                 Some(at) => at,
                 None if self.models.len() < MAX_MODELS => {
                     self.models.push(ParticleModel {
                         file: file.to_owned(),
+                        source: vmdl.to_owned(),
+                        skin: skin as u16,
+                        attachment,
                         gltf: assets.model(file),
                     });
                     self.models.len() - 1
@@ -391,11 +412,12 @@ pub(super) struct BoundModel {
 
 fn carried_models(root: &Value) -> Result<HashMap<u8, BoundModel>, String> {
     let mut carried = HashMap::new();
-    for entry in root
-        .get("control_point_models")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+    let Some(entries) = root.get("control_point_models") else {
+        return Ok(carried);
+    };
+    for entry in entries
+        .as_array()
+        .ok_or("control point models are not an array")?
     {
         let point = entry
             .get("control_point")
@@ -451,11 +473,13 @@ pub(super) fn model_draws(
             let listed;
             let (choices_of, attachment): (&[(String, f32)], Vec3) = match m.model_input {
                 None => (&m.models, Vec3::ZERO),
-                Some(point) => {
-                    let binding = carried.get(&(point.index() as u8))?;
-                    listed = [(binding.path.clone(), 1.0)];
-                    (&listed, binding.attachment)
-                }
+                Some(point) => match carried.get(&(point.index() as u8)) {
+                    Some(binding) => {
+                        listed = [(binding.path.clone(), 1.0)];
+                        (&listed, binding.attachment)
+                    }
+                    None => (&[], Vec3::ZERO),
+                },
             };
             let skins = (0..64)
                 .filter_map(|skin| {

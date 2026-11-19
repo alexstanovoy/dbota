@@ -32,6 +32,8 @@ pub struct Clip {
 pub struct Model {
     /// The logical name, such as `hero.nevermore.model`.
     pub logical: String,
+    /// Source model path.
+    pub source: String,
     /// The file, relative to the cache.
     pub path: String,
     /// The unit's own scale in Dota.
@@ -394,6 +396,7 @@ fn cached_icons(root: &Path) -> Vec<String> {
 fn model(line: &dbota_import::catalog::Model) -> Model {
     Model {
         logical: line.logical.clone(),
+        source: line.src.clone(),
         path: cache_path(&line.out),
         scale: line.model_scale.unwrap_or(1.0),
         attach: line.attach.clone(),

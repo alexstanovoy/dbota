@@ -451,6 +451,17 @@ impl Simulation {
                 frame.placed.len(),
             );
             // Out of view an effect draws no cards; its lights may still reach into it.
+            let mut socket = None;
+            if !instance.portrait {
+                gather(instance, &mut frame.lights);
+                let first = frame.placed.len();
+                models::gather(instance, &mut frame.placed, units_per_metre);
+                if let [model] = &frame.placed[first..] {
+                    socket = instance
+                        .rope_model_point
+                        .map(|point| (point, from_world(model.socket)));
+                }
+            }
             if !instance.out_of_view() {
                 let lists = if instance.portrait {
                     &mut playing.stage_lists
@@ -458,11 +469,7 @@ impl Simulation {
                     &mut playing.lists
                 };
                 let ground = if instance.portrait { None } else { height };
-                draw(instance, &eye, ground, lists);
-            }
-            if !instance.portrait {
-                gather(instance, &mut frame.lights);
-                models::gather(instance, &mut frame.placed, units_per_metre);
+                draw(instance, &eye, ground, lists, socket);
             }
             #[cfg(any(test, feature = "test-support"))]
             if before

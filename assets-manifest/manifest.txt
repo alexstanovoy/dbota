@@ -597,7 +597,7 @@ fx ability.nevermore_shadowraze*.worn at=unit particle=hero.nevermore.raze_debuf
 # Pudge: Meat Hook (the throw, the chain and its head in flight, the hit), Rot (the ring on Pudge, the
 # rot on those it reaches), Dismember, Meat Shield
 fx ability.pudge_meat_hook.cast at=caster sound=sound.pudge.hook_throw
-fx ability.pudge_meat_hook.flies at=chain attach=attach_weapon_chain_rt particle=hero.pudge.hook cp2=flight_speed cp3=flight_lifetime cp4=1,0,0 cp6=flight_tip cp7=caster
+fx ability.pudge_meat_hook.flies at=chain attach=attach_weapon_chain_rt target_attach=attach_hitloc hide_wearable=hero.pudge.weapon particle=hero.pudge.hook cp2=flight_speed cp3=flight_lifetime cp4=flight_free cp5=flight_caught cp6=flight_tip cp7=caster
 fx ability.pudge_meat_hook.hit at=unit attach=attach_hitloc particle=hero.pudge.hook_impact sound=sound.pudge.hook_impact
 fx ability.pudge_meat_hook.worn at=unit disable=4 pose=flail
 fx ability.pudge_rot.worn at=unit whose=own particle=hero.pudge.rot sound=sound.pudge.rot cp1=250,1,250

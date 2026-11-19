@@ -781,7 +781,7 @@ pub(crate) fn spawn_actor(
     for wearable in &scenes.wearables {
         commands
             .spawn((
-                WorldAssetRoot(wearable.clone()),
+                WorldAssetRoot(wearable.asset.clone()),
                 scale,
                 ChildOf(pivot),
                 ActorPart {

@@ -77,6 +77,8 @@ pub struct ControlPoint {
     pub up: Vec3,
     /// Scale of the model object bound here, or one when no object is bound.
     pub object_scale: f32,
+    /// A motion binding can supply the axis for direction-from-point operators.
+    pub direction_from: Option<Vec3>,
 }
 
 impl Default for ControlPoint {
@@ -88,6 +90,7 @@ impl Default for ControlPoint {
             left: Vec3::Y,
             up: Vec3::Z,
             object_scale: 1.0,
+            direction_from: None,
         }
     }
 }

@@ -70,7 +70,7 @@ fn spawn(mut commands: Commands) {
 pub fn gather(instance: &Instance, out: &mut Vec<Light>) {
     let first = out.len();
     for node in &instance.nodes {
-        if node.parts.is_empty() {
+        if node.parts.is_empty() || !instance.shows_system(node.def) {
             continue;
         }
         for renderer in &instance.effect.defs[node.def].system.renderers {

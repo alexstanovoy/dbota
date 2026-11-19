@@ -229,22 +229,25 @@ fn initial_direction(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_
     else {
         return;
     };
-    let origin = scene.transform_at(transform, scene.age).position;
+    let origin = scene.transform_at(transform, scene.age);
+    let rotation = direction_rotation(*offset_rotation_degrees, *offset_axis);
     let target = slot(*field);
     for i in batch.first..batch.parts.len() {
-        let delta = batch.parts.vectors[store::POSITION][i] - origin;
-        let direction = direction_from(delta, *offset_rotation_degrees, *offset_axis, *normalize);
+        let delta = origin
+            .direction_from
+            .unwrap_or(batch.parts.vectors[store::POSITION][i] - origin.position);
+        let direction = direction_from(delta, rotation, *normalize);
         batch.parts.set_vector(target, i, direction * *scale);
     }
 }
 
 /// The way `delta` points, turned by `degrees` about `axis` as Source turns a vector about an
 /// axis (row by row, the axis taken as it is, not normalized), of unit length when asked.
-pub(super) fn direction_from(delta: Vec3, degrees: f32, axis: [f32; 3], normalize: bool) -> Vec3 {
+pub(super) fn direction_rotation(degrees: f32, axis: [f32; 3]) -> [Vec3; 3] {
     let (sin, cos) = degrees.to_radians().sin_cos();
     let a = Vec3::from(axis);
     let reverse = 1.0 - cos;
-    let rows = [
+    [
         Vec3::new(
             (1.0 - a.x * a.x) * cos + a.x * a.x,
             a.x * a.y * reverse - a.z * sin,
@@ -260,7 +263,10 @@ pub(super) fn direction_from(delta: Vec3, degrees: f32, axis: [f32; 3], normaliz
             a.y * a.z * reverse + a.x * sin,
             (1.0 - a.z * a.z) * cos + a.z * a.z,
         ),
-    ];
+    ]
+}
+
+pub(super) fn direction_from(delta: Vec3, rows: [Vec3; 3], normalize: bool) -> Vec3 {
     let mut direction = Vec3::new(delta.dot(rows[0]), delta.dot(rows[1]), delta.dot(rows[2]));
     if normalize {
         direction.z += f32::EPSILON;

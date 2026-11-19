@@ -86,6 +86,14 @@ impl EventSight<'_> {
             .filter(|unit| self.allows_unit(unit))
     }
 
+    /// A posed attachment can still interpolate from the previous unit position.
+    pub fn attachment_was_visible(&self, id: EntityId) -> bool {
+        self.core()
+            .prev_view()
+            .and_then(|view| view.unit(id))
+            .is_none_or(|unit| self.allows_unit(unit))
+    }
+
     /// Side streams omit visibility bits because the server already selected their audience.
     pub fn knowledge(&self, seen: Option<bota_proto::SeenBy>) -> bota_proto::SeenBy {
         match self.core().view().and_then(|view| view.viewer) {
@@ -184,14 +192,25 @@ impl EventSight<'_> {
         })
     }
 
-    pub fn flights(&self) -> Vec<bota_client_core::Flight> {
-        let Some(view) = self.core().view() else {
-            return Vec::new();
-        };
-        bota_client_core::flights(view, self.core().prev_view(), self.core().smooth.alpha())
-            .into_iter()
-            .filter(|flight| self.allows_projectile(&flight.missile))
-            .collect()
+    pub fn flights(&self) -> impl Iterator<Item = bota_client_core::Flight> + '_ {
+        let alpha = self.core().smooth.alpha();
+        let view = self.core().view();
+        let previous = self.core().prev_view().filter(|old| {
+            view.is_some_and(|now| {
+                old.viewer == now.viewer && old.tick.checked_add(1) == Some(now.tick)
+            })
+        });
+        view.into_iter()
+            .flat_map(|view| &view.projectiles)
+            .filter_map(move |missile| {
+                if !self.allows_projectile(missile) {
+                    return None;
+                }
+                let before = previous
+                    .and_then(|old| old.projectile(missile.id))
+                    .filter(|old| self.allows_projectile(old));
+                Some(bota_client_core::interpolate_flight(missile, before, alpha))
+            })
     }
 
     fn placement(&self, subject: EventSubject<'_>, default: bool) -> bool {

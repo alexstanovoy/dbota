@@ -105,6 +105,7 @@ pub struct Wearable {
     wearer: Entity,
     ready: bool,
     bound: bool,
+    world: Option<(EntityId, std::path::PathBuf)>,
 }
 
 impl Wearable {
@@ -114,7 +115,22 @@ impl Wearable {
             wearer,
             ready: false,
             bound: false,
+            world: None,
         }
+    }
+
+    fn in_world(wearer: Entity, unit: EntityId, path: Option<&std::path::Path>) -> Self {
+        let world = path.map(|path| (unit, path.to_owned()));
+        Self {
+            world,
+            ..Self::on(wearer)
+        }
+    }
+
+    pub fn world_model(&self) -> Option<(EntityId, &std::path::Path)> {
+        self.world
+            .as_ref()
+            .map(|(unit, path)| (*unit, path.as_path()))
     }
 
     /// Its own instance is ready: its skins are on its own skeleton.
@@ -166,7 +182,12 @@ fn count_replaced_scenes(
 /// thing it wears.
 pub struct Scenes {
     pub body: Handle<WorldAsset>,
-    pub wearables: Vec<Handle<WorldAsset>>,
+    pub wearables: Vec<WornScene>,
+}
+
+pub struct WornScene {
+    pub asset: Handle<WorldAsset>,
+    path: Option<std::path::PathBuf>,
 }
 
 /// One model the units may be drawn with.
@@ -548,7 +569,7 @@ fn build_graphs(
         // it lists sub-assets no scene uses. Its clips are waited for by the
         // graph.)
         let states: Vec<State> = std::iter::once(&scenes.body)
-            .chain(&scenes.wearables)
+            .chain(scenes.wearables.iter().map(|scene| &scene.asset))
             .map(|scene| server.recursive_dependency_load_state(scene))
             .collect();
         if states.iter().any(|s| matches!(s, State::Failed(_))) {
@@ -675,7 +696,10 @@ fn take_scenes(
     let mut wearables = Vec::with_capacity(wearing.len());
     for (file, scene) in entry.wearing.iter().zip(wearing) {
         match scene {
-            Ok(scene) => wearables.push(scene),
+            Ok(asset) => wearables.push(WornScene {
+                asset,
+                path: file.path().map(|path| path.path().to_owned()),
+            }),
             Err(why) => error!(
                 "model {logical}: wearable {:?}: {why}; drawn without it",
                 file.path()
@@ -1402,10 +1426,11 @@ fn spawn_model_scene(
         for wearable in &scenes.wearables {
             p.commands
                 .spawn((
-                    WorldAssetRoot(wearable.clone()),
+                    WorldAssetRoot(wearable.asset.clone()),
                     scale,
                     ChildOf(pivot),
-                    Wearable::on(scene),
+                    Wearable::in_world(scene, u.id, wearable.path.as_deref()),
+                    Visibility::Inherited,
                 ))
                 .observe(
                     |ready: On<WorldInstanceReady>, mut wearables: Query<&mut Wearable>| {
@@ -1823,6 +1848,7 @@ pub(crate) mod tests {
             planted_trees: Vec::new(),
             runes: Vec::new(),
             pools: Vec::new(),
+            tethers: Vec::new(),
             lairs: Vec::new(),
         };
         [

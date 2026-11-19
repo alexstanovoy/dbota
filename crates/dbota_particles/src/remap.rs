@@ -69,17 +69,30 @@ pub fn operate(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &m
             offset_axis,
             normalize,
         } => {
-            let origin = scene.transform_at(transform, scene.age).position;
+            let origin = scene.transform_at(transform, scene.age);
+            let target = slot(*field);
+            let rotation = super::shape::direction_rotation(*offset_rotation_degrees, *offset_axis);
+            for i in 0..parts.len() {
+                let delta = origin
+                    .direction_from
+                    .unwrap_or(parts.vectors[store::POSITION][i] - origin.position);
+                let direction = super::shape::direction_from(delta, rotation, *normalize);
+                parts.set_vector(target, i, direction * *scale);
+            }
+        }
+        Operator::RemapSpeed {
+            field,
+            input,
+            output,
+        } => {
             let target = slot(*field);
             for i in 0..parts.len() {
-                let delta = parts.vectors[store::POSITION][i] - origin;
-                let direction = super::shape::direction_from(
-                    delta,
-                    *offset_rotation_degrees,
-                    *offset_axis,
-                    *normalize,
-                );
-                parts.set_vector(target, i, direction * *scale);
+                let speed = (parts.vectors[store::POSITION][i] - parts.vectors[store::PREVIOUS][i])
+                    .length()
+                    / scene.dt.max(f32::EPSILON);
+                let value = remap_clamped(speed, input[0], input[1], output[0], output[1]);
+                let previous = parts.scalar(target, i);
+                parts.set_scalar(target, i, previous + (value - previous) * call.strength);
             }
         }
         Operator::RemapVelocityToVector {

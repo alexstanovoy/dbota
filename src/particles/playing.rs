@@ -37,6 +37,8 @@ pub struct Playing {
     presentation: HashMap<Handle, Presentation>,
     #[cfg(test)]
     hidden_effects: Vec<Arc<Effect>>,
+    #[cfg(test)]
+    isolated_effect: Option<Arc<Effect>>,
 }
 
 impl Playing {
@@ -44,7 +46,10 @@ impl Playing {
         self.simulation.reset();
         self.presentation.clear();
         #[cfg(test)]
-        self.hidden_effects.clear();
+        {
+            self.hidden_effects.clear();
+            self.isolated_effect = None;
+        }
     }
 
     pub fn start(&mut self, effect: &Arc<Effect>, seed: u32, sight: EffectSight) -> Option<Handle> {
@@ -167,6 +172,8 @@ impl Playing {
             presentation,
             #[cfg(test)]
             hidden_effects,
+            #[cfg(test)]
+            isolated_effect,
         } = self;
         simulation.step(
             dt,
@@ -178,9 +185,12 @@ impl Playing {
             units_per_metre,
             &|handle, instance| {
                 #[cfg(test)]
-                if hidden_effects
-                    .iter()
-                    .any(|effect| Arc::ptr_eq(effect, &instance.effect))
+                if isolated_effect
+                    .as_ref()
+                    .is_some_and(|effect| !Arc::ptr_eq(effect, &instance.effect))
+                    || hidden_effects
+                        .iter()
+                        .any(|effect| Arc::ptr_eq(effect, &instance.effect))
                 {
                     return false;
                 }
@@ -190,6 +200,12 @@ impl Playing {
             },
         );
         presentation.retain(|handle, _| simulation.contains(*handle));
+    }
+
+    /// Measures one effect's submitted geometry when other effects share the same draw batch.
+    #[cfg(test)]
+    pub fn isolate_effect(&mut self, effect: Arc<Effect>) {
+        self.isolated_effect = Some(effect);
     }
 
     /// Masks presentation only: simulation, game state and all nonselected effects stay intact.

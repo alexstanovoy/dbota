@@ -1519,7 +1519,15 @@ fn particle_bindings<'a>(
             ));
         }
         let vmdl = binding.vmdl.as_str();
-        let model = match export_particle_skins(src, pak, vmdl, &selectors, dir, out, models) {
+        let model = match export_particle_skins(
+            src,
+            pak,
+            (vmdl, binding.attachment.is_some()),
+            &selectors,
+            dir,
+            out,
+            models,
+        ) {
             Ok(model) => model,
             Err(error) => {
                 out.report.failed.push((vmdl.to_owned(), error.to_string()));
@@ -1568,7 +1576,9 @@ fn particle_models(
     }
     let mut models: Vec<ParticleModel> = Vec::new();
     for (vmdl, selectors) in requests {
-        if let Err(err) = export_particle_skins(src, pak, vmdl, &selectors, dir, out, &mut models) {
+        if let Err(err) =
+            export_particle_skins(src, pak, (vmdl, false), &selectors, dir, out, &mut models)
+        {
             out.report.failed.push((vmdl.to_owned(), err.to_string()));
         }
     }
@@ -1579,7 +1589,7 @@ fn particle_models(
 fn export_particle_skins(
     src: &impl Source,
     pak: &Vpk,
-    vmdl: &str,
+    (vmdl, skeleton): (&str, bool),
     selectors: &[&FloatInput],
     dir: &str,
     out: &mut Out<'_>,
@@ -1628,7 +1638,7 @@ fn export_particle_skins(
                     path: &path,
                     dest: &file,
                     meshes: None,
-                    skeleton: false,
+                    skeleton,
                     anims: &[],
                     skin: group,
                 },

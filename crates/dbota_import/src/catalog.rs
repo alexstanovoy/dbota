@@ -467,7 +467,7 @@ fn control_point_models(text: Option<&str>) -> Result<Vec<ControlPointModel>, St
             .filter(|point| *point < 64)
             .ok_or_else(|| format!("'models=' control point '{point}' is not 0 to 63"))?;
         let (vmdl, attachment) = match vmdl.split_once('@') {
-            Some((vmdl, name)) if name.starts_with("attach_") && !name.contains('@') => {
+            Some((vmdl, name)) if !name.is_empty() && !name.contains('@') => {
                 (vmdl, Some(name.to_owned()))
             }
             Some((_, name)) => return Err(format!("'models=' has invalid attachment '{name}'")),
@@ -941,6 +941,11 @@ mod tests {
                 },
             ]
         );
+        let Ok(Line::File(other)) = line("particle p p.vpcf_c p.json models=7:models/h.vmdl@Pivot")
+        else {
+            panic!("an ordinary Source attachment name is valid");
+        };
+        assert_eq!(other.models[0].attachment.as_deref(), Some("Pivot"));
         for (text, why) in [
             (
                 "particle p p.vpcf_c p.json models=7",
@@ -959,8 +964,8 @@ mod tests {
                 "is not a .vmdl",
             ),
             (
-                "particle p p.vpcf_c p.json models=7:models/h.vmdl@missing",
-                "invalid attachment 'missing'",
+                "particle p p.vpcf_c p.json models=7:models/h.vmdl@",
+                "invalid attachment ''",
             ),
             (
                 "texture t t.vtex_c t.png models=7:models/h.vmdl",

@@ -558,13 +558,18 @@ fn movement(
     gravity: &heatel::particle::VectorInput,
     drag: &heatel::particle::FloatInput,
 ) {
+    let dt = scene.dt;
+    // A host can update an attachment while a replay is paused. No time passes and
+    // the particle's previous displacement must survive until the next motion step.
+    if dt <= 0.0 {
+        return;
+    }
     let gravity = vector(gravity, scene, parts, None, call.salt);
     for (force, strength) in call.forces.iter().zip(call.strengths) {
         if *strength > 0.0 {
             apply_force(&force.class, scene, parts, *strength, call.salt);
         }
     }
-    let dt = scene.dt;
     let drag = float(drag, scene, parts, None, call.salt + 3).clamp(0.0, 1.0 - f32::EPSILON);
     let factor = (1.0 - drag).powf(dt * 30.0);
     // Verlet: the displacement since the last step is the velocity over the length of the step

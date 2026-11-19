@@ -104,6 +104,9 @@ pub enum Feed {
     FlightSpeed,
     /// The projectile owner controls when the effect stops.
     FlightLifetime,
+    /// Mutually exclusive free-flight / attached phases, in x.
+    FlightFree,
+    FlightCaught,
     /// The side the unit is held for, in x: 0 the Radiant, 1 the Dire (`units::held_for`).
     Side,
     /// How far the unit sees now, or sees for the side it is lit for, in x.
@@ -144,6 +147,10 @@ pub struct Fx {
     pub at: At,
     /// The point of the unit it is placed at.
     pub attach: Attach,
+    /// A travelling endpoint attaches here while carrying a visible unit.
+    pub target_attach: Option<Attach>,
+    /// The model worn by the source while its tether is home.
+    pub hide_wearable: Option<String>,
     /// The logical name of the particle, when the line has one.
     pub particle: Option<String>,
     /// The logical prefix of the sounds, one of them played, when the line has one.
@@ -205,6 +212,8 @@ impl Fx {
             trigger,
             at: At::Caster,
             attach: Attach::Origin,
+            target_attach: None,
+            hide_wearable: None,
             particle: None,
             sound: None,
             pose: None,
@@ -224,6 +233,8 @@ impl Fx {
             match key {
                 "at" => at = Some(at_of(value)?),
                 "attach" => fx.attach = attach_of(value)?,
+                "target_attach" => fx.target_attach = Some(attach_of(value)?),
+                "hide_wearable" => fx.hide_wearable = Some(value.to_owned()),
                 "particle" => fx.particle = Some(value.to_owned()),
                 "sound" => fx.sound = Some(value.to_owned()),
                 "pose" => {
@@ -325,11 +336,18 @@ impl Fx {
             && self.feeds.iter().any(|(_, feed)| {
                 matches!(
                     feed,
-                    Feed::FlightTip | Feed::FlightSpeed | Feed::FlightLifetime
+                    Feed::FlightTip
+                        | Feed::FlightSpeed
+                        | Feed::FlightLifetime
+                        | Feed::FlightFree
+                        | Feed::FlightCaught
                 )
             })
         {
             return Err("flight control points require a flight".to_owned());
+        }
+        if self.at != At::Chain && (self.target_attach.is_some() || self.hide_wearable.is_some()) {
+            return Err("end attachments and stowed wearables require a tether".to_owned());
         }
         if self.trigger == Trigger::Flies && self.sound.is_some() {
             return Err("a flight plays no sound".to_owned());
@@ -402,6 +420,8 @@ fn feed_of(value: &str) -> Result<Feed, String> {
         "flight_tip" => Feed::FlightTip,
         "flight_speed" => Feed::FlightSpeed,
         "flight_lifetime" => Feed::FlightLifetime,
+        "flight_free" => Feed::FlightFree,
+        "flight_caught" => Feed::FlightCaught,
         "side" => Feed::Side,
         "sight" => Feed::Sight,
         "model_radius" => Feed::ModelRadius,

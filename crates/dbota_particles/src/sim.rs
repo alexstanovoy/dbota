@@ -109,6 +109,14 @@ struct Frame {
 pub struct Instance {
     pub effect: Arc<Effect>,
     pub nodes: Vec<Node>,
+    /// A host may expose only certain systems of a playing effect.
+    draws: Option<Vec<bool>>,
+    pub(crate) model_bindings: Vec<(usize, usize, u16, Vec3)>,
+    /// The host places the entire flight even when the particle clock is paused.
+    posed_by_host: bool,
+    host_pose_changed: bool,
+    /// A positioned model may give a rope its real socket while retaining its own pivot.
+    pub(crate) rope_model_point: Option<usize>,
     /// Definitions (indices into the effect) whose cards are left out of the frame, for a test
     /// comparing the frame without them.
     #[cfg(any(test, feature = "test-support"))]
@@ -198,6 +206,11 @@ impl Instance {
         Self {
             effect,
             nodes,
+            draws: None,
+            model_bindings: Vec::new(),
+            posed_by_host: false,
+            host_pose_changed: false,
+            rope_model_point: None,
             #[cfg(any(test, feature = "test-support"))]
             hidden_defs: Vec::new(),
             portrait: false,
@@ -226,19 +239,129 @@ impl Instance {
         }
     }
 
+    /// Supplies the models of the objects bound to this effect. Where a runtime model is
+    /// unavailable the effect can still draw the import's model for that input.
+    pub fn bind_models<'a>(
+        &mut self,
+        library: &super::library::Library,
+        source_for: impl Fn(usize, Option<&str>) -> Option<&'a str>,
+    ) {
+        use heatel::particle::Renderer;
+        self.model_bindings.clear();
+        for (definition, def) in self.effect.defs.iter().enumerate() {
+            for draw in &def.model_draws {
+                let Renderer::Models(models) = &def.system.renderers[draw.renderer].class else {
+                    continue;
+                };
+                let (Some(point), FloatInput::Literal(skin)) = (models.model_input, &models.skin)
+                else {
+                    continue;
+                };
+                let point = point.index();
+                if let Some(source) = source_for(point, models.equipment_slot.as_deref())
+                    && let Some((model, socket)) = library.available_model(source, *skin as u16)
+                {
+                    self.model_bindings
+                        .push((definition, draw.renderer, model, socket));
+                }
+            }
+        }
+    }
+
+    /// Selects which systems of this instance can present geometry.
+    pub fn show_systems(&mut self, visible: impl Fn(&super::library::Def) -> bool) {
+        let mask = self
+            .draws
+            .get_or_insert_with(|| vec![false; self.effect.defs.len()]);
+        for (show, def) in mask.iter_mut().zip(&self.effect.defs) {
+            *show = visible(def);
+        }
+    }
+
+    pub fn shows_system(&self, def: usize) -> bool {
+        self.draws.as_ref().is_none_or(|mask| mask[def])
+    }
+
     /// Sets control point `cp` of every system, facing `forward` when it has a length; one
     /// placed rather than moved (`jump`) has no previous place to move from.
     pub fn set_control_point(&mut self, cp: usize, position: Vec3, forward: Vec3, jump: bool) {
         for node in &mut self.nodes {
-            let first = node.placed & 1 << cp == 0;
-            node.placed |= 1 << cp;
-            let point = &mut node.control_points[cp];
-            point.position = position;
-            point.object_scale = 1.0;
-            if jump || first {
-                point.previous = position;
+            self.host_pose_changed |= node.set_point(cp, position, forward, jump);
+        }
+    }
+
+    /// The clock input to a host-held effect. Child systems can use the same number for a
+    /// position. The effect may run until the host removes it, including a delayed game tick.
+    pub fn set_root_duration(&mut self, cp: usize, lifetime: f32) {
+        use heatel::particle::{Mapping, PreEmission};
+        let root = &self.effect.defs[0].system;
+        let multiplier = root
+            .pre_emission
+            .iter()
+            .find_map(|operator| {
+                let PreEmission::StopAfterDuration {
+                    duration:
+                        FloatInput::ControlPointComponent {
+                            control_point,
+                            component: 0,
+                            mapping: Mapping::Mult(multiplier),
+                        },
+                    ..
+                } = &operator.class
+                else {
+                    return None;
+                };
+                (control_point.index() == cp && *multiplier > 0.0).then_some(*multiplier)
+            })
+            .unwrap_or(1.0);
+        let duration = lifetime.max(self.nodes[0].age + root.max_time_step * 10.0);
+        let input = duration / multiplier;
+        self.nodes[0].set_point(
+            cp,
+            Vec3::X * if input.is_finite() { input } else { duration },
+            Vec3::ZERO,
+            false,
+        );
+    }
+
+    /// Joins the maintained rope's far end to the displayed model's socket.
+    pub fn attach_rope_to_model(&mut self, point: Option<usize>) {
+        self.rope_model_point = point;
+    }
+
+    /// Places an output of the root's child binding at the host's authoritative carrier frame.
+    pub fn drive_carrier(&mut self, position: Vec3, direction: Vec3) {
+        self.posed_by_host = true;
+        let root = &self.effect.defs[0].system;
+        for operator in &root.operators {
+            let heatel::particle::Operator::SetChildControlPoints(binding) = &operator.class else {
+                continue;
+            };
+            let cp = binding.first_control_point.index();
+            let (root, descendants) = self.nodes.split_at_mut(1);
+            for &child in &root[0].children {
+                let node = &descendants[child - 1];
+                if self.effect.defs[node.def].system.group != binding.group {
+                    continue;
+                }
+                let end = node.end;
+                for node in &mut descendants[child - 1..end - 1] {
+                    let forward = if binding.orientation {
+                        direction
+                    } else {
+                        Vec3::ZERO
+                    };
+                    self.host_pose_changed |= node.set_point(cp, position, forward, false);
+                    node.driven |= 1 << cp;
+                }
             }
-            point.face(forward);
+        }
+    }
+
+    /// Uses the host's motion axis for remaps that normally derive a direction from this point.
+    pub fn set_direction_from(&mut self, cp: usize, direction: Vec3) {
+        for node in &mut self.nodes {
+            node.control_points[cp].direction_from = Some(direction);
         }
     }
 
@@ -353,6 +476,7 @@ impl Instance {
             self.nodes[index].stepped = parent_stepped && self.advance_node(index, dt, ground);
             self.write_positions(index);
         }
+        self.host_pose_changed = false;
         if self.effect.bounds_needed {
             bounds::update(&self.effect, &mut self.nodes);
         }
@@ -371,6 +495,8 @@ impl Instance {
             effect,
             nodes,
             writes,
+            posed_by_host,
+            host_pose_changed,
             ..
         } = self;
         let (before, after) = nodes.split_at_mut(index);
@@ -393,7 +519,8 @@ impl Instance {
             start: node.age,
             len: dt,
         };
-        if std::mem::take(&mut node.first_frame) {
+        let first = std::mem::take(&mut node.first_frame);
+        if first {
             if let Some(asked) = node.first_frame(effect, world, frame, writes) {
                 stop(subtree, index, asked);
             }
@@ -404,7 +531,10 @@ impl Instance {
             }
         }
         let mut remaining = dt.min(max_step * 10.0);
-        while remaining > 1e-6 {
+        // An instantaneous emitter must be posed on a seek to a paused flight. A zero
+        // time step evaluates its bindings and operators without ageing its trails.
+        let mut pose_once = (first || *host_pose_changed) && *posed_by_host && dt <= 1e-6;
+        while remaining > 1e-6 || std::mem::take(&mut pose_once) {
             let step = remaining.min(max_step);
             remaining -= step;
             let node = &mut subtree[0];
@@ -532,6 +662,20 @@ impl Node {
         self.time_base = 0.0;
         self.parts.clear();
         (self.emitted, self.seed, self.steps) = (0, seed, 0);
+    }
+
+    fn set_point(&mut self, cp: usize, position: Vec3, forward: Vec3, jump: bool) -> bool {
+        let first = self.placed & 1 << cp == 0;
+        self.placed |= 1 << cp;
+        let point = &mut self.control_points[cp];
+        let prior = (point.position, point.forward);
+        point.position = position;
+        point.object_scale = 1.0;
+        if jump || first {
+            point.previous = position;
+        }
+        point.face(forward);
+        prior != (point.position, point.forward)
     }
 
     /// Takes a control point an operator set, keeping where the old one was; one placed the

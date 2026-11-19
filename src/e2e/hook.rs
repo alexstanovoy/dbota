@@ -32,16 +32,6 @@ const FRAME: Duration = Duration::from_millis(20);
 /// How far a drawn thing may be from where the test expects it: the head trails the hook the
 /// server tells of by a few ticks of its flight.
 const TRAIL: f32 = 130.0;
-/// The rest position of `attach_chain` in righthook.vmdl, in the exported model's metres.
-const HEAD_SOCKET_GLTF: Vec3 = Vec3::new(-0.012_288_09, 0.005_571_05, -0.553_935_05);
-
-fn head_socket(transform: &Transform) -> Vec3 {
-    // The actual glTF scene is turned around Y by the app's loader.
-    source(
-        transform.transform_point(Quat::from_rotation_y(std::f32::consts::PI) * HEAD_SOCKET_GLTF),
-    )
-}
-
 /// One replayed frame: the sim's tick and what is drawn of the hook then, in the particles'
 /// frame (Z up, Dota units).
 #[derive(Clone, Debug)]
@@ -63,6 +53,8 @@ struct Frame {
     chain_drawn: bool,
     /// Each model drawn this frame: where it is and how it is turned.
     models: Vec<Transform>,
+    head_sockets: Vec<Vec3>,
+    rope: Vec<Vec3>,
     /// Whether the server's view tells of a hook in flight.
     hook_told: bool,
     /// How many frames of the hook's particle have been drawn so far (cards, lights, models).
@@ -71,12 +63,25 @@ struct Frame {
     pudge: Option<Vec2>,
     /// The enemy heroes the view shows, in the sim's frame.
     enemies: Vec<Vec2>,
+    visible_caster: bool,
+    visible_chain_length: f32,
+    visible_chain_bounds: Option<(f32, f32)>,
+    blur_anchors: Vec<Vec3>,
+    wire_head: Option<(Vec2, bool)>,
+    blur: Vec<Vec3>,
+    target_socket: Option<Vec3>,
+    caught: bool,
+    returning: bool,
+    worn_visible: bool,
+    tick: u32,
 }
 
 impl Frame {
     /// The head: the model drawn at the end of the chain.
     fn head(&self) -> Option<(Vec3, Quat)> {
-        self.models.first().map(|t| (head_socket(t), t.rotation))
+        self.models
+            .first()
+            .map(|t| (source(t.translation), t.rotation))
     }
 }
 
@@ -91,11 +96,17 @@ fn record(
     units: Res<crate::units::UnitIndex>,
     attachments: Query<(&crate::units::Attachments, &crate::units::Rig)>,
     transforms: Query<&GlobalTransform>,
-    wearables: Query<(Entity, &GlobalTransform), With<crate::units::Wearable>>,
+    wearables: Query<
+        (Entity, &GlobalTransform, &InheritedVisibility),
+        With<crate::units::Wearable>,
+    >,
     children: Query<&Children>,
+    pieces: Query<Entity, With<dbota_particles::ModelPiece>>,
+    visible: Query<&InheritedVisibility>,
     names: Query<&Name>,
     ground: Res<crate::map::Ground>,
     time: Res<Time>,
+    sight: crate::fog::EventSight,
     mut frames: ResMut<Frames>,
 ) {
     let (Some(view), Some(library)) = (session.0.view(), library) else {
@@ -116,9 +127,78 @@ fn record(
             })
         })
         .collect();
+    let rope: Vec<_> = frame
+        .batches
+        .iter()
+        .filter(|batch| chain_looks.contains(&batch.look))
+        .flat_map(|batch| &frame.quads[batch.range.start as usize..batch.range.end as usize])
+        .filter(|quad| quad.head_color[3] > 0.0 || quad.tail_color[3] > 0.0)
+        .flat_map(|quad| {
+            [
+                source(Vec3::from_array(quad.head)),
+                source(Vec3::from_array(quad.tail)),
+            ]
+        })
+        .collect();
+    let head_sockets = pieces
+        .iter()
+        .filter(|&piece| visible.get(piece).is_ok_and(|visibility| visibility.get()))
+        .flat_map(|piece| children.iter_descendants(piece))
+        .filter(|&node| {
+            names
+                .get(node)
+                .is_ok_and(|name| name.as_str() == "attach_chain")
+        })
+        .filter_map(|node| {
+            transforms
+                .get(node)
+                .ok()
+                .map(|frame| source(frame.translation()))
+        })
+        .collect();
+    let mut blur = Vec::new();
+    for def in &effect.defs {
+        let rope = def.path.ends_with("/pudge_meathook_blur.vpcf");
+        if !rope && !def.path.ends_with("/pudge_meathook_blur_b.vpcf") {
+            continue;
+        }
+        for batch in frame
+            .batches
+            .iter()
+            .filter(|batch| def.draws.iter().any(|draw| draw.look == batch.look))
+        {
+            for quad in &frame.quads[batch.range.start as usize..batch.range.end as usize] {
+                if quad.head_color[3] > 0.0 || quad.tail_color[3] > 0.0 {
+                    let first = source(Vec3::from_array(quad.head));
+                    let last = source(Vec3::from_array(quad.tail));
+                    if rope {
+                        blur.extend([first, last]);
+                    } else {
+                        blur.push(first.midpoint(last));
+                    }
+                }
+            }
+        }
+    }
     let (mut hand, mut parent, mut chain) = (None, Vec::new(), Vec::new());
+    let mut blur_anchors = Vec::new();
     for instance in playing.instances_of(effect) {
         hand = Some(instance.nodes[0].control_points[0].position);
+        for node in &instance.nodes {
+            let def = &effect.defs[node.def];
+            if !instance.shows_system(node.def) || !def.path.ends_with("/pudge_meathook_blur.vpcf")
+            {
+                continue;
+            }
+            for initializer in &def.system.initializers {
+                if let heatel::particle::Initializer::CreateWithinSphere(sphere) =
+                    &initializer.class
+                    && let Some(point) = sphere.transform.control_point()
+                {
+                    blur_anchors.push(node.control_points[point.index()].position);
+                }
+            }
+        }
         for (def, at, _) in instance.particles() {
             match effect.defs[def].system.max_particles {
                 16 => chain.push(at),
@@ -145,7 +225,7 @@ fn record(
         .map(|t| {
             t.to_scale_rotation_translation().0.abs().max_element() / crate::map::UNITS_PER_METRE
         });
-    let weapon_scale = wearables.iter().find_map(|(root, transform)| {
+    let worn = wearables.iter().find_map(|(root, transform, visibility)| {
         children
             .iter_descendants(root)
             .any(|entity| {
@@ -154,11 +234,14 @@ fn record(
                     .is_ok_and(|name| name.as_str() == "models/heroes/pudge/righthook.vmdl_c")
             })
             .then(|| {
-                transform
-                    .to_scale_rotation_translation()
-                    .0
-                    .abs()
-                    .max_element()
+                (
+                    transform
+                        .to_scale_rotation_translation()
+                        .0
+                        .abs()
+                        .max_element(),
+                    visibility.get(),
+                )
             })
     });
     let home = hero.map(at);
@@ -189,22 +272,66 @@ fn record(
             .expect("the installed hook carrier height");
         socket.distance(home.extend(ground.at(home.x, home.y) + height))
     });
+    let point = |p: Spot| Vec2::new(p.x.to_f32(), p.y.to_f32());
+    let audience = view.viewer.or(sight.fog().team).unwrap_or(Team::Radiant);
+    let tether = view
+        .tethers
+        .iter()
+        .find(|t| t.viewer == Team::Radiant || view.viewer.is_some());
+    let wire_head = tether
+        .and_then(|t| view.projectiles.iter().find(|p| p.id == t.id))
+        .map(|p| (point(p.pos), sight.allows_projectile(p)));
+    let spans = view
+        .tethers
+        .iter()
+        .filter(|t| t.viewer == audience)
+        .flat_map(|t| &t.spans);
+    let visible_chain_length = spans
+        .clone()
+        .map(|s| point(s.start).distance(point(s.end)))
+        .sum();
+    let visible_chain_bounds = spans
+        .clone()
+        .map(|s| s.start.x.to_f32().min(s.end.x.to_f32()))
+        .min_by(f32::total_cmp)
+        .zip(
+            spans
+                .map(|s| s.start.x.to_f32().max(s.end.x.to_f32()))
+                .max_by(f32::total_cmp),
+        );
+    let caught = tether.and_then(|t| t.head).and_then(|head| head.caught);
+    let target_socket = caught
+        .and_then(|id| units.0.get(&id))
+        .and_then(|entity| attachments.get(*entity).ok())
+        .and_then(|(attachments, _)| attachments.node("attach_hitloc"))
+        .and_then(|node| transforms.get(node).ok())
+        .map(|transform| source(transform.translation()));
     frames.0.push(Frame {
+        tick: view.tick,
+        target_socket,
+        caught: caught.is_some(),
+        returning: tether
+            .and_then(|tether| tether.head)
+            .is_some_and(|head| head.returning),
+        worn_visible: worn.is_some_and(|(_, visible)| visible),
+        visible_caster: hero.is_some_and(|u| sight.allows_unit(u)),
+        visible_chain_length,
+        visible_chain_bounds,
+        blur_anchors,
+        wire_head,
+        blur,
         seconds: time.elapsed_secs(),
         hand,
         socket,
         wire_reach,
         socket_reach,
         hero_scale,
-        weapon_scale,
+        weapon_scale: worn.map(|(scale, _)| scale),
         parent,
         chain,
-        chain_drawn: frame.batches.iter().any(|batch| {
-            chain_looks.contains(&batch.look)
-                && frame.quads[batch.range.start as usize..batch.range.end as usize]
-                    .iter()
-                    .any(|quad| quad.head_color[3] > 0.0 || quad.tail_color[3] > 0.0)
-        }),
+        chain_drawn: !rope.is_empty(),
+        rope,
+        head_sockets,
         models: frame
             .models()
             .filter(|(model, _)| {
@@ -234,6 +361,32 @@ fn source(world: Vec3) -> Vec3 {
 /// `AIM_DISTANCE` east of him at `at`, with an enemy hero on the line when `victim` (away from
 /// either fountain, whose water kills an enemy hero that stands in it).
 fn record_throws(victim: bool, throws: usize, at: (i32, i32)) -> ReplayFile {
+    record_throws_with(victim, throws, at, None, AfterLaunch::Wait).0
+}
+
+fn record_throws_seen(
+    victim: bool,
+    throws: usize,
+    at: (i32, i32),
+    observer: Option<i32>,
+) -> (ReplayFile, Vec<Frame>) {
+    record_throws_with(victim, throws, at, observer, AfterLaunch::Wait)
+}
+
+#[derive(Clone, Copy)]
+enum AfterLaunch {
+    Wait,
+    Move(Spot),
+    HideCaster(Spot),
+}
+
+fn record_throws_with(
+    victim: bool,
+    throws: usize,
+    at: (i32, i32),
+    observer: Option<i32>,
+    after_launch: AfterLaunch,
+) -> (ReplayFile, Vec<Frame>) {
     let mut game = Spectated::hero("2", HeroId::PUDGE);
     game.next_side(Team::Radiant);
     game.cheat(Cheat::CreepSpawning { on: false });
@@ -265,28 +418,124 @@ fn record_throws(victim: bool, throws: usize, at: (i32, i32)) -> ReplayFile {
             .expect("the hook is in his kit") as u8,
     );
     game.order(Order::Learn { slot });
+    if let Some(distance) = observer {
+        if !matches!(after_launch, AfterLaunch::HideCaster(_)) {
+            game.cheat(Cheat::TimeOfDay { night: true });
+        }
+        game.cheat(Cheat::CreateHero {
+            hero: HeroId::SHADOW_FIEND,
+            enemy: true,
+            at: at + Spot::from_ints(distance, 0),
+        });
+        game.next_side(Team::Dire);
+        game.client.core_mut().pinned = None;
+        let world = game.client.world_mut();
+        let mut camera = world.query::<&mut crate::camera::RtsCamera>();
+        let mut camera = camera.single_mut(world).expect("the live camera");
+        camera.focus = Vec3::new(
+            at.x.to_f32() + AIM_DISTANCE as f32 / 2.0,
+            0.0,
+            -at.y.to_f32(),
+        );
+        game.client.app.init_resource::<Frames>().add_systems(
+            PostUpdate,
+            record
+                .after(crate::particles::gather_frame)
+                .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
+        );
+    }
     for _ in 0..throws {
         game.cheat(Cheat::Refresh);
         game.order(Order::Cast {
             slot,
             target: Target::Pos(at + Spot::from_ints(AIM_DISTANCE, 0)),
         });
+        match after_launch {
+            AfterLaunch::Wait => {}
+            AfterLaunch::Move(spot) => {
+                game.wait("the head starts coming back", |driver, _| {
+                    driver
+                        .view()
+                        .unwrap()
+                        .tethers
+                        .iter()
+                        .any(|t| t.head.is_some_and(|h| h.returning))
+                });
+                game.cheat(Cheat::Teleport { at: spot });
+            }
+            AfterLaunch::HideCaster(spot) => {
+                game.wait("the launch is seen", |_, client| {
+                    client.view().tethers.iter().any(|t| {
+                        t.source.is_some()
+                            && t.head.is_some()
+                            && t.spans
+                                .iter()
+                                .any(|s| !s.start.within(s.end, bota_proto::Fixed::from_int(100)))
+                    })
+                });
+                game.cheat(Cheat::Teleport { at: spot });
+            }
+        }
         game.wait("the hook has flown and come back", |driver, _| {
             driver.view().unwrap().unit(hero).unwrap().abilities[slot.0 as usize].cooldown_left > 0
-                && driver.view().unwrap().projectiles.is_empty()
+                && driver.view().unwrap().tethers.is_empty()
         });
     }
+    if observer.is_some() {
+        game.wait(
+            "the side plays to the end of the flight",
+            |driver, client| client.tick() >= driver.view().expect("driving view").tick,
+        );
+    }
+    let frames = game
+        .client
+        .world()
+        .get_resource::<Frames>()
+        .map_or_else(Vec::new, |frames| frames.0.clone());
     let file = game.save();
     // A person looking at the renders keeps the record: HOOK_EVIDENCE names a folder for it.
     if let Some(dir) = std::env::var_os("HOOK_EVIDENCE") {
-        let name = format!("hook-{}{throws}.brp", if victim { "hit" } else { "miss" });
+        let name = match (observer, after_launch) {
+            (_, AfterLaunch::HideCaster(_)) => "hook-caster-leaves-fog.brp".into(),
+            (_, AfterLaunch::Move(_)) => "hook-moving-caster.brp".into(),
+            (Some(distance), _) => format!("hook-fog-{distance}.brp"),
+            (None, _) => format!("hook-{}{throws}.brp", if victim { "hit" } else { "miss" }),
+        };
         std::fs::copy(file.path(), std::path::Path::new(&dir).join(name)).expect("the record kept");
     }
-    file
+    (file, frames)
 }
 
 /// Plays a record from the side `pov` sees it, a `FRAME` at a time, and returns every frame.
 fn play(file: &ReplayFile, pov: u8, at: (i32, i32)) -> Vec<Frame> {
+    play_recording(file, pov, at, false)
+}
+
+fn play_recording(file: &ReplayFile, pov: u8, at: (i32, i32), isolate: bool) -> Vec<Frame> {
+    let mut client = replay_client(file, pov, at);
+    if isolate {
+        let effect = client
+            .world()
+            .resource::<crate::particles::Library>()
+            .effect("hero.pudge.hook")
+            .unwrap()
+            .clone();
+        client
+            .world_mut()
+            .resource_mut::<crate::particles::Playing>()
+            .isolate_effect(effect);
+    }
+    client.within(SOON, "the recorded match played", |c| {
+        c.core().view().is_some_and(|view| view.tick >= file.tick())
+    });
+    if let Source::Replay(player) = &mut client.core_mut().source {
+        player.paused = true;
+    }
+    client.step_frames(2);
+    client.world().resource::<Frames>().0.clone()
+}
+
+fn replay_client(file: &ReplayFile, pov: u8, at: (i32, i32)) -> Client {
     let pov = pov.to_string();
     let mut client = Client::run(&[
         "--replay",
@@ -296,10 +545,12 @@ fn play(file: &ReplayFile, pov: u8, at: (i32, i32)) -> Vec<Frame> {
         "--look",
         &format!("{},{}", at.0 + AIM_DISTANCE / 2, at.1),
     ]);
-    client
-        .app
-        .init_resource::<Frames>()
-        .add_systems(PostUpdate, record.after(crate::particles::gather_frame));
+    client.app.init_resource::<Frames>().add_systems(
+        PostUpdate,
+        record
+            .after(crate::particles::gather_frame)
+            .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
+    );
     client
         .world_mut()
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(FRAME));
@@ -308,14 +559,7 @@ fn play(file: &ReplayFile, pov: u8, at: (i32, i32)) -> Vec<Frame> {
             .get_resource::<crate::particles::Library>()
             .is_some()
     });
-    client.within(SOON, "the recorded match played", |c| {
-        c.core().view().is_some_and(|view| view.tick >= file.tick())
-    });
-    if let Source::Replay(player) = &mut client.core_mut().source {
-        player.paused = true;
-    }
-    client.step_frames(2);
-    client.world().resource::<Frames>().0.clone()
+    client
 }
 
 /// The frames of each flight (the server tells of a hook flying), in order.
@@ -533,15 +777,17 @@ fn the_chain_stays_on_the_hook_head_socket_through_flight_and_return() {
             "the active hook draws no chain at {:.2} s",
             frame.seconds
         );
-        let [head] = frame.models.as_slice() else {
-            panic!("one hook head must be drawn at {:.2} s", frame.seconds);
+        let [socket] = frame.head_sockets.as_slice() else {
+            panic!(
+                "the imported head socket must be drawn at {:.2} s, sockets {:?}",
+                frame.seconds, frame.head_sockets
+            );
         };
-        let socket = head_socket(head);
         assert!(
             frame
-                .chain
+                .rope
                 .iter()
-                .any(|point| point.distance(socket) < 0.05),
+                .any(|point| point.distance(*socket) < 0.05),
             "chain missed the hook head socket at {:.2} s",
             frame.seconds
         );
@@ -739,5 +985,485 @@ fn a_hook_thrown_out_of_the_enemys_sight_is_not_drawn_for_the_enemy() {
         shown.map(|f| f.seconds),
         shown.map(|f| f.drawn),
         shown.map(|f| f.head())
+    );
+}
+
+#[test]
+fn review_flying_head_and_chain_emerge_from_fog_on_the_victims_stream_and_replay() {
+    let (file, live) = record_throws_seen(false, 1, YARD, Some(1100));
+    let replay = play(&file, 1, YARD);
+    for (name, frames) in [("side stream", &live), ("side replay", &replay)] {
+        let visible = frames
+            .iter()
+            .filter(|f| {
+                !f.visible_caster
+                    && f.wire_head.is_some_and(|(_, visible)| visible)
+                    && f.visible_chain_length >= 64.0
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            visible.len() >= 2,
+            "{name} needs several frames with a hidden caster and visible flight"
+        );
+        let drawn: Vec<_> = visible
+            .iter()
+            .filter_map(|f| {
+                f.head()
+                    .filter(|(at, _)| at.truncate().distance(f.wire_head.unwrap().0) <= 70.0)
+                    .map(|_| f.chain_drawn)
+            })
+            .collect();
+        assert!(
+            drawn.len() * 2 > visible.len(),
+            "{name} presented {} heads over {} visible frames",
+            drawn.len(),
+            visible.len()
+        );
+        assert!(
+            drawn.iter().any(|chain| *chain),
+            "{name} drew no visible chain"
+        );
+        for frame in visible.iter().filter(|frame| frame.chain_drawn) {
+            let (left, _) = frame
+                .visible_chain_bounds
+                .expect("the visible chain has bounds");
+            let min_drawn = frame
+                .rope
+                .iter()
+                .map(|point| point.x)
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                min_drawn >= left - 1.0,
+                "at tick {} the {name} chain draws behind the visibility boundary at {left}: {min_drawn}",
+                frame.tick
+            );
+        }
+    }
+}
+
+#[test]
+fn review_the_head_disappears_into_fog_while_the_visible_chain_stays() {
+    let (file, _) = record_throws_seen(false, 1, YARD, Some(-450));
+    let replay = play(&file, 1, YARD);
+    let visible = replay
+        .iter()
+        .filter(|f| {
+            f.visible_caster
+                && f.wire_head.is_some_and(|(_, visible)| !visible)
+                && f.visible_chain_length >= 64.0
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        visible.len() >= 2,
+        "the hook needs time beyond the line of sight with its chain still visible"
+    );
+    assert!(
+        visible.iter().any(|f| f.chain_drawn),
+        "the visible chain went away with the head"
+    );
+    let snapped: Vec<_> = visible
+        .iter()
+        .filter_map(|f| f.head().map(|h| h.0))
+        .collect();
+    assert!(
+        snapped.is_empty(),
+        "visible heads while the actual head was hidden: {snapped:?}"
+    );
+}
+
+#[test]
+fn review_the_hook_faces_the_cast_line_from_the_hand_through_return() {
+    let file = record_throws(false, 1, MID);
+    let frames = play(&file, 0, MID);
+    for frame in flights(&frames)[0] {
+        let (_, rotation) = frame.head().unwrap_or_else(|| {
+            panic!(
+                "head missing at tick {}, at {:?}; carrier {:?}, chain count {}",
+                frame.tick,
+                frame.wire_head,
+                frame.parent,
+                frame.chain.len()
+            )
+        });
+        let direction = source(rotation * Vec3::NEG_Z);
+        let angle = direction.angle_between(Vec3::X).to_degrees();
+        assert!(
+            angle < 3.0,
+            "at {:.3} s, the blade is {angle:.1} degrees off the cast line",
+            frame.seconds
+        );
+    }
+}
+
+#[test]
+fn review_the_blur_draws_near_the_visible_head_as_it_launches_and_returns() {
+    let file = record_throws(true, 1, MID);
+    let frames = play_recording(&file, 0, MID, true);
+    let flight = flights(&frames)[0];
+    let count = flight.iter().filter(|f| !f.blur.is_empty()).count();
+    assert!(
+        count > flight.len() / 2,
+        "visible blur on {count} of {} flight frames",
+        flight.len()
+    );
+    let oldest = 0.35;
+    let speed = rules::HOOK_SPEED as f32;
+    for frame in flight {
+        let (head, _) = frame.head().expect("the head is drawn");
+        let [anchor] = frame.blur_anchors.as_slice() else {
+            panic!("a visible blur emitter has one carrier position");
+        };
+        assert!(
+            anchor.distance(head) < 0.1,
+            "tick {}: blur anchor {anchor:?} trails the drawn head at {head:?}",
+            frame.tick
+        );
+        let max_distance = (frame.seconds - flight[0].seconds + 2.0 * FRAME.as_secs_f32())
+            .clamp(0.0, oldest)
+            * speed
+            + 96.0;
+        for point in &frame.blur {
+            assert!(
+                point.distance(head) <= max_distance,
+                "at {:.3} s the blur at {point:?} is {} units from {head:?}; tick {}, at {:?}; launch {}",
+                frame.seconds,
+                point.distance(head),
+                frame.tick,
+                frame.wire_head,
+                flight[0].seconds
+            );
+        }
+    }
+}
+
+#[test]
+fn review_a_caster_leaving_sight_does_not_take_the_visible_head_or_chain_with_him() {
+    let (file, live) = record_throws_with(
+        false,
+        1,
+        MID,
+        Some(550),
+        AfterLaunch::HideCaster(Spot::from_ints(MID.0 - 3300, MID.1)),
+    );
+    let replay = play(&file, 1, MID);
+    for (name, frames) in [("side stream", &live), ("side replay", &replay)] {
+        let start = frames
+            .iter()
+            .position(|f| f.visible_caster && f.wire_head.is_some())
+            .expect("launch seen");
+        let segment = frames[start..]
+            .iter()
+            .filter(|f| {
+                !f.visible_caster
+                    && f.wire_head.is_some_and(|(_, seen)| seen)
+                    && f.visible_chain_length > 20.0
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !segment.is_empty(),
+            "{name} requires a visible head and chain after the caster vanishes"
+        );
+        for frame in segment {
+            let (head, _) = frame.head().expect("a visible head keeps drawing");
+            let at = frame
+                .target_socket
+                .map_or(frame.wire_head.unwrap().0, Vec3::truncate);
+            assert!(
+                head.truncate().distance(at) < 20.0,
+                "visible head is at {head:?}, expected {at:?} at tick {}",
+                frame.tick
+            );
+            assert!(
+                frame.chain_drawn,
+                "visible chain missing at tick {}",
+                frame.tick
+            );
+        }
+    }
+}
+
+#[test]
+fn review_the_caught_hook_moves_with_the_animated_victim_and_stops_spinning() {
+    let file = record_throws(true, 1, MID);
+    let frames = play(&file, 0, MID);
+    let mut previous: Option<Quat> = None;
+    let mut compared = 0;
+    for frame in frames.iter().filter(|frame| frame.caught) {
+        let socket = frame
+            .target_socket
+            .expect("the victim's visible hit attachment");
+        let head = frame.models.first().expect("the caught hook is drawn");
+        let error = source(head.translation).distance(socket);
+        assert!(
+            error < 0.1,
+            "{} units from the victim attachment at tick {}",
+            error,
+            frame.tick
+        );
+        if let Some(rotation) = previous {
+            assert!(
+                head.rotation.angle_between(rotation).to_degrees() < 0.2,
+                "the latched head still rolls at tick {}",
+                frame.tick
+            );
+            compared += 1;
+        }
+        previous = Some(head.rotation);
+    }
+    assert!(
+        compared >= 3,
+        "the catch must be visible over several frames"
+    );
+}
+
+#[test]
+fn review_the_worn_hook_is_hidden_while_the_projectile_is_drawn_and_restored_after() {
+    let file = record_throws(true, 1, MID);
+    let frames = play(&file, 0, MID);
+    let start = frames
+        .iter()
+        .position(|f| f.head().is_some())
+        .expect("the launch");
+    let end = frames
+        .iter()
+        .rposition(|f| f.head().is_some())
+        .expect("the return");
+    assert!(
+        frames[..start].iter().any(|f| f.worn_visible),
+        "the hero holds a hook before casting"
+    );
+    for frame in &frames[start..=end] {
+        assert!(
+            !frame.worn_visible,
+            "the worn blade is still drawn during flight at tick {}",
+            frame.tick
+        );
+    }
+    assert!(
+        frames[end + 1..].iter().any(|f| f.worn_visible),
+        "the hero holds the hook again after it comes back"
+    );
+}
+
+#[test]
+fn review_moving_the_thrower_beside_the_return_path_does_not_redraw_the_tip_at_his_hand() {
+    let moved = Spot::from_ints(YARD.0 + 500, YARD.1 + 60);
+    let (file, _) = record_throws_with(false, 1, YARD, None, AfterLaunch::Move(moved));
+    let frames = play(&file, 0, YARD);
+    let moved = Vec2::new(moved.x.to_f32(), moved.y.to_f32());
+    let mut measured = 0;
+    for frame in frames
+        .iter()
+        .filter(|f| f.pudge == Some(moved) && f.returning)
+    {
+        let head = frame.head().expect("the returning hook keeps drawing").0;
+        let wire = frame.wire_head.expect("the return path").0;
+        if wire.distance(moved) < 110.0 {
+            assert!(
+                (head.y - YARD.1 as f32).abs() < 0.1,
+                "the head moved off the cast line at tick {}: {head:?}",
+                frame.tick
+            );
+            measured += 1;
+        }
+    }
+    assert!(
+        measured >= 2,
+        "the moved caster and returning head must be close for multiple frames"
+    );
+}
+
+#[test]
+fn review_two_overlapping_throws_follow_their_own_paths() {
+    let file = record_throws(false, 1, YARD);
+    let mut client = replay_client(&file, 0, YARD);
+    let mut snapshots = Vec::new();
+    client.within(SOON, "consecutive travelling hook snapshots", |client| {
+        let Some(view) = client.core().view() else {
+            return false;
+        };
+        if view
+            .tethers
+            .iter()
+            .any(|t| t.viewer == Team::Radiant && t.head.is_some())
+            && snapshots
+                .last()
+                .is_none_or(|previous: &bota_proto::WorldView| previous.tick < view.tick)
+        {
+            snapshots.push(view.clone());
+        }
+        snapshots.len() == 12
+    });
+    let mut combined = Vec::new();
+    for (older, newer) in snapshots[..5].iter().zip(&snapshots[7..]) {
+        let mut view = newer.clone();
+        let older_tether = older
+            .tethers
+            .iter()
+            .find(|t| t.viewer == Team::Radiant)
+            .unwrap();
+        let mut second = older_tether.clone();
+        let mut shot = *older.projectile(second.id).unwrap();
+        shot.id.generation += 1;
+        second.id = shot.id;
+        view.projectiles.push(shot);
+        view.projectiles.sort_unstable_by_key(|shot| shot.id);
+        view.tethers.push(second);
+        combined.push(view);
+    }
+    let begin = combined.first().unwrap().tick;
+    let end = combined.last().unwrap().tick;
+    let old = client.world().resource::<Frames>().0.len();
+    replace_replay(&mut client, &file, combined, false);
+    client.within(SOON, "the overlapping trajectories were played", |c| {
+        c.core().view().is_some_and(|view| view.tick >= end)
+    });
+    let frames = &client.world().resource::<Frames>().0[old..];
+    let home = YARD.0 as f32;
+    let both = frames
+        .iter()
+        .filter(|frame| {
+            (begin..=end).contains(&frame.tick) && {
+                let xs = frame.models.iter().map(|head| head.translation.x);
+                xs.clone().any(|x| {
+                    x > home + 120.0
+                        && xs
+                            .clone()
+                            .any(|other| other >= home && (x - other).abs() > 120.0)
+                })
+            }
+        })
+        .count();
+    assert!(
+        both >= 3,
+        "only {both} frames drew both distinct head positions from the same caster"
+    );
+}
+
+fn replace_replay(
+    client: &mut Client,
+    file: &ReplayFile,
+    views: Vec<bota_proto::WorldView>,
+    paused: bool,
+) {
+    use bota_client_core::ReplayPlayer;
+    use bota_proto::{ReplayHeader, ReplayRecord, ServerMsg};
+
+    let mut recording = Vec::new();
+    let mut original = ReplayPlayer::load(file.path()).expect("the recorded match");
+    let start = (0..10)
+        .find_map(|_| {
+            original.poll(0.1).into_iter().find_map(|message| {
+                if let ServerMsg::MatchStart { info } = message {
+                    Some(info)
+                } else {
+                    None
+                }
+            })
+        })
+        .expect("the original MatchStart reaches the replay");
+    let initial = [
+        ReplayRecord::Header(ReplayHeader::new(bota_core::WIRE_FINGERPRINT)),
+        ReplayRecord::Msg(ServerMsg::MatchStart { info: start }),
+    ];
+    let snapshots = views
+        .into_iter()
+        .map(|view| ReplayRecord::Msg(ServerMsg::Snapshot { view }));
+    for record in initial.into_iter().chain(snapshots) {
+        bota_proto::encode_frame(&record, &mut recording).expect("the replay can be read again");
+    }
+    let mut player = ReplayPlayer::from_reader(std::io::Cursor::new(recording));
+    player.paused = paused;
+    let mut rewound = bota_client_core::App::new(Source::Replay(Box::new(player)));
+    rewound.pov = Some(bota_proto::SlotId(0));
+    rewound.my_slot = rewound.pov;
+    *client.core_mut() = rewound;
+}
+
+#[test]
+fn review_rewinding_and_pausing_recreates_the_launch_pose_without_return_trails() {
+    let file = record_throws(true, 1, MID);
+    let mut client = replay_client(&file, 0, MID);
+    let effect = client
+        .world()
+        .resource::<crate::particles::Library>()
+        .effect("hero.pudge.hook")
+        .expect("the hook")
+        .clone();
+    let caught_roll = effect
+        .defs
+        .iter()
+        .flat_map(|def| &def.system.operators)
+        .find_map(|op| {
+            let heatel::particle::Operator::RemapSpeed {
+                field,
+                output: [first, last],
+                ..
+            } = op.class
+            else {
+                return None;
+            };
+            (field == heatel::particle::Field::ROLL && first == last).then_some(first)
+        })
+        .expect("authored caught roll");
+    client
+        .world_mut()
+        .resource_mut::<crate::particles::Playing>()
+        .isolate_effect(effect);
+    client.within(SOON, "the launch was drawn", |client| {
+        client
+            .world()
+            .resource::<Frames>()
+            .0
+            .last()
+            .is_some_and(|frame| frame.head().is_some() && !frame.caught)
+    });
+    let launch = client.view().clone();
+    client.within(SOON, "the return was drawn", |client| {
+        client
+            .world()
+            .resource::<Frames>()
+            .0
+            .last()
+            .is_some_and(|frame| frame.head().is_some() && frame.caught)
+    });
+
+    let returning_rotation = client
+        .world()
+        .resource::<Frames>()
+        .0
+        .last()
+        .unwrap()
+        .head()
+        .unwrap()
+        .1;
+    replace_replay(&mut client, &file, vec![launch.clone()], true);
+    client.within(SOON, "the paused launch snapshot", |client| {
+        client
+            .core()
+            .view()
+            .is_some_and(|view| view.tick == launch.tick)
+    });
+    client.step_frames(2);
+    let frames = client.world().resource::<Frames>();
+    let frame = frames.0.last().expect("the paused pose was sampled");
+    let (head, rotation) = frame.head().expect("launch head drawn while paused");
+    let socket = frame.socket.expect("the animated launch attachment");
+    assert!(
+        head.distance(socket) < 0.1,
+        "rewind left the head at {head:?}, with the launch attachment at {socket:?}"
+    );
+    let discarded_roll = rotation.angle_between(returning_rotation);
+    assert!(
+        (discarded_roll - caught_roll.abs()).abs() < 0.01,
+        "after rewind the pose is {discarded_roll} radians from catch, expected the authored {caught_roll}"
+    );
+    assert!(
+        frame.chain_drawn && frame.rope.iter().all(|point| point.is_finite()),
+        "the rewound chain has no finite submitted rope"
+    );
+    assert!(
+        frame.blur.iter().all(|point| point.distance(head) < 70.0),
+        "rewind kept the return's blur"
     );
 }

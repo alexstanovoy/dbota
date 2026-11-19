@@ -27,11 +27,13 @@ const MAX_PLACED: usize = 1024;
 pub struct Placed {
     pub model: u16,
     pub transform: Transform,
+    /// Attachment in the Bevy world, with the scene loader's axis transform applied.
+    pub socket: Vec3,
 }
 
 /// A piece of a model's pool: the root of one copy of its scene, with no parent.
 #[derive(Component)]
-struct Piece;
+pub struct ModelPiece;
 
 /// Each model's pool, once its file has loaded.
 #[derive(Resource, Default)]
@@ -80,7 +82,7 @@ fn spawn(
             .map(|_| {
                 commands
                     .spawn((
-                        Piece,
+                        ModelPiece,
                         WorldAssetRoot(scene.clone()),
                         Transform::default(),
                         Visibility::Hidden,
@@ -96,7 +98,7 @@ fn spawn(
 fn place(
     frame: Res<ParticleFrame>,
     pool: Res<Pool>,
-    mut roots: Query<(&mut Transform, &mut Visibility), With<Piece>>,
+    mut roots: Query<(&mut Transform, &mut Visibility), With<ModelPiece>>,
 ) {
     for (model, entities) in pool.0.iter().enumerate() {
         let Some(entities) = entities else {
@@ -112,7 +114,7 @@ fn place(
             };
             match placed.next() {
                 Some(p) => {
-                    *transform = p.transform;
+                    transform.set_if_neq(p.transform);
                     visibility.set_if_neq(Visibility::Inherited);
                 }
                 None => {
@@ -127,7 +129,7 @@ fn place(
 /// Bevy's propagation makes them. Only these trees: Bevy's own pass run again here would
 /// propagate every transform the frame changed (every posed joint) a second time.
 fn propagate_placed(
-    moved: Query<Entity, (With<Piece>, Changed<Transform>)>,
+    moved: Query<Entity, (With<ModelPiece>, Changed<Transform>)>,
     children: Query<&Children>,
     mut transforms: Query<(&Transform, &mut GlobalTransform)>,
     mut stack: Local<Vec<(Entity, Option<GlobalTransform>)>>,
@@ -153,7 +155,7 @@ fn propagate_placed(
 /// Appends the models every drawn model renderer of `instance` places this frame.
 pub fn gather(instance: &Instance, out: &mut Vec<Placed>, units_per_metre: f32) {
     for node in &instance.nodes {
-        if node.parts.is_empty() {
+        if node.parts.is_empty() || !instance.shows_system(node.def) {
             continue;
         }
         let def = &instance.effect.defs[node.def];
@@ -163,7 +165,12 @@ pub fn gather(instance: &Instance, out: &mut Vec<Placed>, units_per_metre: f32) 
                 continue;
             };
             if node.strength_now(&renderer.timing) > 0.0 {
-                place_particles(models, d, node, out, units_per_metre);
+                let binding = instance.model_bindings.iter().find_map(
+                    |&(def, renderer, model, attachment)| {
+                        (def == node.def && renderer == d.renderer).then_some((model, attachment))
+                    },
+                );
+                place_particles(models, d, node, out, units_per_metre, binding);
             }
         }
     }
@@ -177,6 +184,7 @@ fn place_particles(
     node: &Node,
     out: &mut Vec<Placed>,
     units_per_metre: f32,
+    binding: Option<(u16, Vec3)>,
 ) {
     let (scene, parts) = (node.scene_now(), &node.parts);
     let radius_scale = float(&models.radius_scale, &scene, parts, None, 1);
@@ -185,39 +193,43 @@ fn place_particles(
         if out.len() == MAX_PLACED {
             return;
         }
-        let value = float(&models.skin, &scene, parts, Some(i), 2);
-        let skin = if value.is_finite() && (0.0..64.0).contains(&value) {
-            value as u16
-        } else {
-            0
-        };
-        let Some(choices) = d
-            .skins
-            .iter()
-            .find(|s| s.index == skin)
-            .or_else(|| d.skins.iter().find(|s| s.index == 0))
-        else {
-            continue;
-        };
-        let manual = float(&models.manual_selection, &scene, parts, Some(i), 3);
-        let picked = if manual >= 0.0 && (manual as usize) < choices.models.len() {
-            choices.models[manual as usize].0
-        } else {
-            pick(
-                &choices.models,
-                choices.total_weight,
-                random(parts.seed[i], 0x30DE),
-            )
-        };
-        let Some(model) = picked else {
+        let selected = binding.or_else(|| {
+            let value = float(&models.skin, &scene, parts, Some(i), 2);
+            let skin = if value.is_finite() && (0.0..64.0).contains(&value) {
+                value as u16
+            } else {
+                0
+            };
+            let choices = d
+                .skins
+                .iter()
+                .find(|s| s.index == skin)
+                .or_else(|| d.skins.iter().find(|s| s.index == 0))?;
+            let manual = float(&models.manual_selection, &scene, parts, Some(i), 3);
+            let picked = if manual >= 0.0 && (manual as usize) < choices.models.len() {
+                choices.models[manual as usize].0
+            } else {
+                pick(
+                    &choices.models,
+                    choices.total_weight,
+                    random(parts.seed[i], 0x30DE),
+                )
+            };
+            picked.map(|model| (model, d.attachment))
+        });
+        let Some((model, attachment)) = selected else {
             continue;
         };
         let matrix = source_matrix(models, &scene, node, i, (radius_scale, roll_scale));
-        let mut transform = Transform::from_matrix(to_bevy(matrix, units_per_metre));
+        let transform = Transform::from_matrix(to_bevy(matrix, units_per_metre));
         // The loader turns the glTF scene around Y to make its +Z forward into Bevy's -Z.
-        let socket = Vec3::new(-d.attachment.x, d.attachment.y, -d.attachment.z);
-        transform.translation -= transform.rotation * (transform.scale * socket);
-        out.push(Placed { model, transform });
+        let attachment = Vec3::new(-attachment.x, attachment.y, -attachment.z);
+        let socket = transform.transform_point(attachment);
+        out.push(Placed {
+            model,
+            transform,
+            socket,
+        });
     }
 }
 
@@ -343,4 +355,51 @@ fn report(
         })
         .count();
     progress.0 = Some((done, library.models.len()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Resource, Default)]
+    struct Posed(Vec<Vec3>);
+
+    #[test]
+    fn a_stationary_particle_preserves_its_pose_without_invalidating_the_scene_each_frame() {
+        let mut app = App::new();
+        let model = app
+            .world_mut()
+            .spawn((ModelPiece, Transform::default(), Visibility::Hidden))
+            .id();
+        let start = Vec3::new(40.0, 20.0, 10.0);
+        let next = start + Vec3::X;
+        let mut frame = ParticleFrame::default();
+        frame.placed.push(Placed {
+            model: 0,
+            transform: Transform::from_translation(start),
+            socket: start,
+        });
+        app.insert_resource(Pool(vec![Some(vec![model])]))
+            .insert_resource(frame)
+            .init_resource::<Posed>()
+            .add_systems(
+                Update,
+                (
+                    place,
+                    |poses: Query<&Transform, (With<ModelPiece>, Changed<Transform>)>,
+                     mut posed: ResMut<Posed>| {
+                        posed.0.extend(poses.iter().map(|pose| pose.translation));
+                    },
+                )
+                    .chain(),
+            );
+        app.update();
+        app.update();
+        app.update();
+        app.world_mut().resource_mut::<ParticleFrame>().placed[0]
+            .transform
+            .translation = next;
+        app.update();
+        assert_eq!(app.world().resource::<Posed>().0, [start, next]);
+    }
 }

@@ -64,9 +64,15 @@ const DECAL_TINT: f32 = -1.0;
 
 /// Appends the cards of every drawn renderer of `instance`, each to its look's list; projected
 /// decals lie on the ground `ground` gives (none: at their particles' height).
-pub fn draw(instance: &Instance, eye: &Eye, ground: Option<HeightAt<'_>>, out: &mut [Vec<Quad>]) {
+pub fn draw(
+    instance: &Instance,
+    eye: &Eye,
+    ground: Option<HeightAt<'_>>,
+    out: &mut [Vec<Quad>],
+    socket: Option<(usize, Vec3)>,
+) {
     for node in &instance.nodes {
-        if node.parts.is_empty() {
+        if node.parts.is_empty() || !instance.shows_system(node.def) {
             continue;
         }
         #[cfg(any(test, feature = "test-support"))]
@@ -86,7 +92,15 @@ pub fn draw(instance: &Instance, eye: &Eye, ground: Option<HeightAt<'_>>, out: &
             match &renderer.class {
                 Renderer::Sprites(sprites) => draw_sprites(sprites, d, node, eye, list),
                 Renderer::Trails(trails) => draw_trails(trails, d, node, eye, list),
-                Renderer::Ropes(ropes) => draw_rope(ropes, d, node, eye, list),
+                Renderer::Ropes(ropes) => {
+                    let attached = socket.and_then(|(point, socket)| {
+                        def.system.operators.iter().any(|op| {
+                            matches!(&op.class, heatel::particle::Operator::MaintainSequentialPath(path)
+                                if path.path.start.index() == point)
+                        }).then_some(socket)
+                    });
+                    draw_rope(ropes, d, node, eye, list, attached);
+                }
                 Renderer::Projected(projected) => {
                     draw_projected(projected, d, node, ground, list);
                 }
@@ -618,7 +632,14 @@ fn draw_trails(trails: &Trails, d: &Draw, node: &Node, eye: &Eye, out: &mut Vec<
     }
 }
 
-fn draw_rope(ropes: &Ropes, d: &Draw, node: &Node, eye: &Eye, out: &mut Vec<Quad>) {
+fn draw_rope(
+    ropes: &Ropes,
+    d: &Draw,
+    node: &Node,
+    eye: &Eye,
+    out: &mut Vec<Quad>,
+    socket: Option<Vec3>,
+) {
     let (scene, parts) = (node.scene_now(), &node.parts);
     if parts.len() < 2 {
         return;
@@ -635,7 +656,13 @@ fn draw_rope(ropes: &Ropes, d: &Draw, node: &Node, eye: &Eye, out: &mut Vec<Quad
     let pieces = usize::from(ropes.min_tessellation.max(1))
         .next_power_of_two()
         .min(128);
-    let point = |k: usize| parts.vectors[store::POSITION][k.min(parts.len() - 1)];
+    let position = &parts.vectors[store::POSITION];
+    let last = parts.len() - 1;
+    let shift = socket.map_or(Vec3::ZERO, |socket| socket - position[0]);
+    let point = |index: usize| {
+        let index = index.min(last);
+        position[index] + shift * ((last - index) as f32 / last as f32)
+    };
     let mut previous: Option<(Vec3, Vec3, [f32; 4], f32)> = None;
     for span in 0..parts.len() - 1 {
         let (p0, p1, p2, p3) = (
