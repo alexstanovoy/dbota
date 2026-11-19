@@ -520,7 +520,8 @@ fn combat(kit: &mut Kit, root: Entity, hero: &bota_core::HeroDef) {
     let damage = bota_core::base_damage_least(unit, 1);
     let attack_time = bota_core::attack_duration(
         unit.attack_time,
-        unit.attack_speed + bota_core::agility_attack_speed(unit.attributes),
+        bota_proto::Fixed::from_int(unit.attack_speed)
+            + bota_core::agility_attack_speed(unit.attributes),
     );
     let armor = unit.armor as f32 + bota_core::agility_armor(unit.attributes).to_f32();
     let health = unit.max_hp + bota_core::strength_health(unit.attributes.strength);

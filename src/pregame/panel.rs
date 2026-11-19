@@ -75,7 +75,10 @@ impl Facts {
             armor: unit.armor as f32 + bota_core::agility_armor(attributes).to_f32(),
             move_speed: unit.move_speed,
             attack_time: unit.attack_time as f32 / 1000.0,
-            attack_speed: unit.attack_speed + bota_core::agility_attack_speed(attributes),
+            // Shown in whole points, as Dota's panel shows it.
+            attack_speed: (bota_proto::Fixed::from_int(unit.attack_speed)
+                + bota_core::agility_attack_speed(attributes))
+            .to_int(),
             attack_range: unit.attack_range,
             ranged: unit.projectile_speed.is_some(),
             health: (

@@ -169,7 +169,7 @@ fn max_speed(client: &mut Client) {
         client.cheat(Cheat::Item { item });
     }
     assert_eq!(
-        bota_core::attack_gain(client.me().attack_speed),
+        bota_core::attack_gain(bota_proto::Fixed::from_int(client.me().attack_speed)),
         7000,
         "the real inventory reaches the 700 attack-speed cap"
     );

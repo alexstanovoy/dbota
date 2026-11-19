@@ -914,7 +914,7 @@ fn gives(k: u8, alone: Attributes) -> Vec<(&'static str, String)> {
             ),
             (
                 "agility_attack_speed",
-                bota_core::agility_attack_speed(alone).to_string(),
+                bota_core::agility_attack_speed(alone).to_int().to_string(),
             ),
         ],
         _ => vec![
