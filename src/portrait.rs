@@ -1007,6 +1007,7 @@ fn aim(
             &mut Projection,
             &mut AmbientLight,
             &mut GlobalTransform,
+            Option<&ChildOf>,
         ),
         (With<PortraitCamera>, Without<PortraitLight>),
     >,
@@ -1046,6 +1047,10 @@ fn aim(
         return;
     };
     let at = |local: &Transform| Transform::from_translation(STAGE) * *local;
+    assert!(
+        camera.6.is_none(),
+        "the portrait camera must be a root entity"
+    );
     let camera_place = at(&placed.camera);
     camera.2.set_if_neq(camera_place);
     // Aiming follows transform propagation. Publish the pose now so the first

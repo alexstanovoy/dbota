@@ -334,10 +334,28 @@ fn check_hero(hero: HeroId, all: &Kv, failures: &mut Vec<String>) {
             "{name}: stage effects are culled with a stale camera on the first drawn frame"
         ));
     }
+    let cover_on = client.world().resource::<bevy::diagnostic::FrameCount>().0 + 29;
+    client.app.add_systems(
+        PostUpdate,
+        (move |frame: Res<bevy::diagnostic::FrameCount>, mut hud: ResMut<crate::ui::HudShown>| {
+            if frame.0 == cover_on {
+                hud.0 = false;
+            }
+        })
+        .after(crate::ui::Mode)
+        .before(crate::portrait::Aimed),
+    );
     // The worn effects step only while the portrait is drawn.
     client.frames(30);
+    client.until("the worn effects on a drawn frame", |c| {
+        c.world().resource::<Stage>().drawing()
+    });
     let world = client.world_mut();
     let stage = world.resource::<Stage>();
+    assert!(
+        stage.drawing(),
+        "the worn effects must be sampled on a drawn frame"
+    );
     let live = stage.live().clone();
     let pivot = stage.actor.as_ref().expect("the model on the stage").pivot;
     let origin = world
@@ -581,4 +599,22 @@ fn every_heros_portrait_is_framed_lit_and_dressed_as_dotas_portraits_define_it()
         check_hero(hero, &all, &mut failures);
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+#[test]
+#[should_panic(expected = "the portrait camera must be a root entity")]
+fn aiming_a_parented_portrait_camera_rejects_the_wrong_coordinate_space() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.within(Duration::from_secs(120), "the live portrait draws", |c| {
+        c.world().resource::<Stage>().drawing()
+    });
+    let world = client.world_mut();
+    let camera = world
+        .query_filtered::<Entity, With<PortraitCamera>>()
+        .single(world)
+        .unwrap();
+    let parent = world.spawn(Transform::from_xyz(1000.0, 0.0, 0.0)).id();
+    world.entity_mut(camera).insert(ChildOf(parent));
+    client.frames(1);
 }
