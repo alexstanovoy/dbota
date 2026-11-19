@@ -92,12 +92,13 @@ fn every_place_of_the_top_bar_is_drawn_for_both_teams_with_a_light_strip_along_i
     let strips: Vec<(Color, ImageNode, bool, Vec2)> = world
         .query::<(
             &crate::hud::SeatColour,
+            &BackgroundColor,
             &ImageNode,
             &InheritedVisibility,
             &ComputedNode,
         )>()
         .iter(world)
-        .map(|(_, image, seen, node)| (image.color, image.clone(), seen.get(), node.size()))
+        .map(|(_, ground, image, seen, node)| (ground.0, image.clone(), seen.get(), node.size()))
         .collect();
     assert_eq!(strips.len(), 10, "a strip on each of the ten places");
     assert!(
@@ -217,5 +218,52 @@ fn the_ability_row_is_as_wide_as_the_heros_abilities_need_and_the_bars_run_under
     assert!(
         panels[0].1 < panels[1].1 - 20.0,
         "a hero of four abilities has a narrower panel than one of six: {panels:?}"
+    );
+}
+
+/// The level badge is the game's: a copper rim, the gold ring of the experience's progress inside it,
+/// a black disc and the level in gold, not a plain ring round a number.
+#[test]
+fn the_level_badge_is_a_copper_rim_a_gold_progress_ring_a_black_disc_and_a_gold_figure() {
+    let (_server, mut client) = hud_of(HeroId::SHADOW_FIEND);
+    let badge = named(&mut client, "hud level");
+    let disc = named(&mut client, "hud level disc");
+    let figure = named(&mut client, "hud level figure");
+    let world = client.world();
+    let rim = world.get::<ComputedNode>(badge).expect("laid out").border();
+    assert!(
+        rim.min_inset.x > 0.0 && rim.max_inset.y > 0.0,
+        "a rim all round the ring: {rim:?}"
+    );
+    let colour = world.get::<BorderColor>(badge).expect("a rim").top;
+    assert!(
+        colour.to_srgba().red > colour.to_srgba().blue * 2.0,
+        "the rim is copper: {colour:?}"
+    );
+    assert_eq!(
+        world.get::<BackgroundColor>(disc).expect("a disc").0,
+        Color::BLACK,
+        "a black disc under the figure"
+    );
+    let gold = world
+        .get::<TextColor>(figure)
+        .expect("a figure")
+        .0
+        .to_srgba();
+    assert!(
+        (gold.red - 0.906).abs() < 0.01 && (gold.green - 0.82).abs() < 0.01,
+        "the figure is the game's gold: {gold:?}"
+    );
+    assert!(
+        world
+            .get::<TextShadow>(figure)
+            .is_some_and(|glow| glow.offset == Vec2::ZERO),
+        "the figure glows"
+    );
+    let inner = world.get::<ComputedNode>(disc).expect("laid out").size();
+    let outer = world.get::<ComputedNode>(badge).expect("laid out").size();
+    assert!(
+        outer.x - inner.x > 2.0 * (rim.min_inset.x + 1.0),
+        "a ring of progress between the rim and the disc: {outer:?} {inner:?}"
     );
 }

@@ -48,8 +48,15 @@ const BACKPACK_GAP: f32 = 1.5;
 const ITEM_GAPS: (f32, f32) = (7.0, 2.2);
 /// The portrait's frame, of Dota's shape.
 pub const PORTRAIT: (f32, f32) = (176.0, 160.0);
-/// The ring round the level, and how far it stands from the panel's foot.
+/// The ring round the level, and how far it stands from the panel's foot. Its copper rim and the
+/// gold ring of the progress inside it are as thick as these (`#CircularXPProgress`), its figure is
+/// as high as this, in gold with the orange glow of the game's `text-shadow`.
 const LEVEL_RING: f32 = 46.0;
+const LEVEL_RIM: f32 = 3.0;
+const LEVEL_PROGRESS: f32 = 2.0;
+const LEVEL_FIGURE: f32 = 22.0;
+const LEVEL_COPPER: Color = Color::srgb(0.48, 0.27, 0.11);
+const LEVEL_GLOW: Color = Color::srgba(0.925, 0.47, 0.055, 0.9);
 const LEVEL_RING_LIFT: f32 = 5.0;
 /// The innate's round mark, and the room either side of it that the talent button and the
 /// abilities leave.
@@ -347,8 +354,8 @@ pub(crate) fn xp_share(level: u8, xp: i32) -> f32 {
 
 /// The level ring, gold over the share of the way to the next level.
 pub(crate) fn xp_ring(share: f32) -> BackgroundGradient {
-    let gold = Color::srgb(0.95, 0.75, 0.3);
-    let empty = Color::srgba(0.1, 0.1, 0.12, 0.9);
+    let gold = LEVEL_GOLD;
+    let empty = Color::srgb(0.224, 0.224, 0.224);
     ui::split_disc(share.clamp(0.0, 1.0) * TAU, gold, empty)
 }
 
@@ -653,6 +660,8 @@ fn spawn_bottom(kit: &mut Spawner, row: Entity) {
 /// The level in a ring that fills with the experience to the next, left of
 /// the portrait's foot.
 fn spawn_level(kit: &mut Spawner, bar: Entity) {
+    // The game's badge (`#xp`): a copper rim, the ring of the experience's progress inside it (gold
+    // over the dim of what is still to fill), a black disc inside that and the level in gold.
     let ring = kit
         .commands
         .spawn((
@@ -664,11 +673,14 @@ fn spawn_level(kit: &mut Spawner, bar: Entity) {
                 width: px(LEVEL_RING),
                 height: px(LEVEL_RING),
                 margin: UiRect::new(px(-LEVEL_RING_OUT), px(-1), px(0), px(LEVEL_RING_LIFT)),
+                border: UiRect::all(px(LEVEL_RIM)),
+                padding: UiRect::all(px(LEVEL_PROGRESS)),
                 border_radius: BorderRadius::MAX,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 ..default()
             },
+            BorderColor::all(LEVEL_COPPER),
             xp_ring(0.0),
             ChildOf(bar),
         ))
@@ -676,21 +688,27 @@ fn spawn_level(kit: &mut Spawner, bar: Entity) {
     let disc = kit
         .commands
         .spawn((
+            Name::new("hud level disc"),
             Node {
-                width: px(LEVEL_RING - 8.0),
-                height: px(LEVEL_RING - 8.0),
+                width: percent(100),
+                height: percent(100),
                 border_radius: BorderRadius::MAX,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.02, 0.025, 0.035, 0.95)),
+            BackgroundColor(Color::BLACK),
             ChildOf(ring),
         ))
         .id();
     kit.commands.spawn((
         Readout::PanelLevel,
-        ui::text("", &kit.fonts.bold, 17.0, ui::GOLDEN),
+        Name::new("hud level figure"),
+        ui::text("", &kit.fonts.bold, LEVEL_FIGURE, LEVEL_GOLD),
+        TextShadow {
+            offset: Vec2::ZERO,
+            color: LEVEL_GLOW,
+        },
         ChildOf(disc),
     ));
 }
@@ -2748,7 +2766,7 @@ fn seats(
     server: Res<AssetServer>,
     colours: Res<crate::player_colour::PlayerColours>,
     mut cards: Query<(&SeatBox, &mut ImageNode, &mut BorderColor), Without<SeatColour>>,
-    mut strips: Query<(&SeatColour, &mut ImageNode), Without<SeatBox>>,
+    mut strips: Query<(&SeatColour, &mut BackgroundColor), Without<SeatBox>>,
     mut rings: Query<(&SeatRing, &mut BackgroundGradient)>,
     mut columns: Query<(&SeatColumn, &mut Node)>,
 ) {
@@ -2766,13 +2784,11 @@ fn seats(
             node.display = display;
         }
     }
-    // The strip's art is white: a place nobody holds keeps it so, as Dota's, and a held one wears
-    // its player's colour.
+    // The strip is the player's colour under the game's vignette, which darkens its ends: a place
+    // nobody holds keeps the white it starts with, as Dota's.
     for (seat, mut strip) in &mut strips {
         let colour = seat_of(view, seat.0).map_or(Color::WHITE, |p| colours.of(view, p.slot));
-        if strip.color != colour {
-            strip.color = colour;
-        }
+        strip.set_if_neq(BackgroundColor(colour));
     }
     for (SeatRing(place), mut ring) in &mut rings {
         let share = seat_of(view, *place).map_or(0.0, |p| xp_share(p.level, p.xp));
@@ -2789,11 +2805,8 @@ fn seats(
             Color::WHITE,
         );
         let picked = p.unit.is_some() && p.unit == core.selected;
-        let edge = if picked {
-            Color::WHITE
-        } else {
-            crate::overlay::team_color(p.team)
-        };
+        // The game's portrait has no rim; the one under the selection has.
+        let edge = if picked { Color::WHITE } else { Color::NONE };
         if border.top != edge {
             *border = BorderColor::all(edge);
         }
