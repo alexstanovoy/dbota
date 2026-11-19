@@ -11,3 +11,7 @@ DBOTA_DRILL
 DBOTA_DRILL_SHOTS
 BOTA_SEATS
 BOTA_REFEREE_KEY
+# Where the client writes its log file (a person's choice, not a test client's), and the mark the
+# client puts on the client it starts again so that it goes on with the same log.
+DBOTA_LOG_FILE
+DBOTA_CONTINUE_LOG

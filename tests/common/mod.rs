@@ -114,7 +114,8 @@ impl ClientCommand {
     }
     /// Sets a variable of the client, except those the isolated client keeps for itself: its
     /// home and XDG folders and the variables of `tools/client_environment.txt`, for which a test
-    /// that means it uses [`ClientCommand::server`], [`ClientCommand::seat_key`] or
+    /// that means it uses [`ClientCommand::server`], [`ClientCommand::seat_key`],
+    /// [`ClientCommand::log_file`] or
     /// [`ClientCommand::data_dir`].
     pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
         let key = key.as_ref();
@@ -133,6 +134,12 @@ impl ClientCommand {
     /// The seat key this client takes (`BOTA_SEAT_KEY`), as a test of the key itself needs.
     pub fn seat_key(&mut self, key: &str) -> &mut Self {
         self.command.env("BOTA_SEAT_KEY", key);
+        self
+    }
+    /// The file this client writes its log to (`DBOTA_LOG_FILE`), for a test that reads what the
+    /// client told.
+    pub fn log_file(&mut self, path: &Path) -> &mut Self {
+        self.command.env("DBOTA_LOG_FILE", path);
         self
     }
     /// A data folder for this client other than the one in its private home, for a test that

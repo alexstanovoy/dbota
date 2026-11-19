@@ -352,7 +352,7 @@ fn the_screen_names_the_log_file_that_lists_the_assets_that_did_not_convert() {
     let scratch = Scratch::new("log");
     let log = scratch.root.join("dbota.log");
     let mut client = first_run_client(&scratch);
-    client.env("DBOTA_LOG_FILE", &log);
+    client.log_file(&log);
     let dota = steam_with_dota(
         &mut client,
         &scratch.root.join("Steam"),
