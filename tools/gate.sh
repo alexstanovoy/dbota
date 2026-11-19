@@ -3,6 +3,7 @@
 #
 #   tools/gate.sh [REPLAY.brp]
 #
+# On Linux the native-audio check needs PipeWire, WirePlumber and the PipeWire ALSA plugin.
 # Steps: feature-forks (build and test dependency features agree), script-tests (launcher failure handling and test orchestration), build-output (hostile web build destinations), ignored-audit (every #[ignore]d test has a step that runs it), test-groups (every test in exactly one group, tools/test_groups.py check) and tooling-tests (that script's own tests), fuzz-check (the fuzz targets compile), clippy, web-webgpu and web-webgl2 (the browser clients compile), assets (the asset cache of this build, imported
 # once per stamp from a Dota 2 install), test, build (release), deny, then, with the cache: reference (the importer's golden
 # reference cache, exported once from the install by tools/reference_cache.sh), install-tests (the ignored importer tests),
@@ -148,6 +149,7 @@ if [ "${GATE_LEAN:-0}" = 1 ]; then
     exit 0
 fi
 step build cargo build --release
+step native-audio python3 tools/audio_check.py "$(client_binary release)" "$logs/native-audio"
 step deny cargo deny check
 
 # With an install (the asset cache above), the steps that draw from it.
@@ -168,7 +170,6 @@ if [ "$have_install" = 1 ]; then
         step replay record_replay
     fi
     step visual tools/visual_check.sh "$replay"
-    step native-audio python3 tools/audio_check.py "$(client_binary release)" "$logs/native-audio"
     step browser tools/browser_check.sh
 fi
 

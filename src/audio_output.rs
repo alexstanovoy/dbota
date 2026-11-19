@@ -391,7 +391,11 @@ impl DeviceStream {
                 js_sys::Reflect::get(object, &key.into()).ok()
             };
             use wasm_bindgen::JsCast as _;
-            if read(context.as_ref(), "state").and_then(|state| state.as_string()).as_deref() != Some("running") {
+            if read(context.as_ref(), "state")
+                .and_then(|state| state.as_string())
+                .as_deref()
+                != Some("running")
+            {
                 return None;
             }
             if let Some(time) = read(context.as_ref(), "getOutputTimestamp")
@@ -407,7 +411,10 @@ impl DeviceStream {
                     .and_then(|time| time.as_f64())
                     .unwrap_or(0.0)
             };
-            Some((context.current_time() - latency("baseLatency") - latency("outputLatency")).max(0.0))
+            Some(
+                (context.current_time() - latency("baseLatency") - latency("outputLatency"))
+                    .max(0.0),
+            )
         }
     }
 }

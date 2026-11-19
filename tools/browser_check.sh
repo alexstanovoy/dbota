@@ -74,6 +74,8 @@ else
 fi
 DBOTA_INDEX_PAGE="$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_cache_index.py -v
 DBOTA_INDEX_PAGE="$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_voice_worker.py -v
+APIS=webgl2 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --speech-check --face-trace" OUT=$pages/speech web/build.sh
+in_private_environment python3 web/test/smoke.py --only-wire --speech-page "$pages/speech"
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/replay web/build.sh
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video" APIS=webgpu OUT=$pages/video web/build.sh
 PROFILE=web DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/web web/build.sh
@@ -85,7 +87,5 @@ in_private_environment python3 web/test/smoke.py --import-page "$pages/replay" -
     --replay-page "$pages/replay" --scene-page "$pages/web" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
     --fullscreen-page "$pages/video" \
     --replays-page "$pages/plain" --server "$server" --radovid "$radovid_bin"
-APIS=webgl2 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --speech-check --face-trace" OUT=$pages/speech web/build.sh
-in_private_environment python3 web/test/smoke.py --only-wire --speech-page "$pages/speech"
 # The real mouse: a headful Chromium on an X server (Xwayland) in a private compositor, moved through XTEST.
 DBOTA_HEADLESS_XWAYLAND=1 "$here/tools/headless.sh" python3 web/test/smoke.py --only-wire --cursor-input-page "$pages/replay"

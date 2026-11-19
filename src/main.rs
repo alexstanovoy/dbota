@@ -502,7 +502,9 @@ fn run_command(command: &Command, cache: &std::path::Path) -> AppExit {
         }
         Command::AudioOutput { probe: true } => ended(
             "audio-output",
-            audio_output::probe::run().map(|()| true).map_err(|error| error.to_string()),
+            audio_output::probe::run()
+                .map(|()| true)
+                .map_err(|error| error.to_string()),
         ),
         Command::AudioOutput { probe: false } => {
             println!("{}", audio_output::Kind::requested().name());

@@ -316,7 +316,9 @@ fn clock_jump(
         {
             None
         }
-        (Some((was, t0)), Some((file, t1))) if was == file && *t0 < -crate::talk::PHONEME_CENTRE => {
+        (Some((was, t0)), Some((file, t1)))
+            if was == file && *t0 < -crate::talk::PHONEME_CENTRE =>
+        {
             (*t1 + CLOCK_SLACK < *t0).then(|| format!("{file}'s scheduled preroll ran backwards"))
         }
         (Some((was, t0)), Some((file, t1))) if was == file => ((t1 - t0 - step).abs()
@@ -832,7 +834,14 @@ impl<'a> Played<'a> {
                 );
             }
             let media = now - heard;
-            speech.hear(now, if media < 0.0 { Heard::Scheduled(media) } else { Heard::At(media) });
+            speech.hear(
+                now,
+                if media < 0.0 {
+                    Heard::Scheduled(media)
+                } else {
+                    Heard::At(media)
+                },
+            );
             speech.finish(now);
             let shown = self.posed(now, &mut speech).0;
             let lead = line.face.lipsync.lead();
@@ -848,7 +857,8 @@ impl<'a> Played<'a> {
                 reference.hold(at);
                 self.posed(now, &mut reference).0
             } else {
-                self.at(now, &[(line.face.clone(), heard + centre - lead)]).0
+                self.at(now, &[(line.face.clone(), heard + centre - lead)])
+                    .0
             };
             let own = ideal;
             if let Some((shown_before, own_before)) = &last {
@@ -1474,34 +1484,67 @@ fn queue_test_face(client: &mut Client, face: Arc<LineFace>) -> crate::audio_out
     }
     wave.finalize().expect("a complete wave");
     let world = client.world_mut();
-    let source = world.resource_mut::<Assets<AudioSource>>().add(AudioSource { bytes: bytes.into_inner().into() });
+    let source = world
+        .resource_mut::<Assets<AudioSource>>()
+        .add(AudioSource {
+            bytes: bytes.into_inner().into(),
+        });
     let clock = crate::audio_output::VoiceClock::new(1.0);
-    let player = world.spawn((AudioPlayer::new(source), PlaybackSettings::DESPAWN, clock.clone())).id();
+    let player = world
+        .spawn((
+            AudioPlayer::new(source),
+            PlaybackSettings::DESPAWN,
+            clock.clone(),
+        ))
+        .id();
     let now = world.resource::<Time<bevy::time::Real>>().elapsed_secs();
-    world.resource_mut::<Speech>().say_heard(None, face, player, clock.clone(), now);
+    world
+        .resource_mut::<Speech>()
+        .say_heard(None, face, player, clock.clone(), now);
     clock
 }
 
 fn rendered_weights(client: &Client) -> Vec<f32> {
-    assert!(client.world().resource::<Stage>().drawing(), "the portrait draws this frame");
+    assert!(
+        client.world().resource::<Stage>().drawing(),
+        "the portrait draws this frame"
+    );
     drawn_face(client).expect("the rendered morph weights").0
 }
 
 fn frozen_portrait(client: &mut Client, output: bool) -> Vec<f32> {
-    client.world_mut().resource_mut::<crate::config::Settings>().voice = false;
+    client
+        .world_mut()
+        .resource_mut::<crate::config::Settings>()
+        .voice = false;
     if output {
-        client.world_mut().insert_resource(crate::audio_output::DeviceBuffers {
-            buffer: Pacing::Hz60.device_buffer(), ahead: 3, sample_rate: Pacing::Hz60.sample_rate(),
-        });
+        client
+            .world_mut()
+            .insert_resource(crate::audio_output::DeviceBuffers {
+                buffer: Pacing::Hz60.device_buffer(),
+                ahead: 3,
+                sample_rate: Pacing::Hz60.sample_rate(),
+            });
     }
-    client.world_mut().insert_resource(TimeUpdateStrategy::ManualDuration(
-        Duration::from_secs_f32(1.0 / 60.0),
-    ));
+    client
+        .world_mut()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
+            1.0 / 60.0,
+        )));
     super::hud_layout::on_screen(client);
     client.until("the portrait has drawn its posed jaw", |client| {
         client.world().resource::<Stage>().drawing() && drawn_face(client).is_some()
     });
-    client.world_mut().resource_mut::<Stage>().actor.as_mut().unwrap().face.as_mut().unwrap().frozen = Some(0.0);
+    client
+        .world_mut()
+        .resource_mut::<Stage>()
+        .actor
+        .as_mut()
+        .unwrap()
+        .face
+        .as_mut()
+        .unwrap()
+        .frozen = Some(0.0);
     client.step_frames(1);
     rendered_weights(client)
 }
@@ -1512,9 +1555,16 @@ fn start_rendered_jaw(client: &mut Client, rest: &[f32], face: &Arc<LineFace>) {
         client.step_frames(1);
         let world = client.world();
         let now = world.resource::<Time<bevy::time::Real>>().elapsed_secs();
-        if world.resource::<Speech>().of(None, now).is_some_and(|(_, position)| (0.12..0.30).contains(&position)) {
+        if world
+            .resource::<Speech>()
+            .of(None, now)
+            .is_some_and(|(_, position)| (0.12..0.30).contains(&position))
+        {
             let opening = largest_change(rest, &rendered_weights(client)).1;
-            assert!(opening > 0.15, "the jaw must be wide open before interruption, got {opening:.4}");
+            assert!(
+                opening > 0.15,
+                "the jaw must be wide open before interruption, got {opening:.4}"
+            );
             return;
         }
     }
@@ -1525,7 +1575,10 @@ fn expect_release(client: &mut Client, rest: &[f32], what: &str, change: impl Fn
     let face = timed_face(97);
     start_rendered_jaw(client, rest, &face);
     let before = rendered_weights(client);
-    let now = client.world().resource::<Time<bevy::time::Real>>().elapsed_secs();
+    let now = client
+        .world()
+        .resource::<Time<bevy::time::Real>>()
+        .elapsed_secs();
     let position = client.world().resource::<Speech>().of(None, now).unwrap().1;
     let mut mirror = Mirror::of(client);
     let (index, opening) = largest_change(rest, &before);
@@ -1539,16 +1592,29 @@ fn expect_release(client: &mut Client, rest: &[f32], what: &str, change: impl Fn
         if frame == 0 {
             natural.say(None, face.clone(), None, now);
             natural.hold(position);
-            natural.say(None, Arc::new(LineFace { lipsync: Default::default(), file: String::new() }), None, now);
+            natural.say(
+                None,
+                Arc::new(LineFace {
+                    lipsync: Default::default(),
+                    file: String::new(),
+                }),
+                None,
+                now,
+            );
         }
         natural.finish(now);
         let expected = mirror.pose(now, natural.saying(None, now), world.resource())[index];
         let actual = rendered_weights(client)[index];
-        assert!((actual - expected).abs() < 0.002,
-            "{what} frame {frame}: drawn jaw {actual:.4}, natural release {expected:.4}, previous {previous:.4}, opening {opening:.4}");
+        assert!(
+            (actual - expected).abs() < 0.002,
+            "{what} frame {frame}: drawn jaw {actual:.4}, natural release {expected:.4}, previous {previous:.4}, opening {opening:.4}"
+        );
         previous = actual;
     }
-    assert!((previous - rest[index]).abs() < 0.002, "{what}: the jaw settles back to rest");
+    assert!(
+        (previous - rest[index]).abs() < 0.002,
+        "{what}: the jaw settles back to rest"
+    );
 }
 
 #[test]
@@ -1558,7 +1624,12 @@ fn rendered_jaw_eases_when_replay_playback_is_interrupted() {
     let start = live.client.tick();
     live.wait("enough recorded playback", |_, c| c.tick() > start + 360);
     let file = live.save();
-    let mut client = Client::run(&["--replay", file.path().to_str().expect("a replay path"), "--pov", "0"]);
+    let mut client = Client::run(&[
+        "--replay",
+        file.path().to_str().expect("a replay path"),
+        "--pov",
+        "0",
+    ]);
     let rest = frozen_portrait(&mut client, true);
     client.within(Duration::from_secs(60), "the loaded replay is playing", |client| {
         client.world().resource::<crate::loading::Loading>().done()
@@ -1570,7 +1641,9 @@ fn rendered_jaw_eases_when_replay_playback_is_interrupted() {
             "pause" => client.core_mut().act(Intent::TogglePause),
             "speed" => client.core_mut().act(Intent::Faster),
             _ => {
-                let Source::Replay(player) = &mut client.core_mut().source else { panic!("a replay") };
+                let Source::Replay(player) = &mut client.core_mut().source else {
+                    panic!("a replay")
+                };
                 player.advance_ticks(120.0);
             }
         });
@@ -1591,11 +1664,17 @@ fn rendered_jaw_eases_when_the_device_or_presentation_clock_is_lost() {
         expect_release(&mut client, &rest, what, |client| {
             let world = client.world_mut();
             world.remove_resource::<crate::audio_output::DeviceBuffers>();
-            world.resource_mut::<crate::audio_output::Output>().disconnect(failure);
+            world
+                .resource_mut::<crate::audio_output::Output>()
+                .disconnect(failure);
         });
-        client.world_mut().insert_resource(crate::audio_output::DeviceBuffers {
-            buffer: Pacing::Hz60.device_buffer(), ahead: 3, sample_rate: Pacing::Hz60.sample_rate(),
-        });
+        client
+            .world_mut()
+            .insert_resource(crate::audio_output::DeviceBuffers {
+                buffer: Pacing::Hz60.device_buffer(),
+                ahead: 3,
+                sample_rate: Pacing::Hz60.sample_rate(),
+            });
         client.step_frames(1);
     }
 }
@@ -1609,7 +1688,11 @@ fn a_voice_requested_without_a_device_leaves_the_rendered_jaw_at_rest() {
     queue_test_face(&mut client, timed_face(97));
     for _ in 0..30 {
         client.step_frames(1);
-        assert_eq!(rendered_weights(&client), rest, "the unheard line moved the jaw");
+        assert_eq!(
+            rendered_weights(&client),
+            rest,
+            "the unheard line moved the jaw"
+        );
     }
 }
 
@@ -1621,7 +1704,10 @@ fn rendered_jaw_transitions_align_with_the_heard_line_at_60_hz() {
     let rest = frozen_portrait(&mut client, true);
     for first in [0.0, -0.08] {
         let face = Arc::new(LineFace {
-            lipsync: crate::face::Lipsync::parse(&format!("dbota-lipsync 1\nphoneme {first} 0.40 97\nphoneme 0.48 1.2 98\n")).unwrap(),
+            lipsync: crate::face::Lipsync::parse(&format!(
+                "dbota-lipsync 1\nphoneme {first} 0.40 97\nphoneme 0.48 1.2 98\n"
+            ))
+            .unwrap(),
             file: format!("timed onset {first}"),
         });
         let mut mirror = Mirror::of(&client);
@@ -1636,28 +1722,58 @@ fn rendered_jaw_transitions_align_with_the_heard_line_at_60_hz() {
         assert!(opening > 0.15, "the fixture needs a wide opening");
         let midpoint = (rest[jaw] + wide[jaw]) * 0.5;
         let clock = queue_test_face(&mut client, face.clone());
-        let mut drawn_crossing = None;
-        let mut sample_crossing = None;
+        let mut drawn_open = None;
+        let mut drawn_close = None;
+        let mut sample_open = None;
+        let mut sample_close = None;
         for frame in 0usize..100 {
             client.step_frames(1);
             let world = client.world();
             let now = world.resource::<Time<bevy::time::Real>>().elapsed();
-            let (_, drawn) = (midpoint, rendered_weights(&client)[jaw]);
-            let Some(presentation) = world.resource::<crate::audio_output::Output>().presentation(now) else { continue };
-            if let Heard::At(audible) = presentation(&clock, true) {
-                let want = expected(&mut mirror, audible, &client)[jaw];
-                let lower = at_or_below(want, midpoint, rest[jaw], wide[jaw]);
-                if sample_crossing.is_none() && audible > 0.30 && lower {
-                    sample_crossing = Some(frame);
+            let drawn = rendered_weights(&client)[jaw];
+            let Some(presentation) = world
+                .resource::<crate::audio_output::Output>()
+                .presentation(now)
+            else {
+                continue;
+            };
+            let media = match presentation(&clock, true) {
+                Heard::Scheduled(at) | Heard::At(at) => at,
+                _ => continue,
+            };
+            let want = expected(&mut mirror, media, &client)[jaw];
+            let ref_closed = at_or_below(want, midpoint, rest[jaw], wide[jaw]);
+            let drawn_closed = at_or_below(drawn, midpoint, rest[jaw], wide[jaw]);
+            if media < 0.20 {
+                if !ref_closed {
+                    sample_open.get_or_insert(frame);
                 }
-                if drawn_crossing.is_none() && audible > 0.30 && at_or_below(drawn, midpoint, rest[jaw], wide[jaw]) {
-                    drawn_crossing = Some(frame);
+                if !drawn_closed {
+                    drawn_open.get_or_insert(frame);
+                }
+            }
+            if media > 0.30 {
+                if ref_closed {
+                    sample_close.get_or_insert(frame);
+                }
+                if drawn_closed {
+                    drawn_close.get_or_insert(frame);
                 }
             }
         }
-        let error = drawn_crossing.expect("a visible jaw close").abs_diff(sample_crossing.expect("the audible transition"));
-        assert!(error <= 1, "first phoneme {first}: rendered jaw transition was {error} frames from the heard transition ({drawn_crossing:?} vs {sample_crossing:?})");
-        println!("jaw alignment {first}: {error} frames at 60 Hz");
+        let open_error = drawn_open
+            .expect("a visible jaw opening")
+            .abs_diff(sample_open.expect("the aligned opening"));
+        let close_error = drawn_close
+            .expect("a visible jaw close")
+            .abs_diff(sample_close.expect("the audible transition"));
+        assert!(
+            open_error <= 1 && close_error <= 1,
+            "first phoneme {first}: opening error {open_error}, closing error {close_error} frames"
+        );
+        println!(
+            "jaw alignment {first}: opening {open_error}, closing {close_error} frames at 60 Hz"
+        );
         client.step_frames(70);
     }
 }

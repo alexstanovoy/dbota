@@ -212,20 +212,54 @@ fn speech_check(
     mut speech: ResMut<Speech>,
     mut queued: Local<bool>,
 ) {
-    if *queued || !hud.0 || stage.actor.as_ref().and_then(|actor| actor.face.as_ref()).is_none() {
+    if *queued
+        || !hud.0
+        || stage
+            .actor
+            .as_ref()
+            .and_then(|actor| actor.face.as_ref())
+            .is_none()
+    {
         return;
     }
-    let Some(resident) = voice.resident() else { return };
-    let Some((index, face)) = resident.faces.iter().enumerate().filter_map(|(index, face)|
-        face.as_ref().map(|face| (index, face))
-    ).find(|(_, face)| (2.0..8.0).contains(&face.lipsync.end())) else { return };
-    let request = Request { event: "speech-check", on_player: true, channel: Channel::Voices, ..Request::default() };
-    let Some(player) = mixer.start_heard(&mut commands, time.elapsed(), &request, resident.sounds[index].clone()) else { return };
+    let Some(resident) = voice.resident() else {
+        return;
+    };
+    let Some((index, face)) = resident
+        .faces
+        .iter()
+        .enumerate()
+        .filter_map(|(index, face)| face.as_ref().map(|face| (index, face)))
+        .filter(|(_, face)| (1.25..8.0).contains(&face.lipsync.end()))
+        .max_by(|(_, first), (_, second)| first.lipsync.end().total_cmp(&second.lipsync.end()))
+    else {
+        return;
+    };
+    let request = Request {
+        event: "speech-check",
+        on_player: true,
+        channel: Channel::Voices,
+        ..Request::default()
+    };
+    let Some(player) = mixer.start_heard(
+        &mut commands,
+        time.elapsed(),
+        &request,
+        resident.sounds[index].clone(),
+    ) else {
+        return;
+    };
     let clock = VoiceClock::new(1.0);
     commands.entity(player).insert(clock.clone());
-    speech.say_heard(stage.unit(), face.clone(), player, clock, real.elapsed_secs());
+    speech.say_heard(
+        stage.unit(),
+        face.clone(),
+        player,
+        clock,
+        real.elapsed_secs(),
+    );
     *queued = true;
-    println!("speech-check: queued");
+    crate::talk::trace_line(format_args!("speech-check: queued"));
 }
 
 /// The seat whose hero speaks: the one played, or watched as or through.

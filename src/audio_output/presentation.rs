@@ -92,7 +92,8 @@ impl Clock {
     }
 
     fn time_of(&self, frame: u64) -> Option<f64> {
-        let buffer = self.history()
+        let buffer = self
+            .history()
             .find(|buffer| frame >= buffer.first && frame - buffer.first < buffer.frames)?;
         Some(buffer.at + (frame - buffer.first) as f64 / f64::from(self.0.rate.get()))
     }
@@ -151,7 +152,9 @@ impl Render {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Played {
     Waiting,
+    /// Media seconds before the scheduled first sample.
     Scheduled(f32),
+    /// Media seconds already presented by this output.
     At(f32),
     Ended,
     Gone,
@@ -208,10 +211,16 @@ impl VoiceClock {
         let end = self.0.end.load(Ordering::Acquire);
         let frame = clock.frame_at(now);
         let Some(frame) = frame.filter(|&frame| first != UNSET && frame > first as f64) else {
-            if first != UNSET && let Some(start) = clock.time_of(first) {
+            if first != UNSET
+                && let Some(start) = clock.time_of(first)
+            {
                 return Played::Scheduled(((now - start).min(0.0) as f32) * self.speed());
             }
-            return if queued || first != UNSET { Played::Waiting } else { Played::Gone };
+            return if queued || first != UNSET {
+                Played::Waiting
+            } else {
+                Played::Gone
+            };
         };
         if end != UNSET && frame >= end as f64 {
             return Played::Ended;

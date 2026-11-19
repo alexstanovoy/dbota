@@ -117,7 +117,9 @@ impl Line {
         if self.player.is_none() {
             return now - self.began - self.lead;
         }
-        let Some((_, position)) = self.presented else { return -self.lead };
+        let Some((_, position)) = self.presented else {
+            return -self.lead;
+        };
         if let Some(from) = self.preroll.filter(|_| position < 0.0) {
             let progress = ((position - from) / -from).clamp(0.0, 1.0);
             return -self.lead + (self.lead - PHONEME_CENTRE) * progress;
@@ -126,14 +128,16 @@ impl Line {
     }
 
     fn gain(&self, now: f32) -> f32 {
-        self.takeover.map_or(1.0, |began| ((now - began) / TAKEOVER_RISE).clamp(0.0, 1.0))
+        self.takeover
+            .map_or(1.0, |began| ((now - began) / TAKEOVER_RISE).clamp(0.0, 1.0))
     }
 
     fn schedule(&mut self, now: f32, position: f32) {
         if position >= 0.0 {
             return;
         }
-        self.preroll.get_or_insert(position.max(PHONEME_CENTRE - self.lead));
+        self.preroll
+            .get_or_insert(position.max(PHONEME_CENTRE - self.lead));
         self.present(now, position);
     }
 
@@ -389,22 +393,29 @@ impl Speech {
             Heard::At(_) | Heard::Waiting => true,
         });
         let has_line = self.line.is_some();
-        let latest = self.waiting.iter().enumerate().rev().filter_map(|(index, line)| {
-            let position = line.presented?.1;
-            (!has_line || position > 0.0).then_some((index, position / line.speed()))
-        }).min_by(|(_, a), (_, b)| match (*a >= 0.0, *b >= 0.0) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            (false, false) => b.total_cmp(a),
-            _ => a.total_cmp(b),
-        });
+        let latest = self
+            .waiting
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|(index, line)| {
+                let position = line.presented?.1;
+                (!has_line || position > 0.0).then_some((index, position / line.speed()))
+            })
+            .min_by(|(_, a), (_, b)| match (*a >= 0.0, *b >= 0.0) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                (false, false) => b.total_cmp(a),
+                _ => a.total_cmp(b),
+            });
         if let Some((index, _)) = latest {
             self.leave(now);
             self.line = self.waiting.remove(index);
             if has_line && let Some(line) = &mut self.line {
                 line.takeover = Some(now);
             }
-            self.waiting.retain(|line| line.presented.is_none_or(|(_, position)| position <= 0.0));
+            self.waiting
+                .retain(|line| line.presented.is_none_or(|(_, position)| position <= 0.0));
         }
     }
 
@@ -631,11 +642,13 @@ impl Face {
         }
         if let Some((line, t)) = saying.line {
             if saying.gain >= 1.0 {
-                line.lipsync.apply(t, &faces.phonemes, &self.ranges, controls);
+                line.lipsync
+                    .apply(t, &faces.phonemes, &self.ranges, controls);
             } else if saying.gain > 0.0 {
                 line_room.clear();
                 line_room.extend(controls.iter().map(|(&name, &weight)| (name, weight)));
-                line.lipsync.apply(t, &faces.phonemes, &self.ranges, line_room);
+                line.lipsync
+                    .apply(t, &faces.phonemes, &self.ranges, line_room);
                 for (&name, &weight) in line_room.iter() {
                     let value = controls.entry(name).or_insert(0.0);
                     *value += saying.gain * (weight - *value);
@@ -697,6 +710,13 @@ impl Face {
     }
 }
 
+pub(crate) fn trace_line(message: std::fmt::Arguments<'_>) {
+    #[cfg(target_arch = "wasm32")]
+    info!("{message}");
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("{message}");
+}
+
 /// Debug (`--face-trace`, for the talking-portrait test): prints the face on the stage on each
 /// frame the portrait is drawn. Once a face: each of its meshes' morph targets
 /// (`face-rig: MESH NAME...`, meshes by number); as it starts saying a line: the line's lip sync
@@ -721,13 +741,18 @@ pub fn trace(
     };
     if traced.0 != Some(actor.pivot) {
         traced.0 = Some(actor.pivot);
-        if args.speech_check && let Ok((node, transform)) = portrait.single() {
+        if args.speech_check
+            && let Ok((node, transform)) = portrait.single()
+        {
             let size = node.size();
             let top_left = transform.translation - size / 2.0;
-            println!("speech-check: crop {:.1} {:.1} {:.1} {:.1}", top_left.x, top_left.y, size.x, size.y);
+            trace_line(format_args!(
+                "speech-check: crop {:.1} {:.1} {:.1} {:.1}",
+                top_left.x, top_left.y, size.x, size.y
+            ));
         }
         for (i, (_, names)) in face.nodes().enumerate() {
-            println!("face-rig: {i} {}", names.join(" "));
+            trace_line(format_args!("face-rig: {i} {}", names.join(" ")));
         }
     }
     let line = speech.of(stage.unit(), time.elapsed_secs());
@@ -736,18 +761,19 @@ pub fn trace(
         traced.1 = file.map(str::to_owned);
         let root = &manifest.root;
         if let (Some(file), Some(table)) = (file, manifest.phonemes.as_deref()) {
-            println!(
+            trace_line(format_args!(
                 "face-line: {} {}",
                 root.join(file).display(),
                 root.join(table).display()
-            );
+            ));
         }
     }
-    if args.speech_check && let Some((clock, _)) = speech.active_playback()
+    if args.speech_check
+        && let Some((clock, _)) = speech.active_playback()
         && let Some(present) = output.presentation(time.elapsed())
         && let Heard::At(position) = present(clock, true)
     {
-        println!("speech-check: presented {position:.5}");
+        trace_line(format_args!("speech-check: presented {position:.5}"));
     }
     let t = line.map_or_else(|| "-".to_owned(), |(_, t)| format!("{t:.4}"));
     for (i, (node, _)) in face.nodes().enumerate() {
@@ -756,7 +782,7 @@ pub fn trace(
             .map(MorphWeights::weights)
             .unwrap_or_default();
         let w: Vec<String> = w.iter().map(|w| format!("{w:.4}")).collect();
-        println!("face: {i} {t} {}", w.join(" "));
+        trace_line(format_args!("face: {i} {t} {}", w.join(" ")));
     }
 }
 
@@ -890,7 +916,8 @@ mod tests {
         );
         let first = (-0.046f32 / RELEASE).exp();
         let second = (-0.001f32 / RELEASE).exp();
-        let current = (0.001 + PHONEME_CENTRE) / crate::face::PHONEME_FILTER * (0.001 / TAKEOVER_RISE);
+        let current =
+            (0.001 + PHONEME_CENTRE) / crate::face::PHONEME_FILTER * (0.001 / TAKEOVER_RISE);
         let opening = controls.get(&jaw).copied().unwrap_or_default();
         // Neutral emphasis scales the table; derive that scale from an isolated phoneme.
         let mut full = Controls::new();

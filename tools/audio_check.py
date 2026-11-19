@@ -8,6 +8,7 @@ from pathlib import Path
 import selectors
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -141,6 +142,7 @@ def capture(recorder, client, output):
     samples = array.array("h")
     samples.frombytes(pcm)
     mono = samples[::2]
+    assert mono == samples[1::2], "the null sink's left and right channels disagree"
     active = [index for index, sample in enumerate(mono) if abs(sample) > 4096]
     assert active, "no signal reached the private sink"
     first, last = active[0], active[-1]
@@ -160,6 +162,8 @@ def main():
     parser.add_argument("client", type=Path)
     parser.add_argument("evidence", type=Path)
     args = parser.parse_args()
+    if sys.platform != "linux":
+        parser.error("this check requires the Linux ALSA and PipeWire backend")
     for command in ("pipewire", "wireplumber", "pw-record", "pw-link"):
         if not shutil.which(command):
             parser.error(f"this Linux backend check needs {command}")
@@ -175,7 +179,8 @@ def main():
                    XDG_STATE_HOME=str(private / "state"), XDG_CONFIG_HOME=str(private / "config"),
                    DBUS_SESSION_BUS_ADDRESS=f"unix:path={directory}/no-bus",
                    DBUS_SYSTEM_BUS_ADDRESS=f"unix:path={directory}/no-bus")
-        for key in ("DBOTA_NULL_AUDIO", "PIPEWIRE_CONFIG_DIR", "PIPEWIRE_CONFIG_NAME", "PIPEWIRE_PROPS"):
+        for key in ("DBOTA_NULL_AUDIO", "PIPEWIRE_CONFIG_DIR", "PIPEWIRE_CONFIG_NAME",
+                    "PIPEWIRE_PROPS", "PIPEWIRE_CORE", "WIREPLUMBER_CONFIG_DIR"):
             env.pop(key, None)
         server = process(stack, ["pipewire"], dict(env, PIPEWIRE_CONFIG_DIR=directory),
                          output / "server.log", stdout=subprocess.DEVNULL)

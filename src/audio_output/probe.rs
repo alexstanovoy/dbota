@@ -2,8 +2,8 @@
 use std::io::{Cursor, Read};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use bevy::asset::AssetPlugin;
 use super::*;
+use bevy::asset::AssetPlugin;
 
 pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     use clap::Parser as _;
@@ -13,13 +13,16 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
         .insert_resource(crate::Args::parse_from(["dbota"]));
     app.add_plugins(super::plugin);
     app.update();
-    if !matches!(app.world().resource::<Output>().0.stream, Some(Stream::Device(_))) {
+    if !matches!(
+        app.world().resource::<Output>().0.stream,
+        Some(Stream::Device(_))
+    ) {
         return Err("the probe needs a real audio output".into());
     }
     println!("audio-probe-ready");
     let mut start = [0];
     std::io::stdin().read_exact(&mut start)?;
-    if start != [b'1'] {
+    if start != *b"1" {
         return Err("the probe start byte must be 1".into());
     }
 
@@ -41,11 +44,19 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     wave.finalize()?;
 
     let world = app.world_mut();
-    let source = world.resource_mut::<Assets<AudioSource>>().add(AudioSource {
-        bytes: bytes.into_inner().into(),
-    });
+    let source = world
+        .resource_mut::<Assets<AudioSource>>()
+        .add(AudioSource {
+            bytes: bytes.into_inner().into(),
+        });
     let voice = VoiceClock::new(1.0);
-    let player = world.spawn((AudioPlayer::new(source), PlaybackSettings::DESPAWN, voice.clone())).id();
+    let player = world
+        .spawn((
+            AudioPlayer::new(source),
+            PlaybackSettings::DESPAWN,
+            voice.clone(),
+        ))
+        .id();
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut reported = false;
     while Instant::now() < deadline {
