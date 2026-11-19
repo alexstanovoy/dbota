@@ -28,9 +28,13 @@ use bevy::audio::{
     PlaybackSettings, Source, Volume,
 };
 use bevy::prelude::*;
+use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
 use rodio::cpal::StreamError;
 use rodio::mixer::{Mixer, MixerSource};
-use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
+
+mod presentation;
+use presentation::{Clock, Render};
+pub use presentation::{Played, VoiceClock};
 
 /// The variable that makes the client play to no device. Anything but empty or `0` asks for it.
 pub const SILENT_VARIABLE: &str = "DBOTA_NULL_AUDIO";
@@ -99,11 +103,13 @@ impl Pace {
 }
 
 /// What a step of the silent output takes: the mixer's samples for [`SILENT_STEP`].
+#[cfg(test)]
 struct Drain {
     source: MixerSource,
     per_step: usize,
 }
 
+#[cfg(test)]
 impl Drain {
     fn new(source: MixerSource) -> Drain {
         let samples =
@@ -130,6 +136,8 @@ struct Silent {
     mixer: Mixer,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
+    presentation: Clock,
+    opened: Instant,
 }
 
 impl Silent {
@@ -141,12 +149,18 @@ impl Silent {
         let (mixer, source) = silent_mixer();
         let stop = Arc::new(AtomicBool::new(false));
         let ending = Arc::clone(&stop);
+        let opened = Instant::now();
+        let presentation = Clock::new(source.sample_rate());
+        let mut render = Render::new(source, presentation.clone());
         let worker = std::thread::spawn(move || {
-            let mut drain = Drain::new(source);
-            let opened = Instant::now();
+            let samples = SILENT_RATE as usize
+                * usize::from(SILENT_CHANNELS)
+                * SILENT_STEP.as_millis() as usize
+                / 1000;
+            let mut buffer = vec![0.0f32; samples];
             let mut pace = Pace::new(Duration::ZERO);
             while !ending.load(Ordering::Acquire) {
-                drain.step();
+                render.fill(&mut buffer, opened.elapsed().as_secs_f64());
                 std::thread::sleep(pace.after_step(opened.elapsed()));
             }
         });
@@ -154,6 +168,8 @@ impl Silent {
             mixer,
             stop,
             worker: Some(worker),
+            presentation,
+            opened,
         }
     }
 }
@@ -176,7 +192,7 @@ impl Drop for Silent {
 
 /// What the client plays to.
 enum Stream {
-    Device(MixerDeviceSink),
+    Device(DeviceStream),
     Silent(Silent),
     #[cfg(test)]
     Pulled(Pulled),
@@ -185,10 +201,27 @@ enum Stream {
 impl Stream {
     fn mixer(&self) -> &Mixer {
         match self {
-            Stream::Device(device) => device.mixer(),
+            Stream::Device(device) => &device.mixer,
             Stream::Silent(silent) => &silent.mixer,
             #[cfg(test)]
             Stream::Pulled(pulled) => &pulled.mixer,
+        }
+    }
+    fn clock(&self) -> &Clock {
+        match self {
+            Self::Device(device) => &device.presentation,
+            Self::Silent(silent) => &silent.presentation,
+            #[cfg(test)]
+            Self::Pulled(pulled) => &pulled.presentation,
+        }
+    }
+
+    fn clock_time(&self, _now: Duration) -> f64 {
+        match self {
+            Self::Device(device) => device.clock_time(),
+            Self::Silent(silent) => silent.opened.elapsed().as_secs_f64(),
+            #[cfg(test)]
+            Self::Pulled(pulled) => _now.saturating_sub(pulled.opened).as_secs_f64(),
         }
     }
 }
@@ -202,12 +235,15 @@ impl Stream {
 pub struct DeviceBuffers {
     pub buffer: Duration,
     pub ahead: u32,
+    pub sample_rate: u32,
 }
 
 #[cfg(test)]
 struct Pulled {
     mixer: Mixer,
-    source: std::sync::Mutex<MixerSource>,
+    render: std::sync::Mutex<Render>,
+    presentation: Clock,
+    buffer: Vec<f32>,
     /// How much sound the device has taken since it opened, and when it opened.
     taken: Duration,
     opened: Duration,
@@ -226,10 +262,15 @@ fn pull_buffers(
     };
     let now = time.elapsed();
     let stream = output.0.stream.get_or_insert_with(|| {
-        let (mixer, source) = silent_mixer();
+        let channels = NonZero::new(SILENT_CHANNELS).expect("some channels");
+        let rate = NonZero::new(buffers.sample_rate).expect("a device sample rate");
+        let (mixer, source) = rodio::mixer::mixer(channels, rate);
+        let presentation = Clock::new(rate);
         Stream::Pulled(Pulled {
             mixer,
-            source: std::sync::Mutex::new(source),
+            render: std::sync::Mutex::new(Render::new(source, presentation.clone())),
+            presentation,
+            buffer: Vec::new(),
             taken: Duration::ZERO,
             opened: now,
         })
@@ -237,20 +278,19 @@ fn pull_buffers(
     let Stream::Pulled(pulled) = stream else {
         return;
     };
-    let samples = SILENT_RATE as f64 * f64::from(SILENT_CHANNELS) * buffers.buffer.as_secs_f64();
-    let per_buffer = samples.round() as usize;
-    let mut source = pulled.source.lock().expect("the pulled source");
-    let wanted = now - pulled.opened + buffers.buffer * buffers.ahead;
+    let frames = (f64::from(buffers.sample_rate) * buffers.buffer.as_secs_f64()).round();
+    let duration = Duration::from_secs_f64(frames / f64::from(buffers.sample_rate));
+    pulled
+        .buffer
+        .resize(frames as usize * usize::from(SILENT_CHANNELS), 0.0);
+    let mut render = pulled.render.lock().expect("the pulled source");
+    let wanted = now - pulled.opened + duration * buffers.ahead;
     for _ in 0..1_000 {
         if pulled.taken >= wanted {
             break;
         }
-        for _ in 0..per_buffer {
-            if source.next().is_none() {
-                break;
-            }
-        }
-        pulled.taken += buffers.buffer;
+        render.fill(&mut pulled.buffer, pulled.taken.as_secs_f64());
+        pulled.taken += duration;
     }
 }
 
@@ -322,9 +362,21 @@ fn open(failed: Arc<AtomicBool>) -> Option<Stream> {
     open_device(failed).map(Stream::Device)
 }
 
-/// The default device's stream, which raises `failed` when it breaks.
-fn open_device(failed: Arc<AtomicBool>) -> Option<MixerDeviceSink> {
-    let mut stream = DeviceSinkBuilder::from_default_device()
+struct DeviceStream {
+    _sink: MixerDeviceSink,
+    mixer: Mixer,
+    presentation: Clock,
+}
+
+impl DeviceStream {
+    // The stream still delivers audio, but it cannot publish when the samples are heard.
+    fn clock_time(&self) -> f64 {
+        0.0
+    }
+}
+
+fn open_device(failed: Arc<AtomicBool>) -> Option<DeviceStream> {
+    let mut sink = DeviceSinkBuilder::from_default_device()
         .and_then(|builder| {
             builder
                 .with_error_callback(move |error| {
@@ -336,8 +388,10 @@ fn open_device(failed: Arc<AtomicBool>) -> Option<MixerDeviceSink> {
         })
         .inspect_err(|error| warn!("no audio device: {error}"))
         .ok()?;
-    stream.log_on_drop(false);
-    Some(stream)
+    sink.log_on_drop(false);
+    let mixer = sink.mixer().clone();
+    let presentation = Clock::new(sink.config().sample_rate());
+    Some(DeviceStream { _sink: sink, mixer, presentation })
 }
 
 /// How long a loop takes to rise when it starts and to fall when it ends: a few hundred samples,
@@ -459,7 +513,22 @@ struct Despawn;
 struct Remove;
 
 #[derive(Resource)]
-struct Output(Device<Stream>);
+pub(crate) struct Output(Device<Stream>);
+
+impl Output {
+    pub(crate) fn presentation(
+        &self,
+        now: Duration,
+    ) -> Option<impl Fn(&VoiceClock, bool) -> Played + '_> {
+        let stream = self.0.stream.as_ref()?;
+        let clock = stream.clock();
+        let frame = clock.frame_at(stream.clock_time(now));
+        Some(move |voice: &VoiceClock, queued| voice.played(clock, frame, queued))
+    }
+}
+
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BeforePortrait;
 
 pub fn plugin(app: &mut App) {
     // A test plays no sound on the machine it runs on: its client opens no device, and what it
@@ -480,8 +549,10 @@ pub fn plugin(app: &mut App) {
                 finish_endings,
                 cleanup_finished,
             )
-                .chain(),
-        );
+                .chain()
+                .before(BeforePortrait),
+        )
+        .configure_sets(PostUpdate, BeforePortrait.before(crate::portrait::Aimed));
     #[cfg(test)]
     app.add_systems(PostUpdate, pull_buffers.before(supervise));
 }
@@ -492,11 +563,15 @@ fn supervise(
     mut output: ResMut<Output>,
     time: Res<Time<Real>>,
     sinks: Query<(Entity, Has<Despawn>), With<AudioSink>>,
+    mut speech: Option<ResMut<crate::talk::Speech>>,
     mut commands: Commands,
 ) {
     let now = time.elapsed_secs_f64();
     match output.0.supervise(now) {
         Some(Change::Lost) => {
+            if let Some(speech) = &mut speech {
+                speech.stop();
+            }
             for (entity, once) in &sinks {
                 if once {
                     commands.entity(entity).despawn();
@@ -524,15 +599,15 @@ fn play_queued(
             &PlaybackSettings,
             Option<&crate::channels::Tuned>,
             Option<&Taper>,
+            Option<&VoiceClock>,
         ),
         Without<AudioSink>,
     >,
     mut commands: Commands,
 ) {
     let muted_by_run = args.is_some_and(|args| args.mute);
-    let mixer = output.0.stream.as_ref().map(Stream::mixer);
-    for (entity, player, playback, tuned, taper) in &queued {
-        let Some(mixer) = mixer else {
+    for (entity, player, playback, tuned, taper, voice) in &queued {
+        let Some(stream) = output.0.stream.as_ref() else {
             if !matches!(playback.mode, PlaybackMode::Loop) {
                 commands.entity(entity).despawn();
             }
@@ -551,7 +626,7 @@ fn play_queued(
                 continue;
             }
         };
-        let player = Player::connect_new(mixer);
+        let player = Player::connect_new(stream.mixer());
         // The sound begins at the loudness the balance gives it now, not at its own and then the
         // balance's a system later: the output's worker does not wait for the frame's systems,
         // and a sound started under a mute must not be heard for the length of a pull.
@@ -567,6 +642,9 @@ fn play_queued(
                 decoder.repeat_infinite(),
                 taper.cloned().unwrap_or_default(),
             ));
+        } else if let Some(voice) = voice {
+            player.set_speed(voice.speed());
+            player.append(voice.track(stream.clock().clone(), decoder));
         } else {
             player.append(decoder);
         }
@@ -619,22 +697,7 @@ mod start_under_the_balance {
     /// What a worker pulls between the start of a sound and the next system of the frame.
     const PULL: usize = 4096;
 
-    /// The samples a pull takes from a sound of `channel` that [`play_queued`] started in `mode`,
-    /// with the balance `settings` and the run's mute.
-    fn first_samples(
-        settings: Settings,
-        muted_by_run: bool,
-        channel: Channel,
-        mode: PlaybackSettings,
-    ) -> Vec<f32> {
-        let (mixer, mut samples) = silent_mixer();
-        let silent = Silent {
-            mixer,
-            stop: Arc::new(AtomicBool::new(false)),
-            worker: None,
-        };
-        let mut world = World::new();
-        world.insert_resource(Output(Device::new(|_| Some(Stream::Silent(silent)))));
+    fn constant_source() -> AudioSource {
         let mut bytes = std::io::Cursor::new(Vec::new());
         let spec = hound::WavSpec {
             channels: 1,
@@ -648,10 +711,31 @@ mod start_under_the_balance {
                 .expect("a sample");
         }
         wav.finalize().expect("a finished wav");
-        let mut sources = Assets::<AudioSource>::default();
-        let handle = sources.add(AudioSource {
+        AudioSource {
             bytes: bytes.into_inner().into(),
-        });
+        }
+    }
+
+    /// The samples a pull takes from a sound of `channel` that [`play_queued`] started in `mode`,
+    /// with the balance `settings` and the run's mute.
+    fn first_samples(
+        settings: Settings,
+        muted_by_run: bool,
+        channel: Channel,
+        mode: PlaybackSettings,
+    ) -> Vec<f32> {
+        let (mixer, mut samples) = silent_mixer();
+        let silent = Silent {
+            mixer,
+            stop: Arc::new(AtomicBool::new(false)),
+            worker: None,
+            presentation: Clock::new(samples.sample_rate()),
+            opened: Instant::now(),
+        };
+        let mut world = World::new();
+        world.insert_resource(Output(Device::new(|_| Some(Stream::Silent(silent)))));
+        let mut sources = Assets::<AudioSource>::default();
+        let handle = sources.add(constant_source());
         world.insert_resource(sources);
         world.insert_resource(settings);
         if muted_by_run {

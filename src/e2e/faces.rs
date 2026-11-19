@@ -23,7 +23,7 @@
 //! [`TAKEOVER_EVERY`]th, in frames of 2 ms (the idle) and 4 ms (a line). A frame on which a weight
 //! moves by more than half [`JUMP`] off what the frames on either side say it should (motion moves
 //! alike on neighbouring frames, whatever its sign; a jump moves one frame alone), or all of them
-//! together by more than half [`TOTAL_JUMP`], is halved down to [`FINEST`], following the half all the weights together move more in: a jump is a
+//! together by more than half [`TOTAL_JUMP`], is halved down to [`FINEST`], following each half whose motion can still exceed a cutoff: a jump is a
 //! change still more than [`JUMP`] in a weight there, or more than [`TOTAL_JUMP`] in all of them
 //! together (a jump does not shrink as the step does; motion does). No speed is capped: a frame
 //! with no jump moves a weight up to 0.158 in 4 ms and all of them together up to 1.087 (Pudge's
@@ -31,11 +31,9 @@
 //! over, is let go of gradually ([`crate::talk::RELEASE`]), and so are three lines said within a
 //! fifth of a second of each other.
 //!
-//! Then every line's face is shown as the client shows it on the frames of a 240 Hz and a 60 Hz
-//! display and of a browser's uneven frames ([`Pacing`]), its sound reported as a device takes it
-//! (a buffer of about 45 ms at a time, two ahead of what is heard): on each frame the face shown
-//! must move as much as the face of that frame's time does ([`Played::shown`]), so that it never
-//! holds still for a frame or two and then jumps on.
+//! The motion sweep uses 30, 60, 144 and 240 Hz and uneven browser frames. The presentation
+//! fixture supplies the media time of the audio samples heard on each frame. It also checks
+//! delayed startup and resumed playback separately from the uninterrupted frame sequence.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -285,6 +283,21 @@ fn total_change(before: &[f32], after: &[f32]) -> f32 {
     before.iter().zip(after).map(|(a, b)| (a - b).abs()).sum()
 }
 
+fn presented_start(client: &Client) -> Option<f32> {
+    let world = client.world();
+    let time = world.resource::<Time<bevy::time::Real>>();
+    let speech = world.resource::<Speech>();
+    let (face, _) = speech.of(Some(client.me().id), time.elapsed_secs())?;
+    let (clock, _) = speech.active_playback()?;
+    let sample = world
+        .resource::<crate::audio_output::Output>()
+        .presentation(time.elapsed())?;
+    match sample(clock, true) {
+        Heard::At(position) => Some(position - face.lipsync.lead()),
+        _ => None,
+    }
+}
+
 /// How a line's clock moved from one drawn frame to the next, when it jumped: a line said on
 /// both moves on by the frame's `step` (or waits at its lead for its sound to begin); one
 /// starting is said from its lead before its start (or earlier, a line registered ahead).
@@ -292,6 +305,7 @@ fn clock_jump(
     before: &Option<(String, f32)>,
     after: &Option<(String, f32)>,
     step: f32,
+    presented_start: Option<f32>,
 ) -> Option<String> {
     match (before, after) {
         // A line waits at its lead before its first viseme, the face at rest, until its sound
@@ -304,8 +318,14 @@ fn clock_jump(
         (Some((was, t0)), Some((file, t1))) if was == file => ((t1 - t0 - step).abs()
             > CLOCK_SLACK)
             .then(|| format!("{file}'s clock moved {:.5} s in a {step} s frame", t1 - t0)),
-        (_, Some((file, t))) => (*t > -crate::face::PHONEME_FILTER + CLOCK_SLACK)
-            .then(|| format!("{file} started {t:.5} s in")),
+        (_, Some((file, t))) => {
+            let wrong = presented_start.map_or_else(
+                || *t > -crate::face::PHONEME_FILTER + CLOCK_SLACK,
+                |want| (*t - want).abs() > CLOCK_SLACK,
+            );
+            wrong
+                .then(|| format!("{file} started {t:.5} s in; presented start {presented_start:?}"))
+        }
         (_, None) => None,
     }
 }
@@ -346,7 +366,16 @@ fn watch_until(
                     (w1.len(), j1.len()),
                     "{phase}: one face"
                 );
-                what.extend(clock_jump(&last.1, &now.1, step));
+                let started = now
+                    .1
+                    .as_ref()
+                    .is_some_and(|(file, _)| last.1.as_ref().is_none_or(|(was, _)| was != file));
+                let presented = if started {
+                    presented_start(client)
+                } else {
+                    None
+                };
+                what.extend(clock_jump(&last.1, &now.1, step, presented));
                 if last.2 != now.2 {
                     what.push(format!(
                         "the expression restarted: {:?} -> {:?}",
@@ -435,57 +464,45 @@ fn line_frames(authored: &AuthoredLine, step: f32) -> (usize, f32) {
     (((lead + end + 2.0 * lead) / step).ceil() as usize, lead)
 }
 
-/// How far the mouth runs ahead of what is heard. The face's clock trails the sound's start by the
-/// line's lead (the phonemes' filter span, 80 ms, for a line with no phoneme before its start);
-/// the filter shows the phonemes of the 80 ms ahead of the clock, centred 40 ms ahead; the output
-/// plays the sound its device buffers (two, [`DEVICE_AHEAD`]) after the frame it began on. So the
-/// mouth shows what is heard two buffers less 40 ms later: 45 ms ahead natively (buffers of
-/// 42.7 ms), 53 ms in a browser (46.4 ms), less half a frame a display holds each frame for
-/// (8 ms at 60 Hz, 2 ms at 240 Hz); a line whose phonemes start before it trails by as much more.
-/// Speech's own anticipation (lips form a sound before it is heard) is of this order.
+/// The same sample should drive the same pose whatever latency the output reports.
 #[test]
-fn the_mouth_leads_what_is_heard_by_the_outputs_latency_less_half_the_phoneme_filter() {
-    let text = "dbota-lipsync 1\nphoneme 0.1 0.3 97\n";
-    let face = Arc::new(LineFace {
-        lipsync: crate::face::Lipsync::parse(text).expect("a lip sync"),
-        file: "a line".into(),
-    });
-    for (pacing, lead_ms) in [
-        (Pacing::Hz240, 45.3),
-        (Pacing::Hz60, 45.3),
-        (Pacing::Browser, 52.9),
+fn the_mouth_follows_the_presented_samples_at_different_output_latencies() {
+    let face = timed_face(97);
+    for pacing in [
+        Pacing::Hz30,
+        Pacing::Hz60,
+        Pacing::Hz144,
+        Pacing::Hz240,
+        Pacing::Browser,
     ] {
-        let buffer = pacing.device_buffer().as_secs_f32();
-        let times: Vec<f32> = pacing
-            .frames(1.0)
-            .iter()
-            .scan(0.0, |t, step| {
-                *t += step.as_secs_f32();
-                Some(*t)
-            })
-            .collect();
-        let heard_from = times[1];
-        let mut speech = Speech::default();
-        speech.say(None, face.clone(), Some(Entity::PLACEHOLDER), times[0]);
-        for &now in &times {
-            let position = buffer * ((now - heard_from) / buffer + DEVICE_AHEAD).floor();
-            let report = if now < heard_from {
-                Heard::Waiting
-            } else {
-                Heard::At(position)
-            };
-            speech.hear(now, report);
-            let Some((_, t)) = speech.of(None, now).filter(|_| now >= heard_from) else {
-                continue;
-            };
-            let shown = t + crate::face::PHONEME_FILTER / 2.0;
-            let heard = (now - heard_from) - DEVICE_AHEAD * buffer;
-            let ahead_ms = (shown - heard) * 1000.0;
-            assert!(
-                (ahead_ms - lead_ms).abs() < 0.2,
-                "{} at {now:.3} s: the mouth {ahead_ms:.1} ms ahead of the sound",
-                pacing.name()
-            );
+        for buffers in [1.0, 2.0, 4.0] {
+            let latency = buffers * pacing.device_buffer().as_secs_f32();
+            let mut speech = Speech::default();
+            speech.say(None, face.clone(), Some(Entity::PLACEHOLDER), 0.0);
+            let mut now = 0.0;
+            for frame in pacing.frames(1.0) {
+                now += frame.as_secs_f32();
+                let audible = (now - latency).max(0.0);
+                speech.hear(now, Heard::At(audible));
+                // The filter span is a pre-roll approximation; check against the fixture's
+                // timestamp without assuming the device's latency or a display phase.
+                let want = audible - crate::face::PHONEME_FILTER;
+                let (said, jaw) = timed_mouth(&speech, now);
+                if audible == 0.0 {
+                    assert_eq!(jaw, 0.0, "{} before {latency:.4}", pacing.name());
+                } else {
+                    assert!(
+                        (said - want).abs() < 0.0002,
+                        "{} at {now:.4}: face {said:.4}, expected {want:.4}",
+                        pacing.name()
+                    );
+                    assert!(
+                        (jaw - mouth(&face, want)).abs() < 0.0002,
+                        "{} at {now:.4}: jaw {jaw:.4}",
+                        pacing.name()
+                    );
+                }
+            }
         }
     }
 }
@@ -632,9 +649,10 @@ impl<'a> Played<'a> {
 
     /// Takes the lines `speech` let go into what is left of the lines before, as the portrait
     /// does on each frame.
-    fn settle(&self, speech: &mut Speech, now: f32) {
-        let (face, faces) = (&self.mirror.face, self.faces);
-        speech.settle(now, |line, t| face.line_controls(line, t, faces));
+    fn settle(&mut self, speech: &mut Speech, now: f32) {
+        self.mirror
+            .face
+            .settle(speech, Some(self.unit), now, self.faces);
     }
 
     /// The face `speech` gives at `now` (taking in the lines it let go first, as the portrait
@@ -706,8 +724,9 @@ impl<'a> Played<'a> {
         out
     }
 
-    /// Halves the step from `before` to `after` `halvings` times, keeping the half the face
-    /// moves more in, all its weights together: the jump there, if a weight changes more than
+    /// Halves the step from `before` to `after` `halvings` times. A jump in one weight can
+    /// occur in a different half from the largest summed motion. At the finest step, a jump
+    /// changes a weight by more than
     /// [`JUMP`] or all of them more than [`TOTAL_JUMP`] (how far into the line it is said on both
     /// sides, and what jumped).
     fn halve(
@@ -717,26 +736,39 @@ impl<'a> Played<'a> {
         halvings: u32,
         script: Script,
     ) -> Option<((Option<f32>, Option<f32>), String)> {
-        let (mut lo, mut hi) = ((before.0, before.1.clone()), (after.0, after.1.clone()));
-        for _ in 0..halvings {
-            let mid = (lo.0 + hi.0) / 2.0;
-            let face = (mid, self.at(mid, script));
-            let first = total_change(&lo.1.0, &face.1.0);
-            let second = total_change(&face.1.0, &hi.1.0);
-            if first >= second {
-                hi = face;
-            } else {
-                lo = face;
-            }
+        Self::subframe_jump(before, after, halvings, &mut |at| self.at(at, script))
+    }
+
+    fn subframe_jump(
+        (lo, before): (f32, &(Vec<f32>, Option<f32>)),
+        (hi, after): (f32, &(Vec<f32>, Option<f32>)),
+        halvings: u32,
+        pose: &mut impl FnMut(f32) -> (Vec<f32>, Option<f32>),
+    ) -> Option<((Option<f32>, Option<f32>), String)> {
+        let (i, by) = largest_change(&before.0, &after.0);
+        let total = total_change(&before.0, &after.0);
+        if halvings == 0 {
+            let said = (before.1, after.1);
+            return match (by > JUMP, total > TOTAL_JUMP) {
+                (true, _) => Some((said, format!("weight {i} by {by:.3}"))),
+                (false, true) => Some((said, format!("all weights by {total:.3}"))),
+                (false, false) => None,
+            };
         }
-        let (i, by) = largest_change(&lo.1.0, &hi.1.0);
-        let total = total_change(&lo.1.0, &hi.1.0);
-        let said = (lo.1.1, hi.1.1);
-        match (by > JUMP, total > TOTAL_JUMP) {
-            (true, _) => Some((said, format!("weight {i} by {by:.3}"))),
-            (false, true) => Some((said, format!("all weights by {total:.3}"))),
-            (false, false) => None,
+        let mid = (lo + hi) / 2.0;
+        let middle = pose(mid);
+        let explore =
+            |a: &[f32], b: &[f32]| largest_change(a, b).1 > JUMP || total_change(a, b) > TOTAL_JUMP;
+        if explore(&before.0, &middle.0)
+            && let Some(jump) =
+                Self::subframe_jump((lo, before), (mid, &middle), halvings - 1, pose)
+        {
+            return Some(jump);
         }
+        if explore(&middle.0, &after.0) {
+            return Self::subframe_jump((mid, &middle), (hi, after), halvings - 1, pose);
+        }
+        None
     }
 
     /// Says lines `start` seconds into the expression's loop, as the hero's voice says them (each
@@ -767,8 +799,7 @@ impl<'a> Played<'a> {
     }
 
     /// The line's face on the frames of `pacing` as the client shows it, against the face its
-    /// frames' times give: the line said on a frame and heard from the next, its sound reported
-    /// as a device takes it (a buffer at a time, [`DEVICE_AHEAD`] ahead of what is heard). On
+    /// frames' times give: the line is requested on a frame and heard after the output delay. On
     /// each frame the face shown must move as much as the face of its time does, within
     /// [`SHOWN_SLACK`] of all its weights together: the frames it moves more or less on (it
     /// holds still and then jumps on), and the most it did.
@@ -781,7 +812,10 @@ impl<'a> Played<'a> {
                 Some(*t)
             })
             .collect();
-        let (said, heard) = (times[0], times[1]);
+        let (said, heard) = (
+            times[0],
+            times[1] + pacing.device_buffer().as_secs_f32() * DEVICE_AHEAD,
+        );
         let mut speech = Speech::default();
         let mut last: Option<(Vec<f32>, Vec<f32>)> = None;
         let (mut out, mut most) = (Vec::new(), 0.0f32);
@@ -794,14 +828,7 @@ impl<'a> Played<'a> {
                     now,
                 );
             }
-            let buffer = pacing.device_buffer().as_secs_f32();
-            let position = buffer * ((now - heard) / buffer + DEVICE_AHEAD).floor();
-            let report = match now < heard {
-                true => Heard::Waiting,
-                false if position < line.face.lipsync.end() => Heard::At(position),
-                false => Heard::Gone,
-            };
-            speech.hear(now, report);
+            speech.hear(now, Heard::At((now - heard).max(0.0)));
             speech.finish(now);
             let shown = self.posed(now, &mut speech).0;
             // The face of the frame's time: the line from the frame its sound began.
@@ -869,10 +896,11 @@ fn played_apart(
                                 let half = line.face.lipsync.end() / 2.0;
                                 let over = [(line, 0.0), (next, half)];
                                 found.extend(played.say(start, &over, &mut fastest));
-                                // Three lines inside a fifth of a second: the first still being
-                                // let go when the second is.
-                                let quick = [(line, 0.0), (next, 0.06), (third, 0.06)];
-                                found.extend(played.say(start, &quick, &mut fastest));
+                                // Keep the 60 ms case and cover three starts within 100 ms.
+                                for spacing in [0.06, 0.045] {
+                                    let quick = [(line, 0.0), (next, spacing), (third, spacing)];
+                                    found.extend(played.say(start, &quick, &mut fastest));
+                                }
                             }
                             jumps.extend(found.into_iter().map(|j| (phase, format!("{name} {j}"))));
                         }
@@ -921,7 +949,7 @@ const STALL: f32 = 0.5;
 const SUSPENDED: f32 = 0.6;
 const CLOCK_SPEED: f32 = 0.51;
 
-/// Every line's clock, its sound reported as a device takes it and stalled as `stall` says, from
+/// Every line's clock, with presentation stalled as `stall` says, from
 /// the frame its sound is heard to its end: the frames its clock jumped on (it may go after the
 /// sound only at most half a second a second faster or slower than the frames), and whether it
 /// went after the sound at all on some line.
@@ -946,10 +974,12 @@ fn clocks_hold(unit: EntityId, lines: &[AuthoredLine], stall: Stall) -> (Vec<Str
                 Some(*t)
             })
             .collect();
-        let (heard, stalled) = (times[1], times[middle]);
-        // What the output has played by `now`, and so reports two buffers ahead of it.
+        let (heard, stalled) = (times[1] + buffer * DEVICE_AHEAD, times[middle]);
+        // Keep the last presented sample during suspension. On resume, let the output reach
+        // the end of one queued buffer before the renderer next samples its clock.
         let played = |now: f32| match stall {
-            Stall::Suspended if now >= stalled => (now - SUSPENDED).max(stalled) - heard,
+            Stall::Suspended if now >= stalled + SUSPENDED => now - SUSPENDED - heard + buffer,
+            Stall::Suspended if now >= stalled => stalled - heard,
             _ => now - heard,
         };
         let mut speech = Speech::default();
@@ -963,21 +993,25 @@ fn clocks_hold(unit: EntityId, lines: &[AuthoredLine], stall: Stall) -> (Vec<Str
                     now,
                 );
             }
-            let position = buffer * (played(now) / buffer + DEVICE_AHEAD).floor();
-            let report = match now < heard {
-                true => Heard::Waiting,
-                false if position < end => Heard::At(position),
-                false => Heard::Gone,
-            };
-            speech.hear(now, report);
+            let position = played(now).max(0.0);
+            speech.hear(now, Heard::At(position));
             speech.finish(now);
             let Some((_, t)) = speech.of(Some(unit), now) else {
-                break;
+                assert!(
+                    position == 0.0 || position >= end,
+                    "face ended while media played at {position:.4} of {end:.4}"
+                );
+                continue;
             };
             if let Some((before, t0)) = last.filter(|_| now > heard) {
                 let (dt, moved) = (now - before, t - t0);
-                went_after |= (moved - dt).abs() > 0.1 * dt;
-                if (moved - dt).abs() > CLOCK_SPEED * dt + CLOCK_SLACK {
+                let available = (position - played(before).max(0.0)).max(0.0);
+                went_after |= t + line.face.lipsync.lead() < position - CLOCK_SLACK;
+                let slowest = (dt * (1.0 - CLOCK_SPEED)).min(available);
+                if moved < slowest - CLOCK_SLACK
+                    || moved > (1.0 + CLOCK_SPEED) * dt + CLOCK_SLACK
+                    || t + line.face.lipsync.lead() > position + CLOCK_SLACK
+                {
                     out.push(format!(
                         "{} {stall:?}: frame {frame} ({now:.3} s) moved the line {moved:.4} s in \
                          {dt:.4} s",
@@ -992,12 +1026,17 @@ fn clocks_hold(unit: EntityId, lines: &[AuthoredLine], stall: Stall) -> (Vec<Str
     (out, went_after)
 }
 
-/// Every line's face as the client shows it on the frames of a 240 Hz and a 60 Hz display and of
-/// a browser ([`Played::shown`]): the frames it moves off its time's face on.
+/// Every line's face against its presentation time at each frame pacing.
 fn shown_apart(played: &mut Played, name: &str, lines: &[AuthoredLine]) -> Vec<String> {
     let mut out = Vec::new();
     let mut most = 0.0f32;
-    for pacing in [Pacing::Hz240, Pacing::Hz60, Pacing::Browser] {
+    for pacing in [
+        Pacing::Hz30,
+        Pacing::Hz60,
+        Pacing::Hz144,
+        Pacing::Hz240,
+        Pacing::Browser,
+    ] {
         for line in lines {
             let (off, worst) = played.shown(line, pacing);
             most = most.max(worst);
@@ -1029,7 +1068,10 @@ fn finish_automatic(client: &mut Client, name: &str) -> Vec<String> {
             .resource::<crate::hero_voice::HeroVoice>()
             .resident()
             .is_some_and(|voice| voice.has_pending_line());
-        if !pending && said(client).is_none() {
+        if !pending
+            && !client.world().resource::<Speech>().has_waiting_line()
+            && said(client).is_none()
+        {
             return jumps;
         }
         patience.pass("the automatic voice line to finish before injected playback");
@@ -1104,6 +1146,7 @@ fn check_hero(hero: HeroId) -> Vec<String> {
         .insert_resource(crate::audio_output::DeviceBuffers {
             buffer: Pacing::Hz60.device_buffer(),
             ahead: DEVICE_AHEAD as u32,
+            sample_rate: Pacing::Hz60.sample_rate(),
         });
     client.cheat(Cheat::StartGame);
     // From the start: 2 ms apart, so the first face drawn is the first one checked.
@@ -1215,4 +1258,221 @@ fn pudges_face_moves_without_a_jump_idle_running_and_speaking() {
 #[test]
 fn shadow_fiends_face_moves_without_a_jump_idle_running_and_speaking() {
     face_moves_without_a_jump(HeroId::SHADOW_FIEND);
+}
+
+fn timed_face(code: u32) -> Arc<LineFace> {
+    let data = format!("dbota-lipsync 1\nphoneme 0.0 0.4 {code}\nphoneme 0.4 2.0 98\n");
+    Arc::new(LineFace {
+        lipsync: crate::face::Lipsync::parse(&data).expect("a timed face"),
+        file: format!("line {code}"),
+    })
+}
+
+fn mouth(face: &LineFace, position: f32) -> f32 {
+    let table = crate::face::Phonemes::parse(
+        "dbota-phonemes 1\nkeys jaw\nphoneme 97 1.0\nphoneme 98 0.25\n",
+    )
+    .expect("a phoneme table");
+    let mut controls = crate::face::Controls::new();
+    face.lipsync
+        .apply(position, &table, &HashMap::new(), &mut controls);
+    controls
+        .get(&crate::face::token("jaw"))
+        .copied()
+        .unwrap_or_default()
+}
+
+fn timed_mouth(speech: &Speech, now: f32) -> (f32, f32) {
+    speech.of(None, now).map_or((0.0, 0.0), |(face, position)| {
+        (position, mouth(face, position))
+    })
+}
+
+#[test]
+fn playback_clock_stays_at_rest_until_the_first_audible_sample() {
+    let line = timed_face(97);
+    let mut speech = Speech::default();
+    speech.say(None, line, Some(Entity::PLACEHOLDER), 0.0);
+    for frame in 1..=12 {
+        let now = frame as f32 / 60.0;
+        speech.hear(now, Heard::At(0.0));
+        assert_eq!(
+            timed_mouth(&speech, now).1,
+            0.0,
+            "no sample audible at {now:.3}"
+        );
+    }
+}
+
+#[test]
+fn playback_clock_keeps_the_media_position_at_the_first_frame_after_a_hitch() {
+    let line = timed_face(97);
+    for rate in [30, 60, 144, 240] {
+        let mut speech = Speech::default();
+        speech.say(None, line.clone(), Some(Entity::PLACEHOLDER), 0.0);
+        let now = 0.5 + 1.0 / rate as f32;
+        let played = now - 0.1;
+        speech.hear(now, Heard::At(played));
+        let expected = played - line.lipsync.lead();
+        let (position, jaw) = timed_mouth(&speech, now);
+        assert!(
+            (position - expected).abs() < CLOCK_SLACK,
+            "{rate} Hz: media position {position:.4} vs {expected:.4}"
+        );
+        assert!(
+            (jaw - mouth(&line, expected)).abs() < CLOCK_SLACK,
+            "{rate} Hz: jaw {jaw:.4}"
+        );
+    }
+}
+
+#[test]
+fn playback_clock_holds_on_stall_and_rejoins_the_audible_position() {
+    let line = timed_face(97);
+    let mut speech = Speech::default();
+    speech.say(None, line.clone(), Some(Entity::PLACEHOLDER), 0.0);
+    speech.hear(0.2, Heard::At(0.2));
+    let (position, jaw) = timed_mouth(&speech, 0.2);
+    speech.hear(0.7, Heard::At(0.2));
+    let held = timed_mouth(&speech, 0.7);
+    assert!(
+        (held.0 - position).abs() < CLOCK_SLACK,
+        "the stalled clock moved from {position:.4} to {:.4}",
+        held.0
+    );
+    assert!(
+        (held.1 - jaw).abs() < CLOCK_SLACK,
+        "the stalled jaw moved from {jaw:.4} to {:.4}",
+        held.1
+    );
+    for frame in 1..=240 {
+        let now = 0.7 + frame as f32 / 240.0;
+        let played = now - 0.5;
+        speech.hear(now, Heard::At(played));
+        speech.finish(now);
+        let expected = played - line.lipsync.lead();
+        let (position, jaw) = timed_mouth(&speech, now);
+        assert!(
+            position <= expected + CLOCK_SLACK,
+            "face {position:.4} ahead of media {expected:.4}"
+        );
+        if frame == 240 {
+            assert!(
+                (position - expected).abs() < CLOCK_SLACK,
+                "face {position:.4} never rejoined media {expected:.4}"
+            );
+            assert!(
+                (jaw - mouth(&line, expected)).abs() < CLOCK_SLACK,
+                "jaw never rejoined sound: {jaw:.4}"
+            );
+        }
+    }
+}
+
+#[test]
+fn playback_clock_rests_when_the_output_disappears() {
+    for heard_before_loss in [None, Some(0.2)] {
+        let line = timed_face(97);
+        let mut speech = Speech::default();
+        speech.say(None, line, Some(Entity::PLACEHOLDER), 0.0);
+        if let Some(played) = heard_before_loss {
+            speech.hear(0.2, Heard::At(played));
+            speech.hear(0.3, Heard::At(played + 0.1));
+        }
+        speech.hear(0.31, Heard::Gone);
+        speech.finish(0.5);
+        let (position, jaw) = timed_mouth(&speech, 0.5);
+        assert_eq!(
+            (position, jaw),
+            (0.0, 0.0),
+            "output lost at {heard_before_loss:?}: face {position:.4}, jaw {jaw:.4}"
+        );
+    }
+}
+
+#[test]
+fn playback_clock_keeps_the_outgoing_face_until_the_takeover_is_audible() {
+    let first = timed_face(97);
+    let second = timed_face(98);
+    let mut speech = Speech::default();
+    speech.say(None, first.clone(), Some(Entity::PLACEHOLDER), 0.0);
+    speech.hear(0.2, Heard::At(0.2));
+    speech.hear(0.3, Heard::At(0.3));
+    speech.say(
+        None,
+        second.clone(),
+        Some(Entity::from_raw_u32(1).unwrap()),
+        0.31,
+    );
+    speech.hear(0.32, Heard::Waiting);
+    let (position, jaw) = timed_mouth(&speech, 0.32);
+    assert!(
+        (position - (0.3 - first.lipsync.lead())).abs() < CLOCK_SLACK,
+        "outgoing media position changed to {position:.4}"
+    );
+    assert!(
+        (jaw - mouth(&first, position)).abs() < CLOCK_SLACK,
+        "outgoing jaw changed to {jaw:.4}"
+    );
+    speech.hear(0.35, Heard::At(0.04));
+    let (position, jaw) = timed_mouth(&speech, 0.35);
+    assert!(
+        (position - (0.04 - second.lipsync.lead())).abs() < CLOCK_SLACK,
+        "incoming media position {position:.4}"
+    );
+    assert!(
+        (jaw - mouth(&second, position)).abs() < CLOCK_SLACK,
+        "incoming jaw {jaw:.4}"
+    );
+}
+
+#[test]
+fn a_small_jump_is_detected_beside_larger_smooth_movement() {
+    let mut pose = |at: f32| {
+        let jump = if at >= 0.125 { 0.025 } else { 0.0 };
+        let motion = (at - 0.5).max(0.0) * 0.2;
+        (vec![jump, motion, motion, motion], Some(at))
+    };
+    let before = pose(0.0);
+    let after = pose(1.0);
+    let jump = Played::subframe_jump((0.0, &before), (1.0, &after), 6, &mut pose);
+    assert_eq!(
+        jump.map(|(_, what)| what).as_deref(),
+        Some("weight 0 by 0.025")
+    );
+}
+
+#[test]
+fn playback_clock_catches_up_without_jumping_when_a_buffer_returns() {
+    let line = timed_face(97);
+    let mut speech = Speech::default();
+    speech.say(None, line.clone(), Some(Entity::PLACEHOLDER), 0.0);
+    speech.hear(0.2, Heard::At(0.2));
+    speech.hear(0.7, Heard::At(0.2));
+    let mut previous = timed_mouth(&speech, 0.7);
+    for frame in 1..=180 {
+        let now = 0.7 + frame as f32 / 240.0;
+        let output = now - 0.4;
+        speech.hear(now, Heard::At(output));
+        let current = timed_mouth(&speech, now);
+        assert!(
+            current.0 - previous.0 <= 1.5 / 240.0 + CLOCK_SLACK,
+            "the recovering face jumped by {:.4} s",
+            current.0 - previous.0
+        );
+        assert!(
+            current.0 <= output - line.lipsync.lead() + CLOCK_SLACK,
+            "the recovering face passed its sound"
+        );
+        previous = current;
+    }
+    let end = 1.05 - line.lipsync.lead();
+    assert!(
+        (previous.0 - end).abs() < CLOCK_SLACK,
+        "the face never rejoined: {previous:?}"
+    );
+    assert!(
+        (previous.1 - mouth(&line, end)).abs() < CLOCK_SLACK,
+        "the jaw never rejoined: {previous:?}"
+    );
 }

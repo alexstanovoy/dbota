@@ -989,78 +989,6 @@ fn tint(image: &Image, corners: &[Vec3; 4]) -> Option<Image> {
 
 /// Aims the camera and its light at the model on the stage, and lets it
 /// draw as [`draw`] decides.
-fn aim(
-    framings: Res<Framings>,
-    bank: Res<ModelBank>,
-    ready: Res<crate::warmup::PipelinesReady>,
-    hud: Res<crate::ui::HudShown>,
-    mut stage: ResMut<Stage>,
-    mut commands: Commands,
-    children: Query<&Children>,
-    bounds: Query<(&Aabb, &GlobalTransform)>,
-    mut camera: Single<
-        (
-            &mut Camera,
-            &mut RenderTarget,
-            &mut Transform,
-            &mut Projection,
-            &mut AmbientLight,
-        ),
-        (With<PortraitCamera>, Without<PortraitLight>),
-    >,
-    mut fill: Single<
-        (&mut DirectionalLight, &mut Transform),
-        (With<FillLight>, Without<KeyLight>, Without<PortraitCamera>),
-    >,
-    mut key: Single<
-        (&mut DirectionalLight, &mut Transform),
-        (With<KeyLight>, Without<FillLight>, Without<PortraitCamera>),
-    >,
-) {
-    let placed = stage.actor.as_ref().filter(|a| a.posed).and_then(|actor| {
-        let framed = framings.0.get(&bank.0[actor.model].model.logical);
-        framed.map(|f| place(f, actor.size)).or_else(|| {
-            let (center, radius) = bounds_in(actor.pivot, &children, &bounds)?;
-            Some(fit(center, radius, framings.0.get(DEFAULT_FRAMING)))
-        })
-    });
-    let live = stage.live.clone();
-    // Off while the main world works out what views see (see `activate`).
-    if camera.0.is_active {
-        camera.0.is_active = false;
-    }
-    let (Some(placed), Some(actor)) = (placed, stage.actor.as_mut()) else {
-        stage.render = false;
-        stage.rendered = false;
-        return;
-    };
-    let at = |local: &Transform| Transform::from_translation(STAGE) * *local;
-    *camera.2 = at(&placed.camera);
-    *camera.3 = Projection::Perspective(PerspectiveProjection {
-        fov: placed.vfov,
-        aspect_ratio: SIZE.0 as f32 / SIZE.1 as f32,
-        near: NEAR,
-        far: placed.far,
-        ..default()
-    });
-    camera.4.color = placed.ambient.0;
-    camera.4.brightness = placed.ambient.1;
-    *fill.1 = at(&placed.fill.0);
-    (fill.0.color, fill.0.illuminance) = (placed.fill.1, placed.fill.2);
-    *key.1 = at(&placed.key.0);
-    (key.0.color, key.0.illuminance) = (placed.key.1, placed.key.2);
-    let target = actor.still.clone().unwrap_or(live);
-    if camera.1.as_image() != Some(&target) {
-        *camera.1 = RenderTarget::Image(ImageRenderTarget {
-            handle: target,
-            scale_factor: 1.0,
-        });
-    }
-    let ready = ready.get();
-    stage.rendered = stage.render;
-    stage.render = draw(&mut stage, ready, hud.0, &mut commands);
-}
-
 /// Whether the camera draws this frame: a still until its render is whole
 /// (then it is kept and its model leaves the stage), an animated portrait on
 /// every frame the panel is on screen (`shown`: the HUD, not a menu, a loading
@@ -1106,7 +1034,7 @@ fn speak(
     };
     if render {
         let now = time.elapsed_secs();
-        speech.settle(now, |line, t| face.line_controls(line, t, &faces));
+        face.settle(&mut speech, unit, now, &faces);
         face.pose(now, speech.saying(unit, now), &faces, &mut weights);
     }
 }

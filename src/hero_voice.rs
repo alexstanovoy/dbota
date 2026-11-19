@@ -30,6 +30,7 @@ use dbota_import::voice::concept::{Concept, Fact, Query};
 use dbota_import::voice::rules::HeroRules;
 use dbota_import::voice::speaker::{Choice, History, Silence};
 
+use crate::audio_output::VoiceClock;
 use crate::channels::Channel;
 use crate::manifest::Manifest;
 use crate::mixer::{Mixer, Request};
@@ -316,8 +317,12 @@ fn speak(
                 .history
                 .accept(&resident.rules, waiting.query, waiting.concept, now);
         }
-        if let (Some(face), Some(_)) = (resident.faces[waiting.choice.sound].clone(), player) {
-            speech.say(hero, face, player, real.elapsed_secs());
+        if let Some(player) = player {
+            let clock = VoiceClock::new(1.0);
+            commands.entity(player).insert(clock.clone());
+            if let Some(face) = resident.faces[waiting.choice.sound].clone() {
+                speech.say_heard(hero, face, player, clock, real.elapsed_secs());
+            }
         }
         player
     };

@@ -25,6 +25,8 @@ use crate::talk::{LineFace, Speech};
 pub(super) enum Pacing {
     Hz240,
     Hz60,
+    Hz30,
+    Hz144,
     /// A browser's frames: its 60 Hz animation frames, of which a busy single thread misses some
     /// (a quarter of them take two vsyncs, one in twenty three), each timestamp off by up to 1 ms.
     Browser,
@@ -35,16 +37,24 @@ impl Pacing {
         match self {
             Pacing::Hz240 => "240hz",
             Pacing::Hz60 => "60hz",
+            Pacing::Hz30 => "30hz",
+            Pacing::Hz144 => "144hz",
             Pacing::Browser => "browser",
         }
     }
 
-    /// The buffer of sound the display's client output takes at a time: rodio's 2048 frames at a
-    /// native device's 48 kHz, and at a browser audio context's 44.1 kHz.
+    /// Buffer lengths for the controlled 2048-frame fixtures, at 48 or 44.1 kHz.
     pub(super) fn device_buffer(self) -> Duration {
         match self {
             Pacing::Browser => Duration::from_micros(46_440),
             _ => Duration::from_micros(42_667),
+        }
+    }
+
+    pub(super) fn sample_rate(self) -> u32 {
+        match self {
+            Pacing::Browser => 44_100,
+            _ => 48_000,
         }
     }
 
@@ -64,6 +74,8 @@ impl Pacing {
             let step = match self {
                 Pacing::Hz240 => 1.0 / 240.0,
                 Pacing::Hz60 => 1.0 / 60.0,
+                Pacing::Hz30 => 1.0 / 30.0,
+                Pacing::Hz144 => 1.0 / 144.0,
                 Pacing::Browser => {
                     let vsyncs = match random() {
                         r if r < 0.05 => 3.0,
@@ -113,6 +125,7 @@ struct Row {
     now: f32,
     drawn: bool,
     said: Option<(String, f32)>,
+    presented: Option<f32>,
     weights: Vec<f32>,
     bones: Vec<(String, Vec3, Quat)>,
     clips: Vec<(u32, f32, f32)>,
@@ -122,10 +135,24 @@ fn row(client: &Client, dt: f32) -> Row {
     let world = client.world();
     let now = world.resource::<Time<bevy::time::Real>>().elapsed_secs();
     let stage = world.resource::<Stage>();
-    let said = world
-        .resource::<Speech>()
+    let speech = world.resource::<Speech>();
+    let said = speech
         .of(Some(client.me().id), now)
         .map(|(face, t)| (face.file.clone(), t));
+    let presented = speech.active_playback().and_then(|(clock, entity)| {
+        let elapsed = world.resource::<Time<bevy::time::Real>>().elapsed();
+        let presented = world
+            .resource::<crate::audio_output::Output>()
+            .presentation(elapsed)?;
+        if let crate::audio_output::Played::At(position) = presented(
+            clock,
+            world.get::<bevy::audio::AudioPlayer>(entity).is_some(),
+        ) {
+            Some(position)
+        } else {
+            None
+        }
+    });
     let mut weights = Vec::new();
     let mut bones = Vec::new();
     let mut clips = Vec::new();
@@ -173,6 +200,7 @@ fn row(client: &Client, dt: f32) -> Row {
         now,
         drawn: stage.drawing(),
         said,
+        presented,
         weights,
         bones,
         clips,
@@ -353,7 +381,15 @@ fn write(prefix: &str, rows: &[Row], images: &[Vec<u8>], size: UVec2) {
     let (x0, y0, w, h) = CROP;
     let cell = (w * ZOOM, h * ZOOM + 16);
     let per = (SHEET.0 * SHEET.1) as usize;
+    let keep = std::env::var("FACE_FRAMES_SHEETS").ok();
     for (sheet, chunk) in images.chunks(per).enumerate() {
+        let name = format!("{prefix}-{sheet:02}.png");
+        if keep
+            .as_ref()
+            .is_some_and(|kept| !kept.split(',').any(|sheet| sheet == name))
+        {
+            continue;
+        }
         let mut out = Canvas::new(cell.0 * SHEET.0, cell.1 * SHEET.1);
         for (k, data) in chunk.iter().enumerate() {
             let frame = sheet * per + k;
@@ -381,10 +417,10 @@ fn write(prefix: &str, rows: &[Row], images: &[Vec<u8>], size: UVec2) {
             }
             number(&mut out, cx + 4, cy + h * ZOOM, frame, [255, 255, 255, 255]);
         }
-        out.save(&dir.join(format!("{prefix}-{sheet:02}.png")));
+        out.save(&dir.join(name));
     }
     let mut text = String::from(
-        "# frame dt_ms now_s drawn pixel_change said_file said_t | weights | bones name x y z qx qy qz qw | clips node weight seek\n",
+        "# frame dt_ms now_s drawn pixel_change said_file said_t | weights | bones name x y z qx qy qz qw | clips node weight seek | presented media_s\n",
     );
     for (frame, row) in rows.iter().enumerate() {
         let change = frame.checked_sub(1).map_or(0.0, |before| {
@@ -416,7 +452,10 @@ fn write(prefix: &str, rows: &[Row], images: &[Vec<u8>], size: UVec2) {
         for (node, weight, seek) in &row.clips {
             let _ = write!(text, " {node} {weight:.3} {seek:.4}");
         }
-        text.push('\n');
+        let presented = row
+            .presented
+            .map_or("-".to_owned(), |position| format!("{position:.4}"));
+        let _ = writeln!(text, " | {presented}");
     }
     std::fs::write(dir.join(format!("{prefix}.txt")), text).expect("the trace written");
 }
@@ -472,23 +511,28 @@ fn say(client: &mut Client, (index, face, event): &(usize, Arc<LineFace>, String
                 };
                 let player =
                     mixer.start_heard(&mut commands, time.elapsed(), &request, source.clone());
-                assert!(player.is_some(), "the mixer plays {event}");
-                speech.say(Some(unit), face.clone(), player, real.elapsed_secs());
+                let player = player.unwrap_or_else(|| panic!("the mixer plays {event}"));
+                let clock = crate::audio_output::VoiceClock::new(1.0);
+                commands.entity(player).insert(clock.clone());
+                speech.say_heard(Some(unit), face.clone(), player, clock, real.elapsed_secs());
             },
         )
         .expect("the line started");
 }
 
 /// The client of a capture: Pudge on the map, his portrait drawn as a player's is, the voice
-/// heard through a device pulled `buffer` at a time (two buffers ahead, as a device's double
-/// buffering takes it).
-fn client(hero: HeroId, buffer: Duration) -> (Server, Client) {
+/// played through a fixture that presents its samples two buffers after each pull.
+fn client(hero: HeroId, pacing: Pacing) -> (Server, Client) {
     let server = Server::start(1, &[]);
     let mut client = Client::join_rendered(&server, hero, &["--no-vsync"], prepare);
     client.cheat(Cheat::StartGame);
     client
         .world_mut()
-        .insert_resource(crate::audio_output::DeviceBuffers { buffer, ahead: 2 });
+        .insert_resource(crate::audio_output::DeviceBuffers {
+            buffer: pacing.device_buffer(),
+            ahead: 2,
+            sample_rate: pacing.sample_rate(),
+        });
     client
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
@@ -514,7 +558,7 @@ fn voice(client: &mut Client, on: bool) {
 
 /// Every case of `pacing`, written with `prefix` (`before`, `after`).
 fn captures(pacing: Pacing, prefix: &str) {
-    let (_server, mut client) = client(HeroId::PUDGE, pacing.device_buffer());
+    let (_server, mut client) = client(HeroId::PUDGE, pacing);
     let p = pacing.name();
     voice(&mut client, false);
     let sounds = sounds(&client);

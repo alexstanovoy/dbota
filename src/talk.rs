@@ -3,17 +3,19 @@
 //!
 //! Dota lip-syncs the hero who speaks: a line moves the portrait's face while the portrait shows
 //! that hero, whatever else is selected meanwhile (a creep's portrait never talks); the line's
-//! clock is its sound's own playing position, so the mouth keeps time with what is heard.
+//! clock follows the samples scheduled for presentation by the audio output.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use bevy::audio::{AudioSink, AudioSinkPlayback};
+use bevy::audio::AudioPlayer;
 use bevy::gltf::{GltfMeshExtras, GltfMeshName};
 use bevy::mesh::morph::{MeshMorphWeights, MorphWeights};
 use bevy::prelude::*;
 use bota_proto::EntityId;
 
+pub use crate::audio_output::Played as Heard;
+use crate::audio_output::VoiceClock;
 use crate::face::{Controls, Expression, Lipsync, Phonemes, Rig, RigScratch};
 use crate::manifest::Manifest;
 
@@ -71,45 +73,62 @@ pub const RELEASE: f32 = 0.04;
 pub const LET_GO: f32 = 7.0 * RELEASE;
 /// Most lines left waiting to be added to what is let go, when no face takes them in.
 const PENDING: usize = 8;
-/// How far a sound's reported position may run from the line's own clock before the clock goes
-/// after it: more than a device's buffers ahead (two of about 45 ms), so that only a sound that
-/// stalled or skipped moves the face's clock, never the steps the device takes it in.
-const RESYNC: f32 = 0.25;
-/// How fast the line's clock goes after its sound once they parted: half a second of the line a
-/// second faster or slower than the frames, so the face never jumps to it.
-const SLEW: f32 = 0.5;
-/// How near the sound the line's clock is back when it stops going after it: within a device's
-/// buffer, the steps it reports in.
-const CAUGHT_UP: f32 = 0.05;
+/// A newly available output buffer may be ahead of a face that held through an underrun.
+const CATCH_UP_RATE: f32 = 1.5;
 
-/// The line one's hero is saying, and what is left of the lines it said before.
 #[derive(Resource, Default)]
 pub struct Speech {
     line: Option<Line>,
-    /// Lines that ended or were taken over since a face last took them in ([`Speech::settle`]).
+    waiting: VecDeque<Line>,
     leaving: Vec<Leaving>,
-    /// What is left of the lines taken in: their controllers, decaying from an instant on.
-    residue: Option<Residue>,
+    residues: Vec<Residue>,
 }
 
 struct Line {
-    /// The hero saying it; none for any face (a check's).
     unit: Option<EntityId>,
     face: Arc<LineFace>,
-    /// The sound playing it, while it plays.
     player: Option<Entity>,
-    /// Seconds since the start, at the line's start.
-    anchor: f32,
-    /// Whether its sound has begun: from then the line keeps the frames' clock.
-    sounding: bool,
-    /// The position its sound reported as it began, which every later report is taken against
-    /// (the output reports ahead of what is heard by as much all along).
-    began_at: f32,
-    /// When the sound last reported, and whether the clock is going after it.
-    heard: f32,
-    catching_up: bool,
-    /// Debug: the line held at this many seconds in.
+    voice: Option<VoiceClock>,
+    began: f32,
+    lead: f32,
+    end: f32,
+    /// Last pose time and media position. An unstarted line stays in pre-roll.
+    presented: Option<(f32, f32)>,
+    presented_end: Option<f32>,
     held: Option<f32>,
+}
+
+impl Line {
+    fn speed(&self) -> f32 {
+        self.voice.as_ref().map_or(1.0, VoiceClock::speed)
+    }
+
+    fn at(&self, now: f32) -> f32 {
+        self.held.unwrap_or_else(|| {
+            let position = if self.player.is_some() {
+                self.presented.map_or(0.0, |(_, position)| position)
+            } else {
+                now - self.began
+            };
+            position - self.lead
+        })
+    }
+
+    fn present(&mut self, now: f32, position: f32) {
+        let speed = self.speed();
+        let position = self.presented.map_or(position, |(last, previous)| {
+            position.min(previous + speed * CATCH_UP_RATE * (now - last).max(0.0))
+        });
+        let end = self.end + self.lead;
+        if position > end
+            && let Some((last, previous)) = self.presented
+            && previous <= end
+        {
+            self.presented_end =
+                Some(last + (now - last) * ((end - previous) / (position - previous)));
+        }
+        self.presented = Some((now, position));
+    }
 }
 
 /// A line that ended or was taken over: its face where it stopped, decaying from when it did.
@@ -133,30 +152,17 @@ fn release(age: f32) -> f32 {
     (-age.max(0.0) / RELEASE).exp()
 }
 
-/// What a sound's player tells of a line's sound on a frame.
-#[derive(Clone, Copy, Debug)]
-pub enum Heard {
-    /// Asked for, not playing yet.
-    Waiting,
-    /// Playing, this far in as the output reports it (in the steps the device takes it in).
-    At(f32),
-    /// Played out, or never heard.
-    Gone,
-}
-
-/// What a face says at a moment: the line and how far into it, and what is left of the lines it
-/// said before.
+/// The active voice and the expressions still releasing at this instant.
 #[derive(Clone, Copy, Default)]
 pub struct Saying<'a> {
     pub line: Option<(&'a LineFace, f32)>,
     leaving: &'a [Leaving],
-    residue: Option<&'a Residue>,
+    residues: &'a [Residue],
     unit: Option<EntityId>,
     now: f32,
 }
 
 impl Speech {
-    /// `unit` starts saying a line, heard through `player` (none when not heard).
     pub fn say(
         &mut self,
         unit: Option<EntityId>,
@@ -164,163 +170,203 @@ impl Speech {
         player: Option<Entity>,
         now: f32,
     ) {
-        self.leave(now);
-        let anchor = now + face.lipsync.lead();
-        self.line = Some(Line {
+        self.queue(unit, face, player, None, now);
+    }
+
+    pub fn say_heard(
+        &mut self,
+        unit: Option<EntityId>,
+        face: Arc<LineFace>,
+        player: Entity,
+        voice: VoiceClock,
+        now: f32,
+    ) {
+        self.queue(unit, face, Some(player), Some(voice), now);
+    }
+
+    fn queue(
+        &mut self,
+        unit: Option<EntityId>,
+        face: Arc<LineFace>,
+        player: Option<Entity>,
+        voice: Option<VoiceClock>,
+        now: f32,
+    ) {
+        let lead = face.lipsync.lead();
+        let end = face.lipsync.end();
+        let line = Line {
             unit,
             face,
             player,
-            anchor,
-            sounding: false,
-            began_at: 0.0,
-            heard: now,
-            catching_up: false,
+            voice,
+            began: now,
+            lead,
+            end,
+            presented: None,
+            presented_end: None,
             held: None,
-        });
+        };
+        if player.is_none() {
+            self.leave(now);
+            self.line = Some(line);
+        } else {
+            if self.waiting.len() == PENDING {
+                self.waiting.pop_front();
+            }
+            self.waiting.push_back(line);
+        }
     }
 
-    /// The line `unit`'s face says and how far into it, at `now`.
     pub fn of(&self, unit: Option<EntityId>, now: f32) -> Option<(&LineFace, f32)> {
         let line = self.line.as_ref()?;
-        let t = line.held.unwrap_or(now - line.anchor);
-        (line.unit.is_none() || line.unit == unit).then(|| (line.face.as_ref(), t))
+        (line.unit.is_none() || line.unit == unit).then(|| (line.face.as_ref(), line.at(now)))
     }
 
-    /// What `unit`'s face says at `now`: its line, and what is left of the lines before it.
+    #[cfg(test)]
+    pub fn has_waiting_line(&self) -> bool {
+        !self.waiting.is_empty()
+    }
+
+    #[cfg(test)]
+    pub fn active_playback(&self) -> Option<(&VoiceClock, Entity)> {
+        let line = self.line.as_ref()?;
+        Some((line.voice.as_ref()?, line.player?))
+    }
+
     pub fn saying(&self, unit: Option<EntityId>, now: f32) -> Saying<'_> {
         Saying {
             line: self.of(unit, now),
             leaving: &self.leaving,
-            residue: self.residue.as_ref(),
+            residues: &self.residues,
             unit,
             now,
         }
     }
 
-    /// Takes the lines let go since the last call into what is left of the lines before, at
-    /// `now`: `face` gives a line's controllers where it stopped (a face's own ranges). The sum
-    /// is the same before and after, so a face posed at `now` does not change by it; it only
-    /// keeps what is let go one set of controllers, however many lines leave.
-    pub fn settle(&mut self, now: f32, mut face: impl FnMut(&LineFace, f32) -> Controls) {
-        if self.leaving.is_empty() {
-            return;
-        }
-        let mut residue = self.residue.take();
-        let unit = self.leaving.last().and_then(|l| l.unit);
-        let mut controls = residue
-            .as_mut()
-            .map(|r| {
-                let left = release(now - r.since);
-                r.controls.values_mut().for_each(|v| *v *= left);
-                std::mem::take(&mut r.controls)
-            })
-            .unwrap_or_default();
+    pub fn settle(
+        &mut self,
+        _unit: Option<EntityId>,
+        now: f32,
+        mut evaluate: impl FnMut(&LineFace, f32, &mut Controls),
+        room: &mut Controls,
+    ) {
+        let Some(last) = self.leaving.last() else { return };
+        let mut residue = self.residues.pop().unwrap_or_else(|| Residue {
+            unit: last.unit, controls: Controls::new(), since: now,
+        });
+        residue.unit = last.unit;
+        let left = release(now - residue.since);
+        residue.controls.values_mut().for_each(|value| *value *= left);
+        residue.since = now;
         for line in self.leaving.drain(..) {
+            room.clear();
+            evaluate(&line.face, line.at, room);
             let left = release(now - line.since);
-            for (name, value) in face(&line.face, line.at) {
-                *controls.entry(name).or_insert(0.0) += value * left;
+            for (&name, &value) in room.iter() {
+                *residue.controls.entry(name).or_insert(0.0) += value * left;
             }
         }
-        self.residue = Some(Residue {
-            unit,
-            controls,
-            since: now,
-        });
+        self.residues.push(residue);
     }
 
     /// Debug: holds the line at `t` seconds in.
     pub fn hold(&mut self, t: f32) {
         if let Some(line) = &mut self.line {
-            line.player = None;
             line.held = Some(t);
         }
     }
 
     pub fn stop(&mut self) {
         self.line = None;
+        self.waiting.clear();
         self.leaving.clear();
-        self.residue = None;
+        self.residues.clear();
     }
 
-    /// Keeps the line on the frames' clock from the moment its sound begins (its lead behind it),
-    /// as `heard` tells of it at `now`. The output reports a sound's position in the steps its
-    /// device takes it in (a buffer of about 45 ms at a time, two ahead of what is heard): the
-    /// face follows the frames' clock instead. Only when the sound's position, taken against
-    /// where it began, parts from that clock by more than [`RESYNC`] (the output stalled, or was
-    /// suspended and resumed) does the clock go after it, at most [`SLEW`] faster or slower,
-    /// until it is back within [`CAUGHT_UP`]: the face slows or hurries, it never jumps.
+    #[cfg(test)]
     pub fn hear(&mut self, now: f32, heard: Heard) {
-        let Some(line) = self.line.as_mut().filter(|l| l.held.is_none()) else {
-            return;
-        };
-        // The face trails the sound by its lead (Source's `phonemedelay`, the sound system's
-        // latency: what the output holds ahead of what is heard, two device buffers of about
-        // 45 ms, is about the phonemes' filter span), so it is at rest as the sound starts.
-        let lead = line.face.lipsync.lead();
-        match heard {
-            Heard::Waiting => line.anchor = now + lead,
-            Heard::At(position) if !line.sounding => {
-                line.sounding = true;
-                line.anchor = now + lead;
-                line.began_at = position;
-                line.heard = now;
+        let player = self
+            .waiting
+            .back()
+            .or(self.line.as_ref())
+            .and_then(|line| line.player);
+        self.present(now, |line| {
+            if line.player == player {
+                heard
+            } else {
+                Heard::Waiting
             }
-            Heard::At(position) => {
-                // Where the anchor would be if the sound kept the frames' time since it began.
-                let target = now + lead - (position - line.began_at);
-                let off = target - line.anchor;
-                line.catching_up |= off.abs() > RESYNC;
-                if line.catching_up {
-                    let most = SLEW * (now - line.heard).max(0.0);
-                    line.anchor += off.clamp(-most, most);
-                    line.catching_up = (target - line.anchor).abs() > CAUGHT_UP;
+        });
+    }
+
+    fn present(&mut self, now: f32, mut heard: impl FnMut(&Line) -> Heard) {
+        if let Some(line) = self.line.as_mut().filter(|line| line.player.is_some()) {
+            match heard(line) {
+                Heard::At(position) => line.present(now, position),
+                Heard::Ended => self.leave(now),
+                Heard::Gone => {
+                    let unit = line.unit;
+                    self.line = None;
+                    self.leaving.retain(|line| line.unit != unit);
+                    self.residues.retain(|residue| residue.unit != unit);
                 }
-                line.heard = now;
+                Heard::Waiting => {}
             }
-            Heard::Gone => line.player = None,
+        }
+        self.waiting.retain_mut(|line| match heard(line) {
+            Heard::At(position) if position > 0.0 => {
+                line.present(now, position);
+                true
+            }
+            Heard::Ended | Heard::Gone => false,
+            Heard::At(_) | Heard::Waiting => true,
+        });
+        // Audio can start in a different order from the requests. A voice with less media
+        // played at its rate started later; coincident starts favour the newest request.
+        let latest = self
+            .waiting
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|(index, line)| Some((index, line.presented?.1 / line.speed())))
+            .min_by(|(_, a), (_, b)| a.total_cmp(b));
+        if let Some((index, _)) = latest {
+            self.leave(now);
+            self.line = self.waiting.remove(index);
+            self.waiting.retain(|line| line.presented.is_none());
         }
     }
 
-    /// Ends the line once its face is still at `now`: past its lip sync's end on its clock, unless
-    /// held; and lets a line that left go once it has eased out.
     pub fn finish(&mut self, now: f32) {
-        let done = self
+        if self
             .line
             .as_ref()
-            .is_some_and(|line| line.held.is_none() && now - line.anchor > line.face.lipsync.end());
-        if done {
+            .is_some_and(|line| line.held.is_none() && line.at(now) > line.end)
+        {
             self.leave(now);
         }
-        self.leaving.retain(|l| now - l.since <= LET_GO);
-        if self
-            .residue
-            .as_ref()
-            .is_some_and(|r| now - r.since > LET_GO)
-        {
-            self.residue = None;
-        }
+        self.leaving.retain(|line| now - line.since <= LET_GO);
+        self.residues
+            .retain(|residue| now - residue.since <= LET_GO);
     }
 
-    /// The line said leaves, easing out from where it is at `now`, or from its end and the
-    /// instant its data ended when that was before.
     fn leave(&mut self, now: f32) {
-        if let Some(line) = self.line.take() {
-            let end = line.face.lipsync.end();
-            let (at, since) = match line.held {
-                Some(t) => (t, now),
-                None if now - line.anchor > end => (end, line.anchor + end),
-                None => (now - line.anchor, now),
-            };
-            if self.leaving.len() == PENDING {
-                self.leaving.remove(0);
-            }
-            self.leaving.push(Leaving {
-                unit: line.unit,
-                face: line.face,
-                at,
-                since,
-            });
+        let Some(line) = self.line.take() else { return };
+        let at = line.at(now);
+        let since = if line.player.is_none() && line.held.is_none() && at > line.end {
+            line.began + line.lead + line.end
+        } else {
+            line.presented_end.unwrap_or(now)
+        };
+        if self.leaving.len() == PENDING {
+            self.leaving.remove(0);
         }
+        self.leaving.push(Leaving {
+            unit: line.unit,
+            face: line.face,
+            at: at.min(line.end),
+            since,
+        });
     }
 }
 
@@ -332,7 +378,10 @@ pub fn plugin(app: &mut App) {
             crate::loading::reset::<Speech>.in_set(crate::loading::Begin),
         )
         .add_systems(Update, load.run_if(crate::loading::requested))
-        .add_systems(Update, follow);
+        .add_systems(
+            PostUpdate,
+            follow.in_set(crate::audio_output::BeforePortrait),
+        );
 }
 
 fn load(manifest: Res<Manifest>, mut faces: ResMut<Faces>) {
@@ -350,23 +399,39 @@ fn load(manifest: Res<Manifest>, mut faces: ResMut<Faces>) {
     }
 }
 
-/// Keeps the line on its sound's clock while it plays, and ends it once its face is still.
 fn follow(
     time: Res<Time<bevy::time::Real>>,
     mut speech: ResMut<Speech>,
-    sinks: Query<Option<&AudioSink>>,
+    output: Res<crate::audio_output::Output>,
+    players: Query<(), With<AudioPlayer>>,
 ) {
+    if speech.line.is_none()
+        && speech.waiting.is_empty()
+        && speech.leaving.is_empty()
+        && speech.residues.is_empty()
+    {
+        return;
+    }
     let now = time.elapsed_secs();
-    let player = speech.line.as_ref().and_then(|line| line.player);
-    if let Some(player) = player {
-        let heard = match sinks.get(player) {
-            // Asked for, not playing yet: the line has not begun.
-            Ok(None) => Heard::Waiting,
-            Ok(Some(sink)) => Heard::At(sink.position().as_secs_f32()),
-            // Gone (played out, or never heard): on its own clock.
-            Err(_) => Heard::Gone,
+    if speech
+        .line
+        .as_ref()
+        .is_some_and(|line| line.voice.is_some())
+        || !speech.waiting.is_empty()
+    {
+        let Some(presentation) = output.presentation(time.elapsed()) else {
+            speech.stop();
+            return;
         };
-        speech.hear(now, heard);
+        speech.present(now, |line| {
+            let Some(voice) = &line.voice else {
+                return Heard::Waiting;
+            };
+            presentation(
+                voice,
+                line.player.is_some_and(|player| players.contains(player)),
+            )
+        });
     }
     speech.finish(now);
 }
@@ -506,7 +571,7 @@ impl Face {
                 *controls.entry(*name).or_insert(0.0) += value * left;
             }
         }
-        if let Some(residue) = saying.residue.filter(|r| ours(r.unit)) {
+        for residue in saying.residues.iter().filter(|residue| ours(residue.unit)) {
             let left = release(saying.now - residue.since);
             for (name, value) in &residue.controls {
                 *controls.entry(*name).or_insert(0.0) += value * left;
@@ -514,12 +579,15 @@ impl Face {
         }
     }
 
-    /// The controllers a line adds to the face `t` seconds into it.
-    pub fn line_controls(&self, line: &LineFace, t: f32, faces: &Faces) -> Controls {
-        let mut controls = Controls::new();
-        line.lipsync
-            .apply(t, &faces.phonemes, &self.ranges, &mut controls);
-        controls
+    pub fn settle(&mut self, speech: &mut Speech, unit: Option<EntityId>, now: f32, faces: &Faces) {
+        speech.settle(
+            unit,
+            now,
+            |line, at, out| {
+                line.lipsync.apply(at, &faces.phonemes, &self.ranges, out);
+            },
+            &mut self.scratch.line,
+        );
     }
 
     /// Moves the face as it is at `now`, saying what `saying` says. Nothing is allocated once
@@ -593,5 +661,84 @@ pub fn trace(
             .unwrap_or_default();
         let w: Vec<String> = w.iter().map(|w| format!("{w:.4}")).collect();
         println!("face: {i} {t} {}", w.join(" "));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn three_audible_lines_preserve_both_outgoing_expressions() {
+        let unit = EntityId {
+            idx: 1,
+            generation: 0,
+        };
+        let jaw = crate::face::token("jaw");
+        let line = Arc::new(LineFace {
+            lipsync: Lipsync::parse("dbota-lipsync 1\nphoneme 0 1 97\n").expect("one phoneme"),
+            file: "line".to_owned(),
+        });
+        let faces = Faces {
+            phonemes: Phonemes::parse("dbota-phonemes 1\nkeys jaw\nphoneme 97 1\n")
+                .expect("one jaw"),
+            ..Faces::default()
+        };
+        let mut face = Face {
+            meshes: vec![],
+            ranges: HashMap::new(),
+            expression: None,
+            began: 0.0,
+            frozen: None,
+            scratch: Scratch::default(),
+        };
+        let mut speech = Speech::default();
+        speech.say(
+            Some(unit),
+            line.clone(),
+            Some(Entity::from_raw_u32(1).unwrap()),
+            0.0,
+        );
+        speech.hear(0.044, Heard::At(0.044));
+        speech.say(
+            Some(unit),
+            line.clone(),
+            Some(Entity::from_raw_u32(2).unwrap()),
+            0.045,
+        );
+        speech.hear(0.046, Heard::At(0.001));
+        face.settle(&mut speech, Some(unit), 0.046, &faces);
+        speech.hear(0.089, Heard::At(0.044));
+        speech.say(
+            Some(unit),
+            line,
+            Some(Entity::from_raw_u32(3).unwrap()),
+            0.09,
+        );
+        speech.hear(0.091, Heard::At(0.001));
+        face.settle(&mut speech, Some(unit), 0.091, &faces);
+
+        let mut controls = Controls::new();
+        let mut room = Controls::new();
+        face.controls(
+            0.092,
+            speech.saying(Some(unit), 0.092),
+            &faces,
+            (&mut controls, &mut room),
+        );
+        let first = 0.044 / crate::face::PHONEME_FILTER * (-0.046f32 / RELEASE).exp();
+        let second = 0.044 / crate::face::PHONEME_FILTER * (-0.001f32 / RELEASE).exp();
+        let current = 0.001 / crate::face::PHONEME_FILTER;
+        let opening = controls.get(&jaw).copied().unwrap_or_default();
+        // Neutral emphasis scales the table; derive that scale from an isolated phoneme.
+        let mut full = Controls::new();
+        Lipsync::parse("dbota-lipsync 1\nphoneme 0 1 97\n")
+            .unwrap()
+            .apply(0.08, &faces.phonemes, &HashMap::new(), &mut full);
+        let wanted = (first + second + current) * full[&jaw];
+        assert!(
+            (opening - wanted).abs() < 1e-5,
+            "the settled jaw was {opening:.4}; both releases give {wanted:.4}"
+        );
     }
 }
