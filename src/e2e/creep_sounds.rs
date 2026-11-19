@@ -28,6 +28,7 @@ struct Played {
     at: Duration,
     /// The Dota sound event it plays.
     event: String,
+    emitter: Option<bota_proto::EntityId>,
     /// Its volume as started, before the player's volume.
     gain: f32,
 }
@@ -52,6 +53,7 @@ fn audio_log(client: &mut Client) -> Log {
             into.lock().expect("unpoisoned").push(Played {
                 at: time.elapsed(),
                 event: event.to_owned(),
+                emitter: mixer.emitter_of(add.entity),
                 gain,
             });
         },
@@ -278,7 +280,6 @@ fn blows_on_hero(own: bool, enemy_hero: bool) -> usize {
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     client.stand_at(MID);
     client.cheat(Cheat::Wtf { on: true });
-    client.cheat(Cheat::AllVision { on: true });
     client
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
@@ -407,60 +408,101 @@ fn neutral_attack_sounds(ranged: bool) -> (String, Log) {
     client.cheat(Cheat::Wtf { on: true });
     client.cheat(Cheat::StartGame);
     client.cheat(Cheat::SpawnNeutrals);
+    client.cheat(Cheat::AllVision { on: true });
     let wanted = |u: &bota_proto::UnitView| {
         u.kind == UnitKind::CreepNeutral
             && u.neutral
                 .and_then(bota_core::NeutralKind::of)
                 .is_some_and(|k| k.neutral().def.projectile_speed.is_some() == ranged)
     };
-    // Neutrals are seen where a hero stands: the hero walks the camps until one has such a
-    // creep in sight.
-    let mut found = None;
-    for camp in bota_core::CAMPS {
-        client.stand_at((camp.pos.x.to_int() + 250, camp.pos.y.to_int()));
-        client.frames(10);
-        found = client.view().units.iter().find(|u| wanted(u)).cloned();
-        if found.is_some() {
-            break;
-        }
-    }
-    let neutral = found.expect("a camp with a neutral of the wanted attack");
-    let npc = crate::units::npc_unit(&neutral).expect("its Dota unit");
-    let set = set_of(&client, npc);
-    client.stand_at((neutral.pos.x.to_int() + 200, neutral.pos.y.to_int()));
     client
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
-    let log = audio_log(&mut client);
-    // The neutral may already be mid-swing when the log begins (it engages as the hero walks the
-    // camps): what is waited for is a whole attack heard from its start, the swing for melee.
-    let start = format!("{set}.{}", if ranged { "attack" } else { "preattack" });
-    let wanted_event = format!("{set}.attack");
-    hears(&mut client, "the neutral's attack sounded", |_| {
-        let log = log.lock().expect("unpoisoned");
-        let mut events = log.iter().map(|p| p.event.to_lowercase());
-        events.any(|e| e == start) && (ranged || events.any(|e| e == wanted_event))
-    });
-    (set, log)
+    let raw = audio_log(&mut client);
+    // Scout outside aggro distance with the observer already armed. Only the chosen creature's
+    // events count, even if another creature uses the same sound set.
+    let mut neutral = None;
+    let scout = bota_core::rules::NEUTRAL_AGGRO_RANGE + 400;
+    for camp in bota_core::CAMPS {
+        client.stand_at((camp.pos.x.to_int() + scout, camp.pos.y.to_int()));
+        client.frames(10);
+        neutral = client.view().units.iter().find(|u| wanted(u)).cloned();
+        if neutral.is_some() {
+            break;
+        }
+    }
+    let neutral = neutral.expect("a neutral of the wanted attack in a scouted camp");
+    let npc = crate::units::npc_unit(&neutral).expect("its Dota unit");
+    let set = set_of(&client, npc);
+    let point = (neutral.pos.x.to_int(), neutral.pos.y.to_int());
+    look_at(&mut client, point);
+    client.stand_at((point.0 + 120, point.1));
+    let attack = format!("{set}.attack");
+    hears(
+        &mut client,
+        "the selected neutral's first attack sounded",
+        |_| {
+            raw.lock()
+                .expect("unpoisoned")
+                .iter()
+                .any(|p| p.emitter == Some(neutral.id) && p.event.eq_ignore_ascii_case(&attack))
+        },
+    );
+    let selected = raw
+        .lock()
+        .expect("unpoisoned")
+        .iter()
+        .filter(|p| p.emitter == Some(neutral.id))
+        .cloned()
+        .collect();
+    (set, Arc::new(Mutex::new(selected)))
+}
+
+fn first_neutral_swing_and_blow(
+    events: &[Played],
+    set: &str,
+) -> (Option<Duration>, Option<Duration>) {
+    let first = |name: &str| {
+        let event = format!("{set}.{name}");
+        events
+            .iter()
+            .find(|p| p.event.eq_ignore_ascii_case(&event))
+            .map(|p| p.at)
+    };
+    (first("preattack"), first("attack"))
 }
 
 #[test]
 fn melee_neutrals_whoosh_then_clash_through_their_sound_set() {
     let (set, log) = neutral_attack_sounds(false);
-    let events = log.lock().expect("unpoisoned").clone();
-    let first = |name: &str| {
-        events
-            .iter()
-            .find(|p| p.event.to_lowercase() == format!("{set}.{name}"))
-            .cloned()
+    let events = log.lock().expect("unpoisoned");
+    let (swing, blow) = first_neutral_swing_and_blow(&events, &set);
+    let swing = swing.expect("the selected neutral's first swing sounded");
+    let blow = blow.expect("the same neutral's first blow sounded");
+    assert!(
+        swing + FRAME <= blow,
+        "expected a swing before the selected neutral's first blow: {events:?}"
+    );
+}
+
+#[test]
+fn melee_neutral_order_keeps_the_first_blow_even_if_a_second_blow_follows_the_swing() {
+    let play = |frame, event| Played {
+        at: FRAME * frame,
+        event: format!("neutral.{event}"),
+        emitter: Some(bota_proto::EntityId {
+            idx: 1,
+            generation: 0,
+        }),
+        gain: 1.0,
     };
-    let swing = first("preattack").expect("a swing sounded");
-    let blow = events
-        .iter()
-        .find(|p| p.at >= swing.at && p.event.to_lowercase() == format!("{set}.attack"))
-        .cloned()
-        .expect("a blow sounded after the swing");
-    assert!(swing.at + FRAME <= blow.at, "{swing:?} {blow:?}");
+    let events = [play(1, "attack"), play(2, "preattack"), play(5, "attack")];
+    let (swing, blow) = first_neutral_swing_and_blow(&events, "neutral");
+    assert_eq!(
+        (swing, blow),
+        (Some(FRAME * 2), Some(FRAME)),
+        "the first blow must expose the reversed order"
+    );
 }
 
 #[test]

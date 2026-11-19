@@ -237,6 +237,14 @@ impl Mixer {
             .map(|voice| (voice.event.as_str(), voice.at))
     }
 
+    #[cfg(test)]
+    pub(crate) fn emitter_of(&self, entity: Entity) -> Option<EntityId> {
+        self.voices
+            .iter()
+            .find(|voice| voice.entity == entity)?
+            .emitter
+    }
+
     /// Reads the event policies; missing metadata uses the bounded fallback repeat policy.
     pub fn load(manifest: &Manifest) -> Mixer {
         let text = crate::cachefs::read_small(&manifest.root, "sounds/events.txt")
@@ -530,8 +538,8 @@ impl Mixer {
         }
     }
 
-    /// [`Mixer::start`], and the entity of the voice it started, if it started one: what a
-    /// line's lip sync follows.
+    /// Starts a line whose sink owns its lifetime. A stalled or slowed clip can still have
+    /// samples to play after its nominal duration has passed on the app clock.
     pub fn start_heard(
         &mut self,
         commands: &mut Commands,
