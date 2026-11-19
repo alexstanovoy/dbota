@@ -1722,6 +1722,7 @@ pub(crate) mod tests {
             attack_time: 1700,
             attack_point: 500,
             attack_speed: 100,
+            attack_speed_fraction: 0,
             attributes: Attributes::ZERO,
             primary: None,
             armor: Fixed::ZERO,
