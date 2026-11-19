@@ -3834,6 +3834,9 @@ impl MenuCore {
     pub(crate) fn list_requests_finished_for_test(&self) -> bool {
         self.asked.is_empty() && self.acct.outbox.is_empty()
     }
+    pub(crate) fn queued_account_requests_for_test(&self) -> usize {
+        self.acct.outbox.len()
+    }
     pub(crate) fn list_clock_for_test(&mut self, now: Instant) {
         self.list_cache.now = Some(now);
     }

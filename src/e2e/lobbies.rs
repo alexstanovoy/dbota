@@ -3322,7 +3322,17 @@ fn requests_queued_for_one_account_are_not_sent_in_the_session_of_the_next() {
     click(&mut alice, "custom lobbies");
     click(&mut alice, "create lobby");
     alice.frames(3);
-    sign_in_over(&mut alice, "bob");
+    open_sign_in_on_the_same_service(&mut alice);
+    assert!(
+        alice.world().non_send::<MenuCore>().queued_account_requests_for_test() > 0,
+        "the pending profile work still belongs to the first account"
+    );
+    submit_other_account(&mut alice, "bob");
+    assert_eq!(
+        alice.world().non_send::<MenuCore>().queued_account_requests_for_test(),
+        0,
+        "submitting new credentials discards the old account's work before the reply"
+    );
     alice
         .world_mut()
         .non_send_mut::<MenuCore>()
@@ -3350,19 +3360,23 @@ fn signing_in_as_a_second_account_while_the_first_link_is_up_goes_through() {
     let mut alice = signed_up(&service, "alice");
     act(&mut alice, Act::Go(Page::Profile));
     alice.frames(20);
-    sign_in_over(&mut alice, "bob");
+    open_sign_in_on_the_same_service(&mut alice);
+    submit_other_account(&mut alice, "bob");
     alice.until("bob on Play", |client| {
         let menu = client.world().non_send::<MenuCore>();
         menu.page() == Page::Home && menu.view().account.as_deref() == Some("bob")
     });
 }
 
-/// The sign-in page's form, filled and sent as a person does it.
-fn sign_in_over(client: &mut Client, login: &str) {
+fn open_sign_in_on_the_same_service(client: &mut Client) {
     act(client, Act::Go(Page::Profile));
     click(client, "change service");
     click(client, "continue");
     assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Login);
+}
+
+/// The sign-in page's form, filled and sent as a person does it.
+fn submit_other_account(client: &mut Client, login: &str) {
     let password = crate::main_menu::tests::PASSWORD;
     for (at, value) in [login, password].into_iter().enumerate() {
         act(client, Act::Focus(at));
