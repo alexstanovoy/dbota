@@ -4938,15 +4938,44 @@ fn no_menu_code_reads_the_account_from_the_link() {
 /// added without saying here that it is forgotten.
 #[test]
 fn nothing_of_a_signed_out_account_is_left_for_the_next() {
-    use super::core::{AccountScope, Game};
+    use super::core::{AccountScope, Asked, Game};
+    use bota_radovid::proto::{ClientMsg, EndReason, MatchId, MatchResult, Outcome, UnixMs};
+    use crate::postgame::view::{Context, View};
+
     let service = service();
     let mut alice = Player::new(Some(&service));
+    let mut host = Player::new(Some(&service));
     alice.register("alice");
+    host.register("host");
+    host.make_lobby();
+    alice.menu.act(Act::Go(Page::Profile));
+    settle(&mut [&mut alice], |p| p.menu.acct.account_profile.is_some());
+    alice.menu.act(Act::Go(Page::Lobbies));
+    settle(&mut [&mut alice], |p| !p.menu.acct.lobbies.is_empty());
+
+    let finished = MatchResult {
+        match_id: MatchId(7),
+        ruleset: solo(),
+        rated: true,
+        outcome: Outcome::Draw,
+        reason: EndReason::Draw,
+        duration_ms: 300_000,
+        game_report: Vec::new(),
+        seats: Vec::new(),
+        finished_at: UnixMs(1),
+    };
+    let meta = bota_replay::meta::decode(&crate::postgame::preview::metadata("match_details"))
+        .expect("result fixture");
+    let summary = crate::postgame::summary::MatchSummary::from_meta(&meta).expect("match summary");
+    alice.menu.acct.result_request = Some(View::new(std::sync::Arc::new(summary), Context::default()));
+    alice.menu.acct.outbox.push((ClientMsg::MyMatches, Asked::Other));
+    alice.menu.acct.history.push(finished.clone());
+    alice.menu.acct.results.push_back(finished);
     alice.menu.acct.games.push(Game {
-        match_id: bota_radovid::proto::MatchId(7),
+        match_id: MatchId(8),
         handoff: None,
     });
-    alice.menu.acct.shown = Some(bota_radovid::proto::MatchId(7));
+    alice.menu.acct.shown = Some(MatchId(7));
     alice.menu.acct.find_held = true;
     alice.menu.act(Act::Logout);
     let AccountScope {
