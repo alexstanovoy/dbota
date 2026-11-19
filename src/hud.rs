@@ -1653,12 +1653,10 @@ fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: Place) {
         _ => -SEAT_SLANT_DEGREES,
     };
     commands.spawn((
-        // Overhangs on purpose: the edge stands on the boundary of two places.
-        ui::Overhangs,
         Node {
             position_type: PositionType::Absolute,
             top: px(0),
-            right: px(-1.5),
+            right: px(0),
             width: px(3),
             height: percent(100),
             ..default()
