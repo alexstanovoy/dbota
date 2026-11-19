@@ -97,9 +97,19 @@ fn experience(client: &Client, team: Team) -> i32 {
         .xp
 }
 
+/// 7.42 gives both players passive XP. Isolate the shrine's award from the clock.
+fn shrine_experience(client: &Client, team: Team) -> i32 {
+    let since_horn = client
+        .view()
+        .game_tick()
+        .saturating_sub(client.core().pregame_ticks());
+    let passive = since_horn.checked_sub(30).map_or(0, |ticks| 1 + ticks / 36);
+    experience(client, team) - i32::try_from(passive).expect("the match clock fits")
+}
+
 fn unclaimed(client: &mut Client) {
-    assert_eq!(experience(client, Team::Radiant), 0);
-    assert_eq!(experience(client, Team::Dire), 0);
+    assert_eq!(shrine_experience(client, Team::Radiant), 0);
+    assert_eq!(shrine_experience(client, Team::Dire), 0);
     assert!(
         shrine_ready(client),
         "the contested shrine remains available"
@@ -170,14 +180,14 @@ fn handoff(client: &mut Client, phase: &AtomicU8, first: u32, second: u32) {
             }
             assert_eq!(c.tick(), award, "lockstep exposes the completion tick");
             assert_eq!(
-                experience(c, Team::Dire),
+                shrine_experience(c, Team::Dire),
                 200,
                 "entry ticks {first}/{second} require completion at {award}"
             );
             true
         },
     );
-    assert_eq!(experience(client, Team::Radiant), 0);
+    assert_eq!(shrine_experience(client, Team::Radiant), 0);
 }
 
 #[test]
@@ -185,10 +195,13 @@ fn a_contested_shrine_rewinds_then_gives_the_second_team_its_full_countdown() {
     let (_server, mut client, phase) = shrine_match();
     let (first, second) = begin_contest(&mut client, &phase);
     handoff(&mut client, &phase, first, second);
-    let expected = crate::hud::xp_ring(crate::hud::xp_share(client.me().level, 200));
     client.until(
         "the second team's experience drawn in the level ring",
         |c| {
+            let expected = crate::hud::xp_ring(crate::hud::xp_share(
+                c.me().level,
+                experience(c, Team::Dire),
+            ));
             let world = c.world_mut();
             world
                 .query::<(&BackgroundGradient, &InheritedVisibility, &ComputedNode)>()
