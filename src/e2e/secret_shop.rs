@@ -249,7 +249,8 @@ fn check_split_recipe_receipt(client: &mut Client, courier: EntityId) {
         .view()
         .player(client.core().my_slot.expect("seated"))
         .expect("own row");
-    // 7.41f item_recipe_butterfly: Eagle Song, Claymore, Talisman of Evasion.
+    // 7.42 item_recipe_butterfly: Eagle Song, Quarterstaff, Talisman of Evasion ("Now requires
+    // Quarterstaff (900) instead of Claymore (1350)").
     assert!(
         player
             .stash
@@ -257,7 +258,7 @@ fn check_split_recipe_receipt(client: &mut Client, courier: EntityId) {
             .expect("own stash")
             .iter()
             .flatten()
-            .any(|item| item.id == ItemId::CLAYMORE),
+            .any(|item| item.id == ItemId::QUARTERSTAFF),
         "base-shop part stays in the stash"
     );
 }

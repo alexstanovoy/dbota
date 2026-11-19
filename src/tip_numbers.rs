@@ -408,6 +408,7 @@ fn ability_value(id: AbilityId, def: &'static AbilityDef, key: &str) -> Option<L
             "presence_armor_reduction" => Some(collapse(
                 &rules::PRESENCE_ARMOR.map(|n| fixed(Fixed::ZERO - n)),
             )),
+            "presence_magic_resistance_reduction" => negated(&rules::PRESENCE_MAGIC_PCT),
             "presence_radius" => one(def.range),
             _ => None,
         },
@@ -448,8 +449,10 @@ fn feast_value(def: &AbilityDef, key: &str) -> Option<Levels> {
 fn requiem_value(def: &AbilityDef, key: &str) -> Option<Levels> {
     match key {
         "max_soul_release" => one(rules::REQUIEM_LINES_MAX),
-        "requiem_slow_duration" => one(secs(rules::REQUIEM_LINE_TICKS)),
-        "requiem_slow_duration_max" => one(secs(rules::REQUIEM_HOLD_MAX_TICKS)),
+        "requiem_fear_duration" | "requiem_slow_duration" => {
+            many(&rules::REQUIEM_HOLD_TICKS.map(secs))
+        }
+        "requiem_duration_per_soul" => one(secs(rules::REQUIEM_TICKS_PER_LINE)),
         "requiem_reduction_ms" => negated(&rules::REQUIEM_SLOW_PCT),
         "requiem_reduction_mres" => negated(&rules::REQUIEM_MAGIC_BREAK_PCT),
         "requiem_radius" => one(def.range),
@@ -467,19 +470,19 @@ mod tests {
 
     use super::*;
 
-    /// The tooltips of the stat upgrades of Dota 7.41f's first item batch print what the simulator
-    /// carries under each Dota key: percents of a share, ranges and amplifications.
+    /// The tooltips of the stat upgrades of the first item batch print what the simulator carries
+    /// under each Dota key: percents of a share, ranges and amplifications, at Dota 7.42's numbers.
     #[test]
     fn the_stat_upgrades_tooltips_read_their_stats_from_the_simulator() {
         let shown = |item, key| value(Subject::Item(item_def(item).expect("an item")), key);
         let one = |text: &str| Some(vec![text.to_owned()]);
         assert_eq!(
             shown(ItemId::YASHA, "movement_speed_percent_bonus"),
-            one("10")
+            one("6")
         );
         assert_eq!(shown(ItemId::SANGE, "slow_resistance"), one("25"));
-        assert_eq!(shown(ItemId::SANGE, "hp_regen_amp"), one("12"));
-        assert_eq!(shown(ItemId::KAYA, "spell_amp"), one("10"));
+        assert_eq!(shown(ItemId::SANGE, "hp_regen_amp"), one("16"));
+        assert_eq!(shown(ItemId::KAYA, "spell_amp"), one("6"));
         assert_eq!(shown(ItemId::KAYA, "mana_regen_multiplier"), one("20"));
         assert_eq!(
             shown(ItemId::SANGE_AND_YASHA, "status_resistance"),
@@ -490,15 +493,15 @@ mod tests {
                 ItemId::SANGE_AND_YASHA,
                 "movement_speed_percent_bonus_melee"
             ),
-            one("12")
+            one("10")
         );
         assert_eq!(
             shown(ItemId::KAYA_AND_SANGE, "manacost_reduction"),
             one("25")
         );
         assert_eq!(shown(ItemId::YASHA_AND_KAYA, "cast_speed_pct"), one("25"));
-        assert_eq!(shown(ItemId::AETHER_LENS, "cast_range_bonus"), one("225"));
-        assert_eq!(shown(ItemId::OCTARINE_CORE, "bonus_cooldown"), one("25"));
+        assert_eq!(shown(ItemId::AETHER_LENS, "cast_range_bonus"), one("200"));
+        assert_eq!(shown(ItemId::OCTARINE_CORE, "bonus_cooldown"), one("20"));
         assert_eq!(shown(ItemId::DRAGON_LANCE, "base_attack_range"), one("130"));
         assert_eq!(shown(ItemId::HEART, "hp_regen"), one("1"));
         assert_eq!(shown(ItemId::HEART, "missing_health_regen"), one("1.5"));
@@ -541,12 +544,7 @@ mod tests {
         );
         expect(
             ItemId::REVENANTS_BROOCH,
-            &[
-                ("crit_chance", "30"),
-                ("crit_multiplier", "80"),
-                ("bonus_damage", "35"),
-                ("spell_lifesteal", "15"),
-            ],
+            &[("crit_chance", "15"), ("crit_multiplier", "50")],
         );
         expect(
             ItemId::SKULL_BASHER,

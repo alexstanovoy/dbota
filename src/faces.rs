@@ -197,12 +197,12 @@ fn talent_face(talent: Talent) -> TalentFace {
             "A feast takes {talent_feast_souls} more souls from every enemy hero.",
         ),
         Talent::PresenceArmor => (
-            "+{talent_presence} Presence Armor Reduction",
-            "The presence takes {talent_presence} more armor from enemies near you.",
+            "+{talent_presence}/{talent_presence_magic}% Presence Armor/Resist Reduction",
+            "The presence takes {talent_presence} more armor and {talent_presence_magic}% more magic resistance from enemies near you.",
         ),
         Talent::RequiemFear => (
-            "+{talent_fear}s Requiem Fear per Line (max +{talent_fear_max}s)",
-            "Every requiem line fears, slows and tears {talent_fear} s longer, up to {talent_fear_max} s more in all.",
+            "+{talent_fear}s Requiem Fear/Slow Duration",
+            "A requiem fears and slows {talent_fear} s longer.",
         ),
         Talent::NecroSoulCap => (
             "+{talent_souls} Necromastery Max Souls",
@@ -240,6 +240,10 @@ fn talent_face(talent: Talent) -> TalentFace {
         Talent::FleshHeapBonuses => (
             "{talent_heap_factor}x Flesh Heap and Meat Shield Bonuses",
             "Each Flesh Heap stack gives {talent_heap_factor} times the strength, and Meat Shield blocks {talent_heap_factor} times as much.",
+        ),
+        Talent::FeastHealPerSoul => (
+            "Feast of Souls Heals {talent_feast_heal} HP Per Soul",
+            "Every soul a feast takes heals you for {talent_feast_heal}.",
         ),
         Talent::DismemberDamage => (
             "{talent_dismember_factor}x Dismember Damage/Heal",

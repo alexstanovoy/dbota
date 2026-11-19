@@ -164,6 +164,7 @@ pub const FALLBACK: &[(&str, &str)] = &[
     ("item_boots_of_bearing", "Boots of Bearing"),
     ("item_crellas_crozier", "Crella's Crozier"),
     ("item_recipe_crellas_crozier", "Recipe: Crella's Crozier"),
+    ("item_recipe_maelstrom", "Recipe: Maelstrom"),
 ];
 
 /// The English name of the item whose Dota key is `key`, if the table has one.

@@ -531,6 +531,8 @@ modifier 121 modifier_item_boots_of_bearing_active_bonus
 item 154 crellas_crozier
 item 155 recipe
 text item 155 item_recipe_crellas_crozier
+item 156 recipe
+text item 156 item_recipe_maelstrom
 effect 123 icon.item.crellas_crozier
 modifier 123 modifier_item_crellas_crozier_debuff
 effect 124 icon.item.crellas_crozier
