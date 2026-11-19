@@ -11,7 +11,8 @@ use bevy::{
     picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
     ui_widgets::Button,
 };
-use bota_core::rules::{GLYPH_MAX_CHARGES, GLYPH_RECHARGE_TICKS, Schedule};
+use bota_core::rules::{GLYPH_MAX_CHARGES, GLYPH_RECHARGE_TICKS, GLYPH_STRUCTURE_TICKS, Schedule};
+use bota_proto::{GlyphView, PlayerId, Team};
 
 use crate::hud::Docks;
 use crate::manifest::Manifest;
@@ -58,7 +59,11 @@ pub(crate) const SCAN_BOTTOM: f32 = 50.0;
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn)
         .add_observer(click)
-        .add_systems(Update, show.run_if(|k: Res<MatchKnown>| k.0));
+        .add_systems(Update, updates());
+}
+
+pub(crate) fn updates() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    show.run_if(|k: Res<MatchKnown>| k.0)
 }
 
 fn spawn(
@@ -195,10 +200,55 @@ pub(crate) struct Shown {
     seconds: Option<u32>,
     sweep: Option<(u16, u8)>,
     charges: Option<u8>,
-    /// When the charge now missing began to come back, as this client saw it: the wire tells the
-    /// seven seconds between uses and the charges held, not when the next charge arrives.
-    recharge_from: Option<u32>,
-    last_charges: Option<u8>,
+    recharge: Recharge,
+}
+
+#[derive(Default)]
+struct Recharge {
+    last: Option<GlyphObservation>,
+    origin: Option<u32>,
+}
+
+#[derive(Clone, Copy)]
+struct GlyphObservation {
+    game: u32,
+    connection: Option<PlayerId>,
+    team: Team,
+    tick: u32,
+    charges: u8,
+    ready_in: u32,
+}
+
+impl Recharge {
+    /// The wire tells when a use is legal. A recharge that began on another side or connection
+    /// stays unknown. An observed spend from full starts a new recharge, while a spend from one
+    /// leaves the existing recharge in place.
+    fn observe(&mut self, now: GlyphObservation, active_for: u32) -> Option<u32> {
+        let previous = self.last.replace(now).filter(|last| {
+            last.game == now.game
+                && last.connection == now.connection
+                && last.team == now.team
+                && last.tick <= now.tick
+        });
+        self.origin = match previous {
+            Some(last) if now.charges == 1 && last.charges == GLYPH_MAX_CHARGES => {
+                let elapsed = GLYPH_STRUCTURE_TICKS.checked_sub(active_for);
+                elapsed
+                    .filter(|_| active_for > 0)
+                    .and_then(|elapsed| now.tick.checked_sub(elapsed))
+                    // An order applied between snapshots can use the earlier snapshot's tick.
+                    .filter(|spent| *spent >= last.tick)
+            }
+            Some(last) if now.charges == 1 && last.charges == 0 => {
+                // While empty, the previous ready time tells exactly when the next charge lands.
+                (last.ready_in > 0 && last.tick.checked_add(last.ready_in) == Some(now.tick))
+                    .then_some(now.tick)
+            }
+            Some(_) if now.charges < GLYPH_MAX_CHARGES => self.origin,
+            _ => None,
+        };
+        self.origin
+    }
 }
 
 /// The button, shown for the side the HUD is about (one's own, or the one shown to a watcher or
@@ -206,6 +256,7 @@ pub(crate) struct Shown {
 #[allow(clippy::type_complexity)]
 fn show(
     session: NonSend<Session>,
+    game: Res<crate::main_menu::GameEpoch>,
     mut shown: Local<Shown>,
     mut frame: Single<&mut Visibility, (With<GlyphFrame>, Without<GlyphBadge>)>,
     mut icon: Single<(&GlyphIcon, &mut ImageNode), Without<GlyphSweep>>,
@@ -217,15 +268,39 @@ fn show(
     let core = &session.0;
     let rate = u32::from(core.tick_rate()).max(1);
     // The Glyph of the side the HUD is about, whose wait and charges the view tells.
-    let Some((ready_in, charges)) = core
-        .glyph()
-        .and_then(|glyph| glyph.ready_after.zip(glyph.charges))
+    let (
+        Some(view),
+        Some(GlyphView {
+            team,
+            ready_after: Some(ready_in),
+            charges: Some(charges),
+            active_for,
+            ..
+        }),
+    ) = (core.view(), core.glyph())
     else {
+        shown.recharge = Recharge::default();
         frame.set_if_neq(Visibility::Hidden);
         return;
     };
     frame.set_if_neq(Visibility::Inherited);
-    let clock = core.view().map_or(0, |view| view.game_tick());
+    let clock = view.game_tick();
+    let origin = if core.lost || core.source.is_redialing() {
+        shown.recharge = Recharge::default();
+        None
+    } else {
+        shown.recharge.observe(
+            GlyphObservation {
+                game: game.0,
+                connection: core.lobby.me,
+                team,
+                tick: view.tick,
+                charges,
+                ready_in,
+            },
+            active_for,
+        )
+    };
     let waiting = ready_in > 0;
     if shown.waiting != Some(waiting) {
         shown.waiting = Some(waiting);
@@ -238,16 +313,6 @@ fn show(
         image.image = art;
         image.color = art_color;
     }
-    // The charge missing comes back over six minutes: counted from when it was seen to go, or from
-    // the first sight of a Glyph that lacks one.
-    let missing = charges < GLYPH_MAX_CHARGES;
-    let went = shown.last_charges.is_some_and(|before| charges != before);
-    if !missing {
-        shown.recharge_from = None;
-    } else if shown.recharge_from.is_none_or(|from| clock < from) || went {
-        shown.recharge_from = Some(clock);
-    }
-    shown.last_charges = Some(charges);
     // Dark over what is still to wait, clear over what has passed. While a use is locked out it
     // runs over the lock's wait (since 7.42: the first charge's from the clock's start, a later
     // charge's six minutes, or the seven seconds between two uses); with a charge missing and the
@@ -255,9 +320,12 @@ fn show(
     let (left, alpha) = if waiting {
         let wait = Schedule::of(core.pregame_ticks()).glyph_wait(clock, charges);
         (sweep_left(ready_in, wait), 0.68)
-    } else if let Some(from) = shown.recharge_from {
-        let back = (from + GLYPH_RECHARGE_TICKS).saturating_sub(clock);
-        (sweep_left(back, GLYPH_RECHARGE_TICKS), 0.45)
+    } else if let Some(from) = origin {
+        let left = GLYPH_RECHARGE_TICKS.saturating_sub(view.tick.saturating_sub(from));
+        (
+            sweep_left(left, GLYPH_RECHARGE_TICKS),
+            if left > 0 { 0.45 } else { 0.0 },
+        )
     } else {
         (0.0, 0.0)
     };

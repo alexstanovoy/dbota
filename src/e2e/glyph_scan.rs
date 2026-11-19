@@ -342,7 +342,12 @@ fn glyph_cover(client: &mut Client) -> f32 {
 fn the_glyph_shows_the_recharge_of_the_charge_still_to_come() {
     let (_server, mut client) = scene();
     client.cheat(bota_proto::Cheat::Refresh);
-    client.until("two charges", |c| glyph_charges(c) == Some(2));
+    client.cheat(bota_proto::Cheat::Refresh);
+    assert_eq!(
+        glyph_charges(&client),
+        Some(2),
+        "two charges are held before spending"
+    );
     press(&mut client, KeyCode::KeyJ);
     client.until("a charge spent", |c| glyph_charges(c) == Some(1));
     client.until("the seven seconds out", |c| {
@@ -353,5 +358,87 @@ fn the_glyph_shows_the_recharge_of_the_charge_still_to_come() {
     assert!(
         glyph_cover(&mut client) > 0.2,
         "the cooldown face is drawn while a charge is missing"
+    );
+}
+
+#[test]
+fn a_late_watcher_sees_the_glyph_charge_without_a_recharge_sweep() {
+    use bota_proto::Cheat;
+
+    let server = Server::start(1, &["--spectators", "open"]);
+    let mut player = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    player.cheat(Cheat::Refresh);
+    player.cheat(Cheat::Refresh);
+    assert_eq!(
+        glyph_charges(&player),
+        Some(2),
+        "two charges before the watcher arrives"
+    );
+    player.core_mut().activate_glyph();
+    player.until("one usable charge", |c| {
+        c.core()
+            .glyph()
+            .is_some_and(|glyph| glyph.charges == Some(1) && glyph.ready_after == Some(0))
+    });
+    let mut watcher = Client::run(&["--addr", &server.address, "--spectate"]);
+    watcher.within(
+        Duration::from_secs(25),
+        "the late watcher receives one charge",
+        |c| {
+            player.step_frames(1);
+            glyph_charges(c) == Some(1)
+        },
+    );
+    super::hud_layout::on_screen(&mut watcher);
+    assert_eq!(glyph_badge(&mut watcher).as_deref(), Some("1"));
+    assert_eq!(
+        glyph_cover(&mut watcher),
+        0.0,
+        "the watcher never saw the recharge begin"
+    );
+}
+
+#[test]
+fn switching_the_replay_side_clears_the_glyph_recharge_sweep() {
+    use bota_client_core::Intent;
+    use bota_proto::{Cheat, Order, SlotId};
+
+    let mut game = super::fog_pov::Spectated::pair("2");
+    game.cheat(Cheat::Refresh);
+    game.cheat(Cheat::Refresh);
+    game.wait("two charges before spending", |driver, _| {
+        driver.glyph().is_some_and(|glyph| glyph.charges == Some(2))
+    });
+    // Leave full charges visible for several replay frames before either use.
+    for _ in 0..4 {
+        game.cheat(Cheat::Wtf { on: false });
+    }
+    game.order(Order::Glyph);
+    let other = game.other.as_mut().expect("the Dire player");
+    other.activate_glyph();
+    game.wait(
+        "both Glyphs have spent one charge and their use lock has ended",
+        |_, c| {
+            c.view()
+                .glyphs
+                .iter()
+                .all(|glyph| glyph.charges == Some(1) && glyph.ready_after == Some(0))
+        },
+    );
+    let file = game.save();
+    let mut client = super::fog_pov::replay_from_side(&file, 0);
+    client.frames(2);
+    assert!(
+        glyph_cover(&mut client) > 0.2,
+        "Radiant's recharge was observed"
+    );
+    client.core_mut().act(Intent::NextEyes);
+    client.frames(2);
+    assert_eq!(client.core().my_slot, Some(SlotId(1)));
+    assert_eq!(glyph_badge(&mut client).as_deref(), Some("1"));
+    assert_eq!(
+        glyph_cover(&mut client),
+        0.0,
+        "Dire must not inherit Radiant's observed timer"
     );
 }
