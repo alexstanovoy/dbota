@@ -139,8 +139,8 @@ fn spawn(
     commands.entity(count).insert(GlyphCount);
 }
 
-/// The badge of the charges a button holds, at its lower right: Dota's `ChargeCount` (20 of its
-/// pixels across, a dark gradient disc with a shadow, the number centred in it). Hidden until the
+/// The badge of the charges a button holds, at its lower right, 2 of Dota's pixels over the
+/// button's foot: Dota's `ChargeCount` (20 of its pixels across, a dark gradient disc with a shadow, the number centred in it). Hidden until the
 /// caller shows it. Returns the badge and its number.
 pub(crate) fn spawn_charge_badge(
     commands: &mut Commands,
@@ -151,8 +151,8 @@ pub(crate) fn spawn_charge_badge(
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                right: dota(-2.0),
-                bottom: dota(-2.0),
+                right: px(0),
+                bottom: dota(2.0),
                 width: dota(20.0),
                 height: dota(20.0),
                 justify_content: JustifyContent::Center,

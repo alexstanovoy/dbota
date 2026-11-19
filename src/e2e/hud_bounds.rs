@@ -73,12 +73,28 @@ struct Drawn {
     overhangs: bool,
     /// Whether the node is a panel that blocks the pointer or a button.
     solid: bool,
+    /// Whether the node is turned: the box that holds its corners then reaches past the node's own by
+    /// what rounding the drawn corners to pixels can add.
+    turned: bool,
 }
 
+/// The box a node covers as drawn: the box that holds its corners after the node's own turn.
 fn rect_of(world: &World, entity: Entity) -> Option<Rect> {
     let node = world.get::<ComputedNode>(entity)?;
     let at = world.get::<UiGlobalTransform>(entity)?;
-    (node.size().min_element() > 0.0).then(|| Rect::from_center_size(at.translation, node.size()))
+    let half = node.size() / 2.0;
+    let corners = [
+        Vec2::new(-half.x, -half.y),
+        Vec2::new(half.x, -half.y),
+        Vec2::new(half.x, half.y),
+        Vec2::new(-half.x, half.y),
+    ]
+    .map(|corner| at.translation + at.matrix2 * corner);
+    let (low, high) = corners.iter().fold(
+        (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
+        |(low, high), corner| (low.min(*corner), high.max(*corner)),
+    );
+    (node.size().min_element() > 0.0).then(|| Rect::from_corners(low, high))
 }
 
 fn label_of(world: &World, entity: Entity, path: &str) -> String {
@@ -113,6 +129,31 @@ fn drawn_parts(client: &Client) -> Vec<Drawn> {
                 (panel, None, name.to_owned())
             }),
     );
+    // A panel that blocks the pointer and stands under neither the HUD's root nor a registered
+    // panel is walked too, so that forgetting to register it hides nothing.
+    let known: Vec<Entity> = pending.iter().map(|(entity, ..)| *entity).collect();
+    let tops: Vec<(Entity, String)> = world
+        .try_query_filtered::<Entity, With<crate::hud::Blocker>>()
+        .expect("the blockers are queried")
+        .iter(world)
+        .filter_map(|blocker| {
+            let mut top = blocker;
+            while let Some(above) = world.get::<ChildOf>(top) {
+                top = above.parent();
+            }
+            (!known.contains(&top)).then(|| {
+                let name = world
+                    .get::<Name>(top)
+                    .map_or("unregistered panel", Name::as_str);
+                (top, name.to_owned())
+            })
+        })
+        .collect();
+    for (top, name) in tops {
+        if !pending.iter().any(|(entity, ..)| *entity == top) {
+            pending.push((top, None, name));
+        }
+    }
     let mut visited = 0;
     while let Some((entity, parent, path)) = pending.pop() {
         visited += 1;
@@ -191,6 +232,9 @@ fn drawn_parts(client: &Client) -> Vec<Drawn> {
             visible,
             in_flow: node.is_none_or(|node| node.position_type != PositionType::Absolute),
             overhangs: world.get::<crate::ui::Overhangs>(entity).is_some(),
+            turned: world
+                .get::<UiGlobalTransform>(entity)
+                .is_some_and(|at| at.matrix2.x_axis.y.abs() > 1e-3),
             solid: world.get::<crate::hud::Blocker>(entity).is_some()
                 || world.get::<bevy::ui_widgets::Button>(entity).is_some(),
         });
@@ -271,10 +315,11 @@ fn complaints(client: &Client, window: Rect, essential: &[&str]) -> Vec<String> 
             continue;
         };
         // Only the axes the holder does not crop: a scrolled list's rows lie outside it by design.
+        let slack = if part.turned { SLACK + 1.5 } else { SLACK };
         let inside = |axis: fn(Vec2) -> f32, cropped: bool| {
             cropped
-                || (axis(part.rect.min) >= axis(holder.rect.min) - SLACK
-                    && axis(part.rect.max) <= axis(holder.rect.max) + SLACK)
+                || (axis(part.rect.min) >= axis(holder.rect.min) - slack
+                    && axis(part.rect.max) <= axis(holder.rect.max) + slack)
         };
         if !part.overhangs && !(inside(|v| v.x, part.cropped.x) && inside(|v| v.y, part.cropped.y))
         {
@@ -299,12 +344,13 @@ fn complaints(client: &Client, window: Rect, essential: &[&str]) -> Vec<String> 
                 ));
             }
         }
-        // Two solid parts, and an overhanging part over a solid part outside its holder: the docks
-        // and their buttons stay apart however the window is cut.
-        let stranger = |overhanging: usize, solid: usize| {
-            parts[overhanging].overhangs
+        // Two solid parts, and a part marked as standing over others (a badge, a drawn edge: as
+        // turned) over a solid part outside its holder: the docks and their buttons stay apart
+        // however the window is cut.
+        let stranger = |drawn: usize, solid: usize| {
+            parts[drawn].overhangs
                 && parts[solid].solid
-                && parts[overhanging]
+                && parts[drawn]
                     .parent
                     .is_some_and(|holder| !under(&parts, solid, holder))
         };
@@ -353,6 +399,15 @@ fn hud_with(width: u32, height: u32, scale: f32, extra: &[&str]) -> (Server, Cli
     }
     client.until("the carried items drawn", |c| {
         CARRIED.iter().all(|item| c.slot_of(*item).is_some())
+    });
+    // The Glyph and the Scan each hold a charge: their badges are drawn too.
+    client.cheat(Cheat::Refresh);
+    client.until("a charge of the Glyph and of the Scan", |c| {
+        c.core()
+            .glyph()
+            .and_then(|glyph| glyph.charges)
+            .is_some_and(|n| n > 0)
+            && c.core().scan().is_some_and(|side| side.ledger.charges > 0)
     });
     client.frames(30);
     (server, client)
@@ -406,6 +461,11 @@ fn the_hud_holds_together_at_2877x1620() {
 }
 
 #[test]
+fn the_hud_holds_together_at_3840x2160() {
+    hud_holds_together_in(3840, 2160);
+}
+
+#[test]
 fn the_hud_holds_together_in_an_ultrawide_window() {
     hud_holds_together_in(3440, 1440);
 }
@@ -419,7 +479,13 @@ fn the_hud_holds_together_in_a_small_window() {
 /// part of it lies inside its holder.
 #[test]
 fn the_hud_holds_together_with_the_shop_open() {
-    for (width, height) in [(1920, 1080), (1280, 720), (1024, 600)] {
+    for (width, height) in [
+        (1920, 1080),
+        (1280, 720),
+        (1024, 600),
+        (2877, 1620),
+        (3440, 1440),
+    ] {
         hud_holds_together_with(width, height, &["--shop", "basics"]);
     }
 }

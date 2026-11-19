@@ -114,6 +114,10 @@ const SEAT: (f32, f32) = (68.5, 36.0);
 /// of Dota's pips; the places' mask leans so much).
 const SEAT_STRIP: f32 = 4.0 * ui::DOTA;
 const SEAT_SLANT_DEGREES: f32 = 7.5;
+/// How far inside its place's right edge the slanted edge stands, so that turned by
+/// [`SEAT_SLANT_DEGREES`] about its middle (half its 47-pixel height times the slant's tangent, and
+/// half its width) it stays inside the place.
+const SEAT_EDGE_REACH: f32 = 5.0;
 /// The level badge on a portrait of the top bar, and the gold of a level (`#E7D291`).
 const SEAT_BADGE: f32 = 20.0;
 const LEVEL_GOLD: Color = Color::srgb(0.906, 0.82, 0.569);
@@ -562,7 +566,7 @@ fn spawn_docks(mut commands: Commands, manifest: Res<Manifest>, server: Res<Asse
     // The plate of the Glyph and the Scan, against the minimap's right edge: Dota's
     // `#GlyphScanContainer`, 74 of its pixels wide and as high as the minimap, its art with two round
     // wells for the buttons, which stand in it at their own places.
-    let minimap_buttons = commands
+    let plate = commands
         .spawn((
             Name::new("hud glyph plate"),
             Node {
@@ -574,21 +578,23 @@ fn spawn_docks(mut commands: Commands, manifest: Res<Manifest>, server: Res<Asse
         ))
         .id();
     // The plate's art is clear over its upper 220 of 372 rows and past its slanted edge: only what
-    // is drawn swallows clicks, not the terrain beside the minimap.
-    commands.spawn((
-        Name::new("hud glyph plate solid"),
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(0),
-            bottom: px(0),
-            width: percent(GLYPH_PLATE_DRAWN.0),
-            height: percent(GLYPH_PLATE_DRAWN.1),
-            ..default()
-        },
-        Hovered::default(),
-        Blocker,
-        ChildOf(minimap_buttons),
-    ));
+    // is drawn swallows clicks, not the terrain beside the minimap. The buttons stand in this part.
+    let minimap_buttons = commands
+        .spawn((
+            Name::new("hud glyph plate solid"),
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                bottom: px(0),
+                width: percent(GLYPH_PLATE_DRAWN.0),
+                height: percent(GLYPH_PLATE_DRAWN.1),
+                ..default()
+            },
+            Hovered::default(),
+            Blocker,
+            ChildOf(plate),
+        ))
+        .id();
     let courier = commands.spawn((Node::default(), Pickable::IGNORE)).id();
     commands.insert_resource(Docks {
         minimap,
@@ -1669,10 +1675,12 @@ fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: Place) {
         _ => -SEAT_SLANT_DEGREES,
     };
     commands.spawn((
+        // Marked so that the layout walk checks it, as turned, against the parts it must not touch.
+        ui::Overhangs,
         Node {
             position_type: PositionType::Absolute,
             top: px(0),
-            right: px(0),
+            right: px(SEAT_EDGE_REACH),
             width: px(3),
             height: percent(100),
             ..default()
