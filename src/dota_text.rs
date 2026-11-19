@@ -503,12 +503,12 @@ mod tests {
     fn labels_take_the_values_given() {
         let detail = "= {d:strength_hp} HP and {s:strength_hp_regen} <b>HP Regen</b>";
         let values = [
-            ("strength_hp", "462".into()),
+            ("strength_hp", "420".into()),
             ("strength_hp_regen", "2.1".into()),
         ];
         assert_eq!(
             fill(detail, &values).as_deref(),
-            Some("= 462 HP and 2.1 HP Regen")
+            Some("= 420 HP and 2.1 HP Regen")
         );
         assert_eq!(
             fill("{d:r:level} / 7", &[("level", "3".into())]).as_deref(),

@@ -10,7 +10,7 @@
 use bevy::picking::hover::{DirectlyHovered, Hovered};
 use bevy::prelude::*;
 use bota_core::rules;
-use bota_proto::{Attribute, Fixed, UnitView};
+use bota_proto::{Attribute, Attributes, Fixed, UnitView};
 
 use crate::dota_text::{Texts, plain};
 use crate::hud::Blocker;
@@ -516,13 +516,13 @@ fn tip_text(
 }
 
 /// What one attribute of a hero is: the level's own whole points, what
-/// items, souls, buffs and talents add, the whole (unfloored), the gain per
-/// level, and whether it pays attack damage.
+/// items, souls, buffs and talents add, the whole (unfloored) with the other two at none, the
+/// gain per level, and whether it pays attack damage.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Attr {
     base: i32,
     bonus: i32,
-    total: f32,
+    alone: Attributes,
     gain: f32,
     primary: bool,
 }
@@ -600,12 +600,24 @@ fn attributes(u: &UnitView, split: &bota_client_core::StatSplit) -> Option<[Attr
             Attr {
                 base: split.attributes[at].base,
                 bonus: split.attributes[at].bonus,
-                total: u.attributes.of(a).to_f32(),
+                alone: alone(a, u.attributes.of(a)),
                 gain: def.per_level.attributes.of(a).to_f32(),
                 primary: u.primary == Some(a),
             }
         })
     })
+}
+
+/// `points` of attribute `a` and none of the other two: what the shared rules price the one
+/// attribute's worth from.
+fn alone(a: Attribute, points: Fixed) -> Attributes {
+    let mut alone = Attributes::ZERO;
+    *match a {
+        Attribute::Strength => &mut alone.strength,
+        Attribute::Agility => &mut alone.agility,
+        Attribute::Intelligence => &mut alone.intelligence,
+    } = points;
+    alone
 }
 
 /// A whole bonus as Dota writes it beside its base: `+5`, `-2`, or nothing.
@@ -857,7 +869,12 @@ fn attribute_line(k: u8, b: &Breakdown, texts: &Texts, which: AttributeLine) -> 
                 .unwrap_or_else(|| format!(" (+{gain} per level)"))
         }
         AttributeLine::Primary if a.primary => {
-            let damage = (a.total.floor() as i32 * rules::DAMAGE_PER_PRIMARY).to_string();
+            let attribute = [
+                Attribute::Strength,
+                Attribute::Agility,
+                Attribute::Intelligence,
+            ][usize::from(k)];
+            let damage = bota_core::primary_damage(a.alone, Some(attribute)).to_string();
             texts
                 .label(
                     &format!("DOTA_HUD_PrimaryAttribute{title}"),
@@ -867,7 +884,7 @@ fn attribute_line(k: u8, b: &Breakdown, texts: &Texts, which: AttributeLine) -> 
         }
         AttributeLine::Primary => String::new(),
         AttributeLine::Details => {
-            let values = gives(k, a.total);
+            let values = gives(k, a.alone);
             let pairs: Vec<(&str, String)> = values.iter().map(|(k, v)| (*k, v.clone())).collect();
             texts
                 .label(&format!("DOTA_HUD_{title}Details"), &pairs)
@@ -876,45 +893,39 @@ fn attribute_line(k: u8, b: &Breakdown, texts: &Texts, which: AttributeLine) -> 
     }
 }
 
-/// What `total` points of attribute `k` give, under Dota's variable names.
-fn gives(k: u8, total: f32) -> Vec<(&'static str, String)> {
+/// What attribute `k` gives, held `alone`, under Dota's variable names: the shared rules'
+/// numbers, which the simulator pays.
+fn gives(k: u8, alone: Attributes) -> Vec<(&'static str, String)> {
     let per_second = |f: Fixed| f.to_f32() * rules::TICKS_PER_SECOND as f32;
     let tenth = |v: f32| format!("{v:.1}");
+    let regen = bota_core::attribute_regen(alone);
     match k {
         0 => vec![
             (
                 "strength_hp",
-                // The server pays for whole points of strength (`bota_core::whole_points`).
-                (((total + 0.01).floor() as i32) * rules::HP_PER_STRENGTH).to_string(),
+                bota_core::strength_health(alone.strength).to_string(),
             ),
-            (
-                "strength_hp_regen",
-                tenth(total * per_second(rules::HP_REGEN_PER_STRENGTH)),
-            ),
+            ("strength_hp_regen", tenth(per_second(regen.hp))),
         ],
         1 => vec![
             (
                 "agility_armor",
-                tenth(total * rules::ARMOR_PER_AGILITY.to_f32()),
+                tenth(bota_core::agility_armor(alone).to_f32()),
             ),
             (
                 "agility_attack_speed",
-                ((total * rules::ATTACK_SPEED_PER_AGILITY as f32).floor() as i32).to_string(),
+                bota_core::agility_attack_speed(alone).to_string(),
             ),
         ],
         _ => vec![
             (
                 "intelligence_mana",
-                // And of intelligence.
-                (((total + 0.01).floor() as i32) * rules::MANA_PER_INTELLIGENCE).to_string(),
+                bota_core::intelligence_mana(alone.intelligence).to_string(),
             ),
-            (
-                "intelligence_mana_regen",
-                tenth(total * per_second(rules::MANA_REGEN_PER_INTELLIGENCE)),
-            ),
+            ("intelligence_mana_regen", tenth(per_second(regen.mana))),
             (
                 "intelligence_magic_resist",
-                tenth(total * rules::MAGIC_RESIST_BP_PER_INTELLIGENCE.to_f32() / 100.0),
+                tenth(bota_core::intelligence_magic_resist_bp(alone) as f32 / 100.0),
             ),
         ],
     }
