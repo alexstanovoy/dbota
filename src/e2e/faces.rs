@@ -822,6 +822,92 @@ fn played_apart(
     out
 }
 
+/// How the sound's output misbehaves while a line plays: a frame of half a second (the client
+/// stalled; the output played on), or the output suspended for 0.6 s and resumed (a browser
+/// suspends its audio when its tab is hidden) while the frames go on.
+#[derive(Clone, Copy, Debug)]
+enum Stall {
+    Hitch,
+    Suspended,
+}
+
+/// How long a stall lasts, and how much faster or slower than the frames a line's clock may run
+/// while it goes after its sound (the client's half, and float slack).
+const STALL: f32 = 0.5;
+const SUSPENDED: f32 = 0.6;
+const CLOCK_SPEED: f32 = 0.51;
+
+/// Every line's clock, its sound reported as a device takes it and stalled as `stall` says, from
+/// the frame its sound is heard to its end: the frames its clock jumped on (it may go after the
+/// sound only at most half a second a second faster or slower than the frames), and whether it
+/// went after the sound at all on some line.
+fn clocks_hold(unit: EntityId, lines: &[AuthoredLine], stall: Stall) -> (Vec<String>, bool) {
+    let pacing = match stall {
+        Stall::Hitch => Pacing::Hz240,
+        Stall::Suspended => Pacing::Browser,
+    };
+    let buffer = pacing.device_buffer().as_secs_f32();
+    let (mut out, mut went_after) = (Vec::new(), false);
+    for line in lines {
+        let end = line.face.lipsync.end();
+        let mut frames = pacing.frames(end + 2.0);
+        let middle = frames.len() / 3;
+        if let Stall::Hitch = stall {
+            frames.insert(middle, Duration::from_secs_f32(STALL));
+        }
+        let times: Vec<f32> = frames
+            .iter()
+            .scan(0.0, |t, step| {
+                *t += step.as_secs_f32();
+                Some(*t)
+            })
+            .collect();
+        let (heard, stalled) = (times[1], times[middle]);
+        // What the output has played by `now`, and so reports two buffers ahead of it.
+        let played = |now: f32| match stall {
+            Stall::Suspended if now >= stalled => (now - SUSPENDED).max(stalled) - heard,
+            _ => now - heard,
+        };
+        let mut speech = Speech::default();
+        let mut last: Option<(f32, f32)> = None;
+        for (frame, &now) in times.iter().enumerate() {
+            if frame == 0 {
+                speech.say(
+                    Some(unit),
+                    line.face.clone(),
+                    Some(Entity::PLACEHOLDER),
+                    now,
+                );
+            }
+            let position = buffer * (played(now) / buffer + DEVICE_AHEAD).floor();
+            let report = match now < heard {
+                true => Heard::Waiting,
+                false if position < end => Heard::At(position),
+                false => Heard::Gone,
+            };
+            speech.hear(now, report);
+            speech.finish(now);
+            let Some((_, t)) = speech.of(Some(unit), now) else {
+                break;
+            };
+            if let Some((before, t0)) = last.filter(|_| now > heard) {
+                let (dt, moved) = (now - before, t - t0);
+                went_after |= (moved - dt).abs() > 0.1 * dt;
+                if (moved - dt).abs() > CLOCK_SPEED * dt + CLOCK_SLACK {
+                    out.push(format!(
+                        "{} {stall:?}: frame {frame} ({now:.3} s) moved the line {moved:.4} s in \
+                         {dt:.4} s",
+                        line.face.file
+                    ));
+                }
+            }
+            last = Some((now, t));
+        }
+    }
+    out.truncate(20);
+    (out, went_after)
+}
+
 /// Every line's face as the client shows it on the frames of a 240 Hz and a 60 Hz display and of
 /// a browser ([`Played::shown`]): the frames it moves off its time's face on.
 fn shown_apart(played: &mut Played, name: &str, lines: &[AuthoredLine]) -> Vec<String> {
@@ -961,6 +1047,16 @@ fn check_hero(hero: HeroId) -> Vec<String> {
     drop(client);
     drop(server);
     let mut jumps = shown_apart(&mut Played::of(shown, &faces, unit), &name, &lines);
+    for stall in [Stall::Hitch, Stall::Suspended] {
+        let (jumped, went_after) = clocks_hold(unit, &lines, stall);
+        jumps.extend(jumped);
+        if let Stall::Suspended = stall {
+            assert!(
+                went_after,
+                "{name}: a suspended output put some line's clock after its sound"
+            );
+        }
+    }
     jumps.extend(played_apart(
         (std::mem::take(&mut copies), &faces, unit),
         &name,

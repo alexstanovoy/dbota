@@ -71,10 +71,16 @@ pub const RELEASE: f32 = 0.04;
 pub const LET_GO: f32 = 7.0 * RELEASE;
 /// Most lines left waiting to be added to what is let go, when no face takes them in.
 const PENDING: usize = 8;
-/// How far a sound's reported position may run from the line's own clock before the clock is
-/// set to it again: more than a device's buffers ahead (two of about 45 ms), so that only a sound
-/// that stalled or skipped moves the face's clock, never the steps the device takes it in.
+/// How far a sound's reported position may run from the line's own clock before the clock goes
+/// after it: more than a device's buffers ahead (two of about 45 ms), so that only a sound that
+/// stalled or skipped moves the face's clock, never the steps the device takes it in.
 const RESYNC: f32 = 0.25;
+/// How fast the line's clock goes after its sound once they parted: half a second of the line a
+/// second faster or slower than the frames, so the face never jumps to it.
+const SLEW: f32 = 0.5;
+/// How near the sound the line's clock is back when it stops going after it: within a device's
+/// buffer, the steps it reports in.
+const CAUGHT_UP: f32 = 0.05;
 
 /// The line one's hero is saying, and what is left of the lines it said before.
 #[derive(Resource, Default)]
@@ -96,6 +102,12 @@ struct Line {
     anchor: f32,
     /// Whether its sound has begun: from then the line keeps the frames' clock.
     sounding: bool,
+    /// The position its sound reported as it began, which every later report is taken against
+    /// (the output reports ahead of what is heard by as much all along).
+    began_at: f32,
+    /// When the sound last reported, and whether the clock is going after it.
+    heard: f32,
+    catching_up: bool,
     /// Debug: the line held at this many seconds in.
     held: Option<f32>,
 }
@@ -160,6 +172,9 @@ impl Speech {
             player,
             anchor,
             sounding: false,
+            began_at: 0.0,
+            heard: now,
+            catching_up: false,
             held: None,
         });
     }
@@ -228,9 +243,12 @@ impl Speech {
     }
 
     /// Keeps the line on the frames' clock from the moment its sound begins (its lead behind it),
-    /// as `heard` tells of it at `now`. The output reports a sound's position in the steps its device takes it in
-    /// (a buffer of about 45 ms at a time, two ahead of what is heard): the face follows the
-    /// frames' clock instead, set to the sound only when the two part by more than [`RESYNC`].
+    /// as `heard` tells of it at `now`. The output reports a sound's position in the steps its
+    /// device takes it in (a buffer of about 45 ms at a time, two ahead of what is heard): the
+    /// face follows the frames' clock instead. Only when the sound's position, taken against
+    /// where it began, parts from that clock by more than [`RESYNC`] (the output stalled, or was
+    /// suspended and resumed) does the clock go after it, at most [`SLEW`] faster or slower,
+    /// until it is back within [`CAUGHT_UP`]: the face slows or hurries, it never jumps.
     pub fn hear(&mut self, now: f32, heard: Heard) {
         let Some(line) = self.line.as_mut().filter(|l| l.held.is_none()) else {
             return;
@@ -241,14 +259,23 @@ impl Speech {
         let lead = line.face.lipsync.lead();
         match heard {
             Heard::Waiting => line.anchor = now + lead,
-            Heard::At(_) if !line.sounding => {
+            Heard::At(position) if !line.sounding => {
                 line.sounding = true;
                 line.anchor = now + lead;
+                line.began_at = position;
+                line.heard = now;
             }
             Heard::At(position) => {
-                if (now - line.anchor + lead - position).abs() > RESYNC {
-                    line.anchor = now + lead - position;
+                // Where the anchor would be if the sound kept the frames' time since it began.
+                let target = now + lead - (position - line.began_at);
+                let off = target - line.anchor;
+                line.catching_up |= off.abs() > RESYNC;
+                if line.catching_up {
+                    let most = SLEW * (now - line.heard).max(0.0);
+                    line.anchor += off.clamp(-most, most);
+                    line.catching_up = (target - line.anchor).abs() > CAUGHT_UP;
                 }
+                line.heard = now;
             }
             Heard::Gone => line.player = None,
         }
