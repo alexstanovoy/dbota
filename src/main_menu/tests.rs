@@ -1569,6 +1569,77 @@ fn kept_replays_read(player: &mut Player) -> Vec<super::view::ReplayRow> {
     kept
 }
 
+#[test]
+fn my_games_forgets_the_first_accounts_matches_before_the_second_signs_in() {
+    use bota_radovid::proto::{Outcome, UnixMs};
+    use radovid::db::{Db, Finish, NewSeat};
+
+    let service = service();
+    let mut player = Player::new(Some(&service));
+    player.register("alice");
+    let alice = player.menu.my_id().expect("Alice is signed in");
+    let mut opponent = Player::new(Some(&service));
+    opponent.register("opponent");
+    let other = opponent.menu.my_id().expect("opponent is signed in");
+    let match_id = service.runtime.block_on(async {
+        let db = Db::open(&service._dir.0.join("radovid.db")).unwrap();
+        let seats = vec![
+            NewSeat {
+                account: alice,
+                slot: 0,
+                team: 0,
+            },
+            NewSeat {
+                account: other,
+                slot: 1,
+                team: 1,
+            },
+        ];
+        let id = db.create_match(solo(), true, seats.clone()).await.unwrap();
+        db.finish_match(Finish::rated(id, solo(), Outcome::Draw, seats, UnixMs(1)))
+            .await
+            .unwrap();
+        id
+    });
+    let local_file = "20261118-120000-local.brp";
+    plant_replays(&mut player, &[(local_file, "local", None, &[7; 2000])]);
+    let has_alice_match = |player: &Player| {
+        matches!(player.menu.view().body, PageView::MyGames { finished, .. }
+            if finished.iter().any(|row| row.match_id == match_id))
+    };
+    let check_games = |player: &Player| {
+        let PageView::MyGames {
+            games,
+            finished,
+            kept,
+            ..
+        } = player.menu.view().body
+        else {
+            panic!("MY GAMES is accessible");
+        };
+        assert!(games.is_empty(), "no active match from Alice");
+        assert!(
+            finished.is_empty(),
+            "no finished match from Alice: {finished:?}"
+        );
+        assert!(
+            kept.iter().any(|row| row.name == local_file),
+            "local replay survives sign-out"
+        );
+    };
+    player.menu.act(Act::Go(Page::MyGames));
+    settle(&mut [&mut player], has_alice_match);
+
+    player.menu.act(Act::Logout);
+    player.menu.act(Act::Go(Page::MyGames));
+    check_games(&player);
+    player.menu.act(Act::Go(Page::Login));
+    player.register("bob");
+    assert_ne!(player.menu.my_id(), Some(alice));
+    player.menu.act(Act::Go(Page::MyGames));
+    check_games(&player);
+}
+
 /// Every replay this client keeps is on MY GAMES, with no account too: a local game, a Demo Hero's
 /// recording, a match the service does not list and a file that is broken, each with its date,
 /// where it was played and who played what as far as the file says; each opens in the viewer or
@@ -1656,6 +1727,31 @@ fn my_games_lists_every_kept_replay_and_each_can_be_watched_or_deleted_with_no_a
 
     for name in [&kept[3].name, &kept[0].name] {
         alice.menu.act(Act::DeleteReplay(name.clone()));
+        assert!(
+            alice
+                .menu
+                .library
+                .records()
+                .iter()
+                .any(|record| &record.name == name),
+            "one click keeps the replay in the library"
+        );
+        let path = alice._dir.0.join("replays").join(name);
+        assert!(path.is_file(), "one click keeps the replay on disk");
+        let prompt = alice
+            .menu
+            .view()
+            .confirm
+            .expect("deletion asks for confirmation");
+        assert_eq!(prompt.title, "Delete replay?");
+        alice.menu.act(Act::Answer(false));
+        assert!(path.is_file(), "cancelling keeps the replay on disk");
+        assert!(
+            alice.menu.view().confirm.is_none(),
+            "cancelling closes the question"
+        );
+        alice.menu.act(Act::DeleteReplay(name.clone()));
+        alice.menu.act(Act::Answer(true));
         let gone = name.clone();
         settle(&mut [&mut alice], |p| {
             p.menu.library.records().iter().all(|r| r.name != gone)

@@ -588,6 +588,7 @@ fn preview_my_games(name: &str) -> MenuView {
                 won: Some(true),
                 detail: "Match 39 · 14:21 · rated".to_owned(),
                 rating: "1662 (+162)".to_owned(),
+                kept_replay: None,
                 replay: true,
             }],
             kept: kept_replays(),

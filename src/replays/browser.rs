@@ -10,7 +10,7 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
 use super::backend::{Backend, Done, Op};
-use super::index::{MAX_BYTES, Record};
+use super::index::{MAX_BYTES, Record, valid_name};
 
 /// The calls the page published.
 struct Browser {
@@ -86,7 +86,12 @@ impl Backend for Browser {
             Op::Get { name } => self.call("get", &[name.into()]),
             Op::Remove { names } => self.call(
                 "remove",
-                &[names.iter().map(JsValue::from).collect::<Array>().into()],
+                &[names
+                    .iter()
+                    .filter(|name| valid_name(name))
+                    .map(JsValue::from)
+                    .collect::<Array>()
+                    .into()],
             ),
             Op::Index { text } => self.call("index", &[text.into()]),
         };

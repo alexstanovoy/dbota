@@ -100,6 +100,8 @@ pub struct FinishedRow {
     pub rating: String,
     /// The game ran, so a replay may be kept.
     pub replay: bool,
+    /// The local copy, if present, can be removed from this row.
+    pub kept_replay: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -546,7 +548,10 @@ impl MenuCore {
             game_over: self.game_is_over(),
             can_leave_game: self.in_game() && self.kind == GameKind::Play && self.game_unsafe,
             reconnect: self.reconnect.is_some() && !self.in_game() && !self.launching,
-            confirm: self.confirm.map(|choice| self.confirm_view(choice)),
+            confirm: self
+                .confirm
+                .as_ref()
+                .map(|choice| self.confirm_view(choice)),
             password: self.join_prompt.as_ref().map(|prompt| PasswordView {
                 lobby: text::line(&prompt.name, text::NAME),
                 field: fields_of(&prompt.form)
@@ -561,7 +566,7 @@ impl MenuCore {
         }
     }
 
-    fn confirm_view(&self, c: Confirm) -> ConfirmView {
+    fn confirm_view(&self, c: &Confirm) -> ConfirmView {
         match c {
             Confirm::Quit => ConfirmView {
                 title: QUIT_TITLE,
@@ -586,6 +591,10 @@ impl MenuCore {
                     }
                     _ => LEAVE_GAME_TEXT,
                 },
+            },
+            Confirm::DeleteReplay(_) => ConfirmView {
+                title: "Delete replay?",
+                text: "This removes the saved replay from this device.",
             },
             Confirm::Leave => ConfirmView {
                 title: LEAVE_TITLE,
@@ -758,6 +767,7 @@ impl MenuCore {
 
     fn finished_row(&self, result: &MatchResult) -> FinishedRow {
         let view = self.result_view(result);
+        let kept_replay = self.library.kept(result.match_id.0).map(|r| r.name.clone());
         FinishedRow {
             match_id: result.match_id,
             rating: view
@@ -771,8 +781,9 @@ impl MenuCore {
             detail: view.detail,
             // A match that ran leaves a replay, a lost one too; one nobody came to leaves none
             // (unless this client kept a file of it anyway).
-            replay: self.library.kept(result.match_id.0).is_some()
+            replay: kept_replay.is_some()
                 || (result.reason != EndReason::Abandoned && !self.service_keeps_none()),
+            kept_replay,
         }
     }
 

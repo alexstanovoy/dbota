@@ -213,6 +213,15 @@ impl MenuCore {
         self.keeper.swept = false;
     }
 
+    pub(super) fn keep_signed_out(&mut self) {
+        self.keeper.queue.clear();
+        self.keeper.current = None;
+        self.keeper.open_match = None;
+        self.keeper.not_kept = None;
+        self.keeper.swept = false;
+        self.library.forget_wanted();
+    }
+
     fn keep_sweep(&mut self) {
         if self.keeper.swept
             || !self.link_ready()

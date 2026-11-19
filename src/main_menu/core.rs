@@ -263,7 +263,7 @@ impl LocalRules {
 }
 
 /// What the menu asks before it goes on, as Dota's popups.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Confirm {
     /// Quit the client.
     Quit,
@@ -277,6 +277,8 @@ pub enum Confirm {
     /// Host a new local lobby (on the LAN with `true`) while this client's lobby server runs: it
     /// ends, and the game in it for everyone.
     Rehost(bool),
+    /// Remove a replay from this client's storage.
+    DeleteReplay(String),
 }
 
 /// How the game on screen is had.
@@ -443,6 +445,7 @@ enum Conn {
     Connecting,
     Welcomed,
     LoggedIn,
+    LoggingOut,
 }
 
 /// The password dialog of a locked lobby: which lobby, what the last try was told, and the
@@ -1523,7 +1526,8 @@ impl MenuCore {
     fn take(&mut self, incoming: Incoming) {
         match incoming {
             Incoming::Reply { seq, result } => self.take_reply(seq, result),
-            Incoming::Event(event) => self.event(event),
+            Incoming::Event(event) if self.account => self.event(event),
+            Incoming::Event(_) => {}
         }
     }
 
@@ -1552,6 +1556,7 @@ impl MenuCore {
                     self.connect();
                 }
             }
+            _ if self.conn == Conn::LoggingOut => {}
             (Ok(reply), Some(Asked::RestoreLobby(lobby))) => self.lobby_resumed(lobby, reply),
             (Err(error), Some(Asked::RestoreLobby(lobby))) => {
                 self.lobby_resume_failed(lobby, error_text(&error))
@@ -1745,10 +1750,7 @@ impl MenuCore {
         match (asked, error) {
             (Asked::Leaderboard(generation), error) => self.leaderboard_refused(generation, error),
             (Asked::Resume, _) => {
-                self.accepted.clear();
-                self.store.remove(Entry::Session);
-                self.account = false;
-                self.outbox.clear();
+                self.clear_account();
                 self.drop_link();
                 self.go_form(Page::Login);
                 if *error != Error::BadSession {
@@ -2438,7 +2440,16 @@ impl MenuCore {
         match act {
             Act::Demo(hero) => self.start_demo(bota_proto::HeroId(hero)),
             Act::OpenReplay(name) => self.open_listed(&name),
-            Act::DeleteReplay(name) => self.library.delete(&name),
+            Act::DeleteReplay(name) => {
+                if self
+                    .library
+                    .records()
+                    .iter()
+                    .any(|record| record.name == name)
+                {
+                    self.confirm = Some(Confirm::DeleteReplay(name));
+                }
+            }
             Act::WatchReplay(match_id) => self.watch_replay(match_id),
             Act::PlainAnyway => self.direct(false, true),
             Act::Dismiss => {
@@ -2463,6 +2474,7 @@ impl MenuCore {
                 }
                 Some(Confirm::LeaveSeat) if yes => self.leave_seat(),
                 Some(Confirm::Rehost(lan)) if yes => self.host(lan),
+                Some(Confirm::DeleteReplay(name)) if yes => self.library.delete(&name),
                 _ => {}
             },
             Act::Back => self.back(),
@@ -2587,14 +2599,8 @@ impl MenuCore {
                     return;
                 }
                 if !bota_radovid::same_matchmaker(&self.prefs.service, &service) {
-                    self.keep_link_lost();
-                    self.meta_link_lost();
                     self.logout();
                     self.drop_link();
-                    self.results.clear();
-                    self.history.clear();
-                    self.shown = None;
-                    self.result_request = None;
                 }
                 self.prefs.service = service;
                 self.save_prefs();
@@ -2661,33 +2667,61 @@ impl MenuCore {
     }
 
     fn logout(&mut self) {
-        self.list_cache.clear();
-        self.accepted.clear();
-        self.lobby_ui = Default::default();
-        self.catalogue.clear();
-        self.moving = None;
-        self.lobby_secret = None;
-        // The session is forgotten here at once; the service is told when a link is open (one
-        // is not opened for it: a session left there expires by itself).
+        // Forget the local session at once. Keep an open link only long enough to tell the
+        // service, so replies and events from the previous account cannot refill the menu.
         let live = self.link_ready();
-        self.store.remove(Entry::Session);
-        self.account = false;
-        self.account_profile = None;
-        self.board.disconnected();
-        self.profiles.clear();
-        self.avatar.backend(None, false);
-        self.games.clear();
-        self.lobby = None;
-        self.outbox.clear();
-        self.credentials = None;
-        self.retry_at = None;
-        self.link_lost = false;
+        self.clear_account();
         if live {
+            self.conn = Conn::LoggingOut;
             self.send(ClientMsg::Logout, Asked::Logout);
         } else {
             self.drop_link();
         }
         self.go_form(Page::Login);
+    }
+
+    fn clear_account(&mut self) {
+        self.store.remove(Entry::Session);
+        self.account = false;
+        self.account_profile = None;
+        self.list_cache.clear();
+        self.board = Default::default();
+        self.profiles.clear();
+        self.avatar.backend(None, false);
+        self.accepted.clear();
+        self.lobby_ui = Default::default();
+        self.catalogue.clear();
+        self.lobbies.clear();
+        self.lobby = None;
+        self.moving = None;
+        self.lobby_secret = None;
+        self.games.clear();
+        self.history.clear();
+        self.results.clear();
+        self.shown = None;
+        self.result_request = None;
+        self.meta = Default::default();
+        self.keep_signed_out();
+        self.pending_result_replay = None;
+        self.pending_result_replay_since = None;
+        self.after_results = None;
+        self.queue_full_until = None;
+        self.demo_asked = None;
+        self.demo_match = None;
+        if matches!(self.reconnect, Some(Launch::Seat(_) | Launch::Demo { .. })) {
+            self.reconnect = None;
+            self.left_in_picks = false;
+        }
+        if matches!(self.last_seat, Some(Launch::Seat(_) | Launch::Demo { .. })) {
+            self.last_seat = None;
+        }
+        self.confirm = None;
+        self.status = None;
+        self.asked.clear();
+        self.outbox.clear();
+        self.credentials = None;
+        self.retry_at = None;
+        self.link_lost = false;
     }
 
     fn enter(&mut self, id: MatchId, watch: bool) {

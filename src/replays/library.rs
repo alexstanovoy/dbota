@@ -64,6 +64,8 @@ pub struct Library {
     index: Index,
     policy: Policy,
     standing: Standing,
+    /// Sign-out can happen before the browser has finished reading the index.
+    forget_loaded_wants: bool,
     /// Saves asked for before the index was read.
     waiting: Vec<(Record, Vec<u8>)>,
     notices: Vec<Notice>,
@@ -83,6 +85,7 @@ impl Library {
             index: Index::default(),
             policy: Policy::default(),
             standing: Standing::Loading,
+            forget_loaded_wants: false,
             waiting: Vec::new(),
             notices: Vec::new(),
             changed: false,
@@ -160,6 +163,15 @@ impl Library {
     pub fn unwant(&mut self, match_id: u64) {
         self.index.unwant(match_id);
         self.changed = true;
+    }
+
+    /// Drops the previous account's downloads while leaving its saved files on this device.
+    pub fn forget_wanted(&mut self) {
+        self.forget_loaded_wants = self.standing == Standing::Loading;
+        if !self.index.wanted.is_empty() {
+            self.index.wanted.clear();
+            self.changed = true;
+        }
     }
 
     /// Whether a replay is saved at all now.
@@ -306,6 +318,9 @@ impl Library {
                 // Matches noted while the index was being read stay noted.
                 let early = std::mem::take(&mut self.index.wanted);
                 self.index = index.map_or_else(Index::default, |t| Index::parse(&t));
+                if std::mem::take(&mut self.forget_loaded_wants) {
+                    self.index.wanted.clear();
+                }
                 for wanted in early {
                     self.index.want(wanted);
                 }

@@ -445,6 +445,15 @@ pub fn my_games(
                 38.0,
             );
         }
+        if let Some(name) = &game.kept_replay {
+            kit.button(
+                row,
+                "DELETE",
+                Act::DeleteReplay(name.clone()),
+                Tone::Danger,
+                38.0,
+            );
+        }
     }
     kept_replays(kit, column, kept, shelf);
     if let Some(cooldown) = cooldown {
