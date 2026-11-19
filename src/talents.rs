@@ -363,6 +363,8 @@ fn spawn_arc(commands: &mut Commands, button: Entity) {
     for (level, (x, y, slant)) in DASHES.into_iter().enumerate() {
         commands.spawn((
             ArcPip(level as u8),
+            // The Attribute Bonus arc sits outside the talent button's rim.
+            ui::Overhangs,
             Node {
                 position_type: PositionType::Absolute,
                 left: px((inner - ARC) / 2.0 + x * scale - length / 2.0),
