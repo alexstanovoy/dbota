@@ -553,7 +553,7 @@ fn kept_replays() -> Vec<ReplayRow> {
 
 fn preview_my_games(name: &str) -> MenuView {
     let shelf = ReplayShelf {
-        folder: "/home/player/.local/share/dbota/replays".to_owned(),
+        folder: "/data/dbota/replays".to_owned(),
         keeping: true,
         store: true,
         service_keeps_none: false,
@@ -589,6 +589,7 @@ fn preview_my_games(name: &str) -> MenuView {
                 detail: "Match 39 · 14:21 · rated".to_owned(),
                 rating: "1662 (+162)".to_owned(),
                 kept_replay: None,
+                replay_problem: None,
                 replay: true,
             }],
             kept: kept_replays(),
@@ -649,7 +650,7 @@ fn preview_quit() -> MenuView {
     let mut view = logged_in(Page::Home, home());
     view.confirm = Some(ConfirmView {
         title: "Confirm Quit",
-        text: "Do you really wish to quit dbota?",
+        text: "Do you really wish to quit dbota?".to_owned(),
     });
     view
 }

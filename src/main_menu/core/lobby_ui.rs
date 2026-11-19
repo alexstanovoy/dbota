@@ -962,10 +962,13 @@ impl MenuCore {
     pub(crate) fn test_answer_held_lobby_request(&mut self, reply: Reply) {
         let count = self.lobby_ui.held.as_ref().expect("held transport").len();
         let seq = u32::MAX - (count - 1) as u32;
-        self.take(Incoming::Reply {
-            seq,
-            result: Ok(reply),
-        });
+        self.take(
+            self.connection_generation,
+            Incoming::Reply {
+                seq,
+                result: Ok(reply),
+            },
+        );
     }
 }
 
@@ -982,10 +985,13 @@ impl MenuCore {
 impl MenuCore {
     pub(crate) fn test_refuse_held_lobby_request(&mut self, error: Error) {
         let count = self.lobby_ui.held.as_ref().expect("held transport").len();
-        self.take(Incoming::Reply {
-            seq: u32::MAX - (count - 1) as u32,
-            result: Err(error),
-        });
+        self.take(
+            self.connection_generation,
+            Incoming::Reply {
+                seq: u32::MAX - (count - 1) as u32,
+                result: Err(error),
+            },
+        );
     }
 
     pub(crate) fn test_drop_lobby_reply(&mut self) {
@@ -1005,7 +1011,7 @@ impl MenuCore {
                 .expect("control link");
             match incoming {
                 Some(Incoming::Reply { seq: answered, .. }) if answered == seq => return,
-                Some(incoming) => self.take(incoming),
+                Some(incoming) => self.take(self.connection_generation, incoming),
                 None => {}
             }
         }
@@ -1057,10 +1063,13 @@ mod transaction_tests {
             .expect("replacement request");
         for (sequence, result) in [(41, Ok(Reply::Done)), (42, Err(Error::NotLobbyOwner))] {
             menu.asked.push((sequence, Asked::LobbyUi(old)));
-            menu.take(Incoming::Reply {
-                seq: sequence,
-                result,
-            });
+            menu.take(
+                menu.connection_generation,
+                Incoming::Reply {
+                    seq: sequence,
+                    result,
+                },
+            );
             let editor = menu.lobby_ui.editor.as_ref().expect("replacement survives");
             assert_eq!(editor.id, 2);
             assert_eq!(editor.saving, Some(Saving::Create));

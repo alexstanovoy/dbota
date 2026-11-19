@@ -14,6 +14,7 @@ pub struct Prefs {
     /// The matchmaking service, `wss://host:port`.
     pub service: String,
     /// The last login typed (never the password).
+    /// The last login typed on this device, used as the sign-in form’s default.
     pub login: String,
     /// The last direct address.
     pub direct: String,

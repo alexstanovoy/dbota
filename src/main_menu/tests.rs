@@ -774,7 +774,7 @@ fn both_keep_the_replay(alice: &mut Player, bob: &mut Player) {
                 .is_ok_and(|index| index.contains(&record.name))
         });
         assert!(
-            player.menu.library.wanted().is_empty(),
+            player.menu.library.wanted().next().is_none(),
             "nothing is waited for any more"
         );
         // MY GAMES leads to it from the finished match, and lists it nowhere else.
@@ -817,16 +817,20 @@ fn both_keep_the_replay(alice: &mut Player, bob: &mut Player) {
             "back where the replay was opened from"
         );
     }
-    // After a restart the folder's index lists it again.
-    let again = Library::new(Box::new(Disk::new(alice._dir.0.join("replays"))));
+    // After a restart the folder retains the replay for its owner.
+    let mut again = Library::new(Box::new(Disk::new(alice._dir.0.join("replays"))));
     let deadline = Instant::now() + Duration::from_secs(PATIENCE);
-    let mut again = again;
     while again.standing() != crate::replays::Standing::Ready {
         assert!(Instant::now() < deadline, "the folder was not read");
         again.poll();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(again.records().len(), 1);
+    assert!(
+        again.records().is_empty(),
+        "the guest sees no account replay on restart"
+    );
+    again.set_scope(alice.menu.library.scope());
+    assert_eq!(again.records().len(), 1, "the owner still has the replay");
 }
 
 /// A client that was away when its match ended gets the replay at its next sign-in: the match
@@ -842,7 +846,9 @@ fn bob_gets_a_replay_he_was_away_for(bob: Player, service: &Service) {
     let id = record.match_id.expect("an online match");
     let folder = _dir.0.join("replays");
     menu.library.delete(&record.name);
+    let scope = menu.library.scope();
     menu.library.want(crate::replays::Wanted {
+        scope,
         match_id: id,
         since: crate::replays::now(),
         mode: "solo_mid".to_owned(),
@@ -875,7 +881,7 @@ fn bob_gets_a_replay_he_was_away_for(bob: Player, service: &Service) {
     let kept = &back.menu.library.records()[0];
     assert_eq!(kept.match_id, Some(id));
     assert!(folder.join(&kept.name).is_file());
-    assert!(back.menu.library.wanted().is_empty());
+    assert!(back.menu.library.wanted().next().is_none());
 }
 
 /// A new run of the client logs in with the kept token, without a password;
@@ -1541,18 +1547,21 @@ fn a_service_without_a_demo_falls_back_to_the_local_sandbox() {
 fn plant_replays(player: &mut Player, rows: &[(&str, &str, Option<u64>, &[u8])]) {
     let folder = player._dir.0.join("replays");
     std::fs::create_dir_all(&folder).expect("the replay folder");
-    let mut index = String::from("dbota-replays 1\n");
+    let mut index = String::from("dbota-replays 2\n");
+    let scope = player.menu.library.scope();
     for (at, (file, mode, id, bytes)) in rows.iter().enumerate() {
         std::fs::write(folder.join(file), bytes).expect("a replay file");
         let id = id.map_or_else(|| "-".to_owned(), |id| id.to_string());
         index.push_str(&format!(
-            "r\t{}\t{}\t{id}\t{mode}\t{file}\t\t\n",
+            "r\t{}\t{}\t{id}\t{mode}\t{file}\t\t\t-\t{}\n",
             1_793_956_218 - at as u64 * 3600,
-            bytes.len()
+            bytes.len(),
+            scope.index_field()
         ));
     }
     std::fs::write(folder.join("index.txt"), index).expect("the index");
     player.menu.library = kept_in(&player._dir);
+    player.menu.library.set_scope(scope);
     let planted = rows.len();
     settle(&mut [player], |p| p.menu.library.records().len() == planted);
 }
@@ -1569,75 +1578,279 @@ fn kept_replays_read(player: &mut Player) -> Vec<super::view::ReplayRow> {
     kept
 }
 
-#[test]
-fn my_games_forgets_the_first_accounts_matches_before_the_second_signs_in() {
-    use bota_radovid::proto::{Outcome, UnixMs};
-    use radovid::db::{Db, Finish, NewSeat};
+fn alice_replay_and_archive(player: &mut Player) -> (String, String) {
+    let (replay, metadata) = crate::postgame::recorded_match_for_menu();
+    let kept = player
+        .menu
+        .library
+        .save(crate::replays::Saving {
+            explicit: true,
+            mode: "practice".into(),
+            match_id: Some(458),
+            owner: Some(bota_proto::SlotId(0)),
+            players: "Alice vs Private Opponent".into(),
+            outcome: "Alice won, 1:00".into(),
+            bytes: std::fs::read(replay).expect("real replay"),
+        })
+        .expect("save Alice's replay");
+    let key = "alice-private-archive".to_owned();
+    player.menu.local_history.insert(
+        super::local_matches::Saved {
+            scope: player.menu.library.scope(),
+            key: key.clone(),
+            file: Some(kept.name.clone()),
+            when: kept.when,
+            mode: "practice".into(),
+            owner: kept.owner,
+            metadata: std::fs::read(metadata).unwrap(),
+            metadata_key: None,
+            cached: None,
+            result: None,
+            summary: None,
+            temporary: None,
+        },
+        50,
+    );
+    let file = kept.name;
+    settle(&mut [player], |p| {
+        p.menu.library.records().iter().any(|row| row.name == file)
+    });
+    (file, key)
+}
 
+fn my_games_kept_names(player: &Player) -> Vec<String> {
+    let PageView::MyGames {
+        games,
+        finished,
+        kept,
+        ..
+    } = player.menu.view().body
+    else {
+        panic!("MY GAMES is accessible");
+    };
+    assert!(
+        games.is_empty() && finished.is_empty(),
+        "no service match rows in this fixture"
+    );
+    kept.into_iter().map(|row| row.name).collect()
+}
+
+fn assert_archived_match_access(player: &mut Player, key: &str, exists: bool) {
+    player.menu.act(Act::Go(Page::MatchHistory));
+    let PageView::MatchHistory(history) = player.menu.view().body else {
+        panic!("match history is accessible");
+    };
+    assert_eq!(history.count, usize::from(exists), "replay count");
+    assert_eq!(history.bytes > 0, exists, "replay storage shown");
+    assert_eq!(
+        history.matches.iter().any(|row| row.file == key),
+        exists,
+        "archive card"
+    );
+    player.menu.act(Act::MatchDetails(key.to_owned()));
+    assert_eq!(
+        player.menu.take_result_request(false).is_some(),
+        exists,
+        "direct details link"
+    );
+}
+
+#[test]
+fn my_games_and_archive_follow_the_account_through_bob_sign_out_and_alice_return() {
     let service = service();
     let mut player = Player::new(Some(&service));
     player.register("alice");
-    let alice = player.menu.my_id().expect("Alice is signed in");
-    let mut opponent = Player::new(Some(&service));
-    opponent.register("opponent");
-    let other = opponent.menu.my_id().expect("opponent is signed in");
-    let match_id = service.runtime.block_on(async {
-        let db = Db::open(&service._dir.0.join("radovid.db")).unwrap();
-        let seats = vec![
-            NewSeat {
-                account: alice,
-                slot: 0,
-                team: 0,
-            },
-            NewSeat {
-                account: other,
-                slot: 1,
-                team: 1,
-            },
-        ];
-        let id = db.create_match(solo(), true, seats.clone()).await.unwrap();
-        db.finish_match(Finish::rated(id, solo(), Outcome::Draw, seats, UnixMs(1)))
-            .await
-            .unwrap();
-        id
+    settle(&mut [&mut player], |p| {
+        p.menu.library.standing() == crate::replays::Standing::Ready
     });
-    let local_file = "20261118-120000-local.brp";
-    plant_replays(&mut player, &[(local_file, "local", None, &[7; 2000])]);
-    let has_alice_match = |player: &Player| {
-        matches!(player.menu.view().body, PageView::MyGames { finished, .. }
-            if finished.iter().any(|row| row.match_id == match_id))
-    };
-    let check_games = |player: &Player| {
-        let PageView::MyGames {
-            games,
-            finished,
-            kept,
-            ..
-        } = player.menu.view().body
-        else {
-            panic!("MY GAMES is accessible");
-        };
-        assert!(games.is_empty(), "no active match from Alice");
-        assert!(
-            finished.is_empty(),
-            "no finished match from Alice: {finished:?}"
-        );
-        assert!(
-            kept.iter().any(|row| row.name == local_file),
-            "local replay survives sign-out"
-        );
-    };
+    let (file, key) = alice_replay_and_archive(&mut player);
+    let disk = player._dir.0.join("replays").join(&file);
     player.menu.act(Act::Go(Page::MyGames));
-    settle(&mut [&mut player], has_alice_match);
+    let PageView::MyGames { kept, .. } = player.menu.view().body else {
+        panic!("Alice's games")
+    };
+    assert!(
+        matches!(&kept[0].summary, super::replay_info::Summary::Read { sides, .. }
+        if sides.text(&crate::dota_text::Texts::default()).contains("Private Opponent"))
+    );
+    assert_archived_match_access(&mut player, &key, true);
 
     player.menu.act(Act::Logout);
-    player.menu.act(Act::Go(Page::MyGames));
-    check_games(&player);
-    player.menu.act(Act::Go(Page::Login));
     player.register("bob");
-    assert_ne!(player.menu.my_id(), Some(alice));
     player.menu.act(Act::Go(Page::MyGames));
-    check_games(&player);
+    assert_eq!(
+        my_games_kept_names(&player),
+        Vec::<String>::new(),
+        "Bob cannot list Alice's replay"
+    );
+    assert_archived_match_access(&mut player, &key, false);
+    for action in [
+        Act::OpenReplay(file.clone()),
+        Act::WatchHistory(key.clone()),
+        Act::WatchReplay(MatchId(458)),
+        Act::DeleteReplay(file.clone()),
+    ] {
+        player.menu.act(action);
+        assert!(player.menu.take_launch().is_none(), "no foreign playback");
+        assert!(player.menu.view().confirm.is_none(), "no foreign deletion");
+    }
+    player.menu.act(Act::Logout);
+    player.menu.act(Act::Go(Page::MyGames));
+    assert!(
+        my_games_kept_names(&player).is_empty(),
+        "the guest cannot list Alice's replay"
+    );
+    assert_archived_match_access(&mut player, &key, false);
+    assert!(disk.is_file(), "Alice's file is still on disk");
+    let (recording, _) = crate::postgame::recorded_match_for_menu();
+    let guest = player
+        .menu
+        .library
+        .save(crate::replays::Saving {
+            explicit: true,
+            mode: "local".into(),
+            match_id: None,
+            owner: Some(bota_proto::SlotId(0)),
+            players: "Guest and a friend".into(),
+            outcome: String::new(),
+            bytes: std::fs::read(recording).unwrap(),
+        })
+        .expect("the guest keeps a local replay");
+    settle(&mut [&mut player], |p| {
+        p.menu.library.visible(&guest.name).is_some()
+    });
+    player.menu.act(Act::Go(Page::MyGames));
+    assert_eq!(
+        my_games_kept_names(&player).as_slice(),
+        std::slice::from_ref(&guest.name)
+    );
+    // Reload both stores once the file worker has written the new guest's index row.
+    let index = player._dir.0.join("replays/index.txt");
+    settle(&mut [&mut player], |_| {
+        std::fs::read_to_string(&index).is_ok_and(|text| text.contains(&guest.name))
+    });
+    player.menu = MenuCore::new(
+        player.store.clone(),
+        player.trust.radovid.clone(),
+        Some(service.url.clone()),
+        kept_in(&player._dir),
+    );
+    settle(&mut [&mut player], |p| {
+        p.menu.library.visible(&guest.name).is_some()
+    });
+    player.menu.act(Act::Go(Page::Login));
+    player.fill(&["alice", PASSWORD]);
+    player.menu.act(Act::Submit);
+    settle(&mut [&mut player], |p| p.menu.page() == Page::Home);
+    player.menu.act(Act::Go(Page::MyGames));
+    assert_eq!(
+        my_games_kept_names(&player).as_slice(),
+        std::slice::from_ref(&file)
+    );
+    settle(&mut [&mut player], |p| {
+        p.menu
+            .local_history
+            .find(&key)
+            .is_some_and(|entry| entry.details().is_some())
+    });
+    assert_archived_match_access(&mut player, &key, true);
+    assert!(
+        player._dir.0.join("replays").join(guest.name).is_file(),
+        "the guest file remains"
+    );
+    player.menu.act(Act::OpenReplay(file));
+    assert!(matches!(player.menu.take_launch(), Some(Launch::Replay(path)) if path == disk));
+}
+
+#[test]
+fn a_late_reply_from_the_old_account_cannot_satisfy_the_new_accounts_same_sequence() {
+    use bota_radovid::proto::{EndReason, Outcome, Reply, UnixMs};
+    let service = service();
+    let mut player = Player::new(Some(&service));
+    player.register("alice");
+    let seq = u32::MAX - 42;
+    let finished = |id| MatchResult {
+        match_id: MatchId(id),
+        ruleset: solo(),
+        rated: false,
+        outcome: Outcome::Draw,
+        reason: EndReason::Decided,
+        duration_ms: 1000,
+        game_report: Vec::new(),
+        seats: Vec::new(),
+        finished_at: UnixMs(1),
+    };
+    player.menu.history_request_for_test(seq);
+    let delayed = player.menu.deferred_reply(
+        seq,
+        Reply::Matches {
+            list: vec![finished(41)],
+        },
+    );
+    player.menu.join_prompt_for_test();
+    assert!(player.menu.join_prompt.is_some());
+    player.menu.act(Act::Logout);
+    assert!(
+        player.menu.join_prompt.is_none(),
+        "sign-out forgets the old lobby prompt"
+    );
+    player.register("bob");
+
+    player.menu.history_request_for_test(seq);
+    delayed(&mut player.menu);
+    assert!(
+        player.menu.history.is_empty(),
+        "Alice's delayed result is ignored"
+    );
+    let bob = player.menu.deferred_reply(
+        seq,
+        Reply::Matches {
+            list: vec![finished(42)],
+        },
+    );
+    bob(&mut player.menu);
+    assert_eq!(player.menu.history[0].match_id, MatchId(42));
+}
+
+#[test]
+fn a_second_delete_cannot_change_the_file_confirmed_by_keyboard() {
+    let mut player = Player::new(None);
+    let first = "first.brp";
+    let second = "second.brp";
+    plant_replays(
+        &mut player,
+        &[
+            (first, "local", None, &[7; 2000]),
+            (second, "local", None, &[7; 2000]),
+        ],
+    );
+    player.menu.act(Act::Go(Page::MyGames));
+    player.menu.act(Act::DeleteReplay(first.into()));
+    player.menu.act(Act::DeleteReplay(second.into()));
+    assert_eq!(
+        player.menu.confirm,
+        Some(Confirm::DeleteReplay(first.into()))
+    );
+    let dialog = player.menu.view().confirm.expect("delete confirmation");
+    assert!(dialog.text.contains(first), "the original file: {dialog:?}");
+    player.menu.act(Act::Submit);
+    assert!(
+        player.menu.view().confirm.is_none(),
+        "Enter closes the dialog"
+    );
+    assert_eq!(
+        my_games_kept_names(&player).len(),
+        2,
+        "Enter starts on Cancel"
+    );
+    player.menu.act(Act::DeleteReplay(first.into()));
+    player.menu.act(Act::NextField);
+    player.menu.act(Act::Submit);
+    assert_eq!(
+        my_games_kept_names(&player),
+        [second],
+        "keyboard confirmation deletes only the prompt's file"
+    );
 }
 
 /// Every replay this client keeps is on MY GAMES, with no account too: a local game, a Demo Hero's
@@ -2398,7 +2611,7 @@ fn a_service_that_keeps_no_replays_leaves_the_client_with_none_and_a_note() {
     settle(&mut [&mut alice], |p| p.menu.service_keeps_none());
     assert!(alice.menu.library.records().is_empty());
     assert!(
-        alice.menu.library.wanted().is_empty(),
+        alice.menu.library.wanted().next().is_none(),
         "nothing is waited for"
     );
     alice.menu.act(Act::Go(Page::MyGames));
@@ -3388,8 +3601,7 @@ fn queue_shortcut_and_drawer_send_the_same_selected_audiences() {
 pub(crate) fn install_local_library(core: &mut MenuCore, directory: &Path) {
     core.library = Library::new(Box::new(crate::replays::Disk::new(directory.to_owned())));
     core.store = SettingsStore::new(Some(directory.join("settings.conf")));
-    core.local_history =
-        super::local_matches::Archive::load(&core.store, core.library.policy().max_count);
+    core.local_history = super::local_matches::Archive::load(&core.store);
 }
 
 pub(crate) fn local_library_scan_complete(core: &MenuCore) -> bool {
@@ -3574,6 +3786,7 @@ pub(crate) fn persist_browser_history_with_a_failed_blob(directory: &Path) {
     let mut archive = super::local_matches::Archive::default();
     archive.insert(
         super::local_matches::Saved {
+            scope: crate::replays::Scope::Guest,
             key: "quota-history".to_owned(),
             file: None,
             when: 100,
@@ -3798,8 +4011,11 @@ pub(crate) fn own_cached_profile_id(core: &MenuCore) -> Option<u64> {
 
 pub(crate) fn install_profile_history(menu: &mut MenuCore, metadata: Vec<u8>) {
     menu.local_history = super::local_matches::Archive::default();
+    let scope = menu.library.scope();
+    menu.local_history.set_scope(scope);
     menu.local_history.insert(
         super::local_matches::Saved {
+            scope,
             key: "profile-history".into(),
             file: None,
             when: 1794062400,

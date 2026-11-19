@@ -18,6 +18,16 @@ pub fn present(
     session: NonSend<Session>,
 ) {
     if let Some(core) = core.as_mut() {
+        let generation = core.history_scope_generation();
+        if post
+            .history_scope_generation
+            .replace(generation)
+            .is_some_and(|previous| previous != generation)
+        {
+            post.profile_return = None;
+            post.overlay = None;
+            post.closed = true;
+        }
         let inspecting = matches!(core.page(), crate::main_menu::Page::PlayerProfile(_))
             || post
                 .overlay

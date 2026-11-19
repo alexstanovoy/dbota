@@ -363,7 +363,7 @@ fn a_replays_long_name_leaves_the_buttons_of_its_row_their_width() {
     let long = format!("20261106-090826-{}.brp", "long-".repeat(15));
     let short = "20261106-091018-local.brp";
     let index = format!(
-        "dbota-replays 1\nr\t1793956218\t12\t-\tlocal\t{short}\t\t\nr\t1793956106\t12\t-\tlocal\t{long}\t\t\n"
+        "dbota-replays 2\nr\t1793956218\t12\t-\tlocal\t{short}\t\t\t-\t-\nr\t1793956106\t12\t-\tlocal\t{long}\t\t\t-\t-\n"
     );
     let files = [
         ("replays/index.txt", index.as_str()),

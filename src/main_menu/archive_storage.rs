@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::io;
 
 pub const MAX_MATCHES: usize = 50;
+pub(super) const MAX_ENTRIES: usize = 4 * MAX_MATCHES;
 pub const META_LIMIT: usize =
     bota_replay::limits::MAX_META_BYTES + bota_replay::limits::END_RESERVE_BYTES;
 
@@ -33,7 +34,7 @@ impl<'de> Deserialize<'de> for Index {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = Index;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(f, "at most {MAX_MATCHES} local matches")
+                write!(f, "at most {MAX_ENTRIES} local matches")
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(
                 self,
@@ -41,7 +42,7 @@ impl<'de> Deserialize<'de> for Index {
             ) -> Result<Index, A::Error> {
                 let mut entries = Vec::new();
                 while let Some(entry) = seq.next_element()? {
-                    if entries.len() == MAX_MATCHES {
+                    if entries.len() == MAX_ENTRIES {
                         return Err(serde::de::Error::custom("too many local matches"));
                     }
                     entries.push(entry);
@@ -53,19 +54,23 @@ impl<'de> Deserialize<'de> for Index {
     }
 }
 
-pub fn load(store: &SettingsStore, max_count: usize) -> Vec<Saved> {
+pub fn load(store: &SettingsStore) -> Vec<Saved> {
+    let mut remaining = 32 << 20;
     index(store)
         .into_iter()
-        .take(max_count.min(MAX_MATCHES))
         .map(|mut stored| {
             let key = valid_digest(&stored.digest).then_some(stored.digest);
-            let bytes = key.as_ref().and_then(|key| store.read_metadata(key));
-            stored.entry.metadata = bytes
+            let bytes = key
+                .as_ref()
+                .filter(|_| remaining > 0)
+                .and_then(|key| store.read_metadata(key))
+                .filter(|bytes| bytes.len() <= remaining)
                 .filter(|bytes| {
                     key.as_ref()
                         .is_some_and(|key| blake3::hash(bytes).to_hex().as_str() == key)
-                })
-                .unwrap_or_default();
+                });
+            stored.entry.metadata = bytes.unwrap_or_default();
+            remaining -= stored.entry.metadata.len();
             stored.entry.metadata_key = key;
             stored.entry
         })
@@ -100,7 +105,12 @@ pub(super) fn write_snapshot(
         digest: String,
     }
     let mut records = Vec::with_capacity(entries.len());
-    for entry in entries.iter().take(MAX_MATCHES) {
+    if entries.len() > MAX_ENTRIES {
+        return Err(io::Error::other(
+            "local match index exceeds its entry limit",
+        ));
+    }
+    for entry in entries {
         let digest = if entry.metadata.is_empty() {
             entry
                 .metadata_key

@@ -33,7 +33,7 @@ impl MenuCore {
             start + Duration::from_secs(now.saturating_duration_since(start).as_secs() + 1)
         });
         let dates = (matches!(page, Page::Home | Page::Profile)
-            && !self.local_history.entries().is_empty())
+            && self.local_history.visible_entries().next().is_some())
         .then(|| {
             let wall = crate::replays::wall_clock();
             now + Duration::from_secs(60 - wall.as_secs() % 60)

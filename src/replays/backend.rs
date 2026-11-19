@@ -26,6 +26,8 @@ pub enum Op {
     #[cfg(target_arch = "wasm32")]
     Get {
         name: String,
+        generation: u64,
+        prefix: bool,
     },
     Remove {
         names: Vec<String>,
@@ -52,6 +54,8 @@ pub enum Done {
     #[cfg(target_arch = "wasm32")]
     Got {
         name: String,
+        generation: u64,
+        prefix: bool,
         result: Result<Vec<u8>, String>,
     },
     /// A removal or an index that failed (the library goes on with the index it has).

@@ -68,8 +68,9 @@ fn describe(error: JsValue) -> String {
     message.unwrap_or_else(|| format!("{error:?}"))
 }
 
-fn bytes_of(value: &JsValue) -> Option<Vec<u8>> {
-    value.dyn_ref::<Uint8Array>().map(Uint8Array::to_vec)
+fn bytes_of(value: &JsValue, limit: u64) -> Option<Vec<u8>> {
+    let bytes = value.dyn_ref::<Uint8Array>()?;
+    (u64::from(bytes.length()) <= limit).then(|| bytes.to_vec())
 }
 
 impl Backend for Browser {
@@ -83,7 +84,15 @@ impl Backend for Browser {
                     Uint8Array::from(bytes.as_slice()).into(),
                 ],
             ),
-            Op::Get { name } => self.call("get", &[name.into()]),
+            Op::Get { name, prefix, .. } => self.call(
+                "get",
+                &[
+                    name.into(),
+                    (*prefix).into(),
+                    (super::probe::MAX_PREFIX as u32).into(),
+                    (MAX_BYTES as u32).into(),
+                ],
+            ),
             Op::Remove { names } => self.call(
                 "remove",
                 &[names
@@ -145,11 +154,23 @@ fn finish(op: Op, result: Result<JsValue, JsValue>, kind: &str) -> Done {
             },
             error: None,
         },
-        Op::Get { name } => Done::Got {
-            result: bytes_of(&value)
-                .filter(|b| b.len() as u64 <= MAX_BYTES)
-                .ok_or_else(|| "that replay is not kept any more".to_owned()),
+        Op::Get {
             name,
+            generation,
+            prefix,
+        } => Done::Got {
+            result: bytes_of(
+                &value,
+                if prefix {
+                    super::probe::MAX_PREFIX as u64
+                } else {
+                    MAX_BYTES
+                },
+            )
+            .ok_or_else(|| "The saved file is missing or exceeds its size limit.".to_owned()),
+            name,
+            generation,
+            prefix,
         },
         Op::Remove { .. } | Op::Index { .. } => Done::Failed(String::new()),
     }
@@ -162,8 +183,14 @@ fn failed(op: Op, why: String) -> Done {
             record,
             error: Some(format!("cannot keep the replay: {why}")),
         },
-        Op::Get { name } => Done::Got {
+        Op::Get {
             name,
+            generation,
+            prefix,
+        } => Done::Got {
+            name,
+            generation,
+            prefix,
             result: Err(why),
         },
         Op::Remove { .. } | Op::Index { .. } => Done::Failed(why),

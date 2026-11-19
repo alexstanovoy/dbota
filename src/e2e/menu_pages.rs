@@ -59,7 +59,7 @@ fn the_profile_shows_the_local_players_record_from_a_real_match_metadata_file() 
     std::fs::copy(meta, copied.with_extension("meta")).expect("copy real metadata");
     std::fs::write(
         directory.join("index.txt"),
-        format!("dbota-replays 1\nr\t100\t{bytes}\t-\tlocal\tmatch.brp\t\t\t0\n"),
+        format!("dbota-replays 2\nr\t100\t{bytes}\t-\tlocal\tmatch.brp\t\t\t0\t-\n"),
     )
     .expect("record the local slot explicitly");
     let mut client = local_menu();
@@ -133,7 +133,7 @@ fn local_profile_details_survive_a_restart_after_the_replay_is_pruned() {
     std::fs::copy(meta, copied.with_extension("meta")).unwrap();
     std::fs::write(
         directory.join("index.txt"),
-        format!("dbota-replays 1\nr\t100\t{bytes}\t-\tlocal\tretained.brp\t\t\t0\n"),
+        format!("dbota-replays 2\nr\t100\t{bytes}\t-\tlocal\tretained.brp\t\t\t0\t-\n"),
     )
     .unwrap();
     {
@@ -152,7 +152,7 @@ fn local_profile_details_survive_a_restart_after_the_replay_is_pruned() {
     }
     std::fs::remove_file(&copied).unwrap();
     std::fs::remove_file(copied.with_extension("meta")).unwrap();
-    std::fs::write(directory.join("index.txt"), "dbota-replays 1\n").unwrap();
+    std::fs::write(directory.join("index.txt"), "dbota-replays 2\n").unwrap();
     let mut client = local_menu();
     crate::main_menu::tests::install_local_library(
         &mut client.world_mut().non_send_mut::<MenuCore>(),
@@ -405,7 +405,7 @@ fn homes_background_uses_the_local_replays_owned_team_without_a_service() {
     std::fs::write(copied.with_extension("meta"), writer.into_bytes()).unwrap();
     std::fs::write(
         directory.join("index.txt"),
-        format!("dbota-replays 1\nr\t100\t{bytes}\t-\tlocal\tdire.brp\t\t\t0\n"),
+        format!("dbota-replays 2\nr\t100\t{bytes}\t-\tlocal\tdire.brp\t\t\t0\t-\n"),
     )
     .unwrap();
     let mut client = local_menu();
@@ -809,7 +809,7 @@ fn two_seat_library(name: &str, finished: bool) -> std::path::PathBuf {
     std::fs::write(directory.join("owned.meta"), writer.into_bytes()).unwrap();
     std::fs::write(
         directory.join("index.txt"),
-        format!("dbota-replays 1\nr\t100\t{bytes}\t-\tlocal\towned.brp\t\t\t1\n"),
+        format!("dbota-replays 2\nr\t100\t{bytes}\t-\tlocal\towned.brp\t\t\t1\t-\n"),
     )
     .unwrap();
     directory

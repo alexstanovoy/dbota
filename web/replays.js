@@ -24,9 +24,12 @@ async function opfs() {
       }
       return files;
     },
-    async read(name) {
+    async read(name, prefix = false, prefixLimit = 0, limit = Infinity) {
       try {
-        return new Uint8Array(await (await (await dir.getFileHandle(name)).getFile()).arrayBuffer());
+        const file = await (await dir.getFileHandle(name)).getFile();
+        if (file.size > limit) return null;
+        const bytes = prefix ? file.slice(0, prefixLimit) : file;
+        return new Uint8Array(await bytes.arrayBuffer());
       } catch (e) {
         if (e && (e.name === "NotFoundError" || e.name === "TypeMismatchError")) return null;
         throw e;
@@ -76,9 +79,10 @@ async function idb() {
       const rows = await run("readonly", (s) => s.getAll());
       return rows.map((r) => ({ name: r.name, size: r.bytes.byteLength, modified: r.modified }));
     },
-    async read(name) {
+    async read(name, prefix = false, prefixLimit = 0, limit = Infinity) {
       const row = await run("readonly", (s) => s.get(name));
-      return row ? new Uint8Array(row.bytes) : null;
+      if (!row || row.bytes.byteLength > limit) return null;
+      return new Uint8Array(row.bytes, 0, prefix ? Math.min(row.bytes.byteLength, prefixLimit) : row.bytes.byteLength);
     },
     write: (name, bytes) =>
       run("readwrite", (s) => s.put({ name, bytes: bytes.slice().buffer, modified: Math.floor(Date.now() / 1000) })),
@@ -120,7 +124,7 @@ export async function publish() {
         return { index, files: files.filter((f) => f.name !== INDEX) };
       }),
     put: (name, bytes) => queued(() => store.write(name, bytes)),
-    get: (name) => queued(() => store.read(name)),
+    get: (name, prefix, prefixLimit, limit) => queued(() => store.read(name, prefix, prefixLimit, limit)),
     remove: (names) => queued(async () => void (await Promise.all(names.map((n) => store.remove(n))))),
     index: (body) => queued(() => store.write(INDEX, new TextEncoder().encode(body))),
   };

@@ -102,6 +102,7 @@ pub struct FinishedRow {
     pub replay: bool,
     /// The local copy, if present, can be removed from this row.
     pub kept_replay: Option<String>,
+    pub replay_problem: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -377,7 +378,7 @@ pub enum PageView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfirmView {
     pub title: &'static str,
-    pub text: &'static str,
+    pub text: String,
 }
 
 /// Dota's quit popup (`DOTA_ConfirmQuit`), with this client's name.
@@ -576,11 +577,12 @@ impl MenuCore {
                     QUIT_TEXT_UNSAFE
                 } else {
                     QUIT_TEXT
-                },
+                }
+                .to_owned(),
             },
             Confirm::Rehost(_) => ConfirmView {
                 title: REHOST_TITLE,
-                text: REHOST_TEXT,
+                text: REHOST_TEXT.to_owned(),
             },
             Confirm::LeaveGame | Confirm::LeaveSeat => ConfirmView {
                 title: LEAVE_GAME_TITLE,
@@ -590,15 +592,16 @@ impl MenuCore {
                         LEAVE_PICKS_TEXT
                     }
                     _ => LEAVE_GAME_TEXT,
-                },
+                }
+                .to_owned(),
             },
-            Confirm::DeleteReplay(_) => ConfirmView {
+            Confirm::DeleteReplay(name) => ConfirmView {
                 title: "Delete replay?",
-                text: "This removes the saved replay from this device.",
+                text: format!("Delete {name} from this device?"),
             },
             Confirm::Leave => ConfirmView {
                 title: LEAVE_TITLE,
-                text: LEAVE_TEXT,
+                text: LEAVE_TEXT.to_owned(),
             },
         }
     }
@@ -606,8 +609,7 @@ impl MenuCore {
     /// The latest completed, explicitly owned recording on this machine supplies Home's side.
     fn last_side(&self) -> Side {
         self.local_history
-            .entries()
-            .iter()
+            .visible_entries()
             .find_map(|entry| entry.completed_team())
             .map_or(Side::Radiant, |team| {
                 if team == bota_proto::Team::Dire {
@@ -623,7 +625,12 @@ impl MenuCore {
     }
 
     fn cooldown(&self) -> Option<String> {
-        let left = self.client.as_ref()?.searches().cooldown_left_ms();
+        let left = self
+            .client
+            .as_ref()
+            .filter(|_| self.logged_in())?
+            .searches()
+            .cooldown_left_ms();
         (left > 0).then(|| format!("You can search again in {}", clock(left.div_ceil(1000))))
     }
 
@@ -725,7 +732,7 @@ impl MenuCore {
     }
 
     fn home(&self) -> PageView {
-        let Some(client) = &self.client else {
+        let Some(client) = self.client.as_ref().filter(|_| self.logged_in()) else {
             return PageView::Home {
                 matches: self.local_history.cards(self.library.records()),
                 hero: self.last_played_hero(),
@@ -767,7 +774,9 @@ impl MenuCore {
 
     fn finished_row(&self, result: &MatchResult) -> FinishedRow {
         let view = self.result_view(result);
-        let kept_replay = self.library.kept(result.match_id.0).map(|r| r.name.clone());
+        let kept = self.library.kept(result.match_id.0);
+        let kept_replay = kept.map(|record| record.name.clone());
+        let replay_problem = kept.and_then(|record| self.replay_problem(record));
         FinishedRow {
             match_id: result.match_id,
             rating: view
@@ -781,9 +790,11 @@ impl MenuCore {
             detail: view.detail,
             // A match that ran leaves a replay, a lost one too; one nobody came to leaves none
             // (unless this client kept a file of it anyway).
-            replay: kept_replay.is_some()
-                || (result.reason != EndReason::Abandoned && !self.service_keeps_none()),
+            replay: replay_problem.is_none()
+                && (kept_replay.is_some()
+                    || (result.reason != EndReason::Abandoned && !self.service_keeps_none())),
             kept_replay,
+            replay_problem,
         }
     }
 

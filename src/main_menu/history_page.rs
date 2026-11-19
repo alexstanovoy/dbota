@@ -753,6 +753,7 @@ mod tests {
     ) -> Option<super::super::local_matches::Saved> {
         let summary = MatchSummary::from_meta(&bota_replay::meta::decode(&metadata).ok()?)?;
         Some(super::super::local_matches::Saved {
+            scope: crate::replays::Scope::Guest,
             key: record.name.clone(),
             file,
             when: record.when,
@@ -772,6 +773,7 @@ mod tests {
         let mut client = Client::run(&[]);
         client.frames(4);
         let record = Record {
+            scope: crate::replays::Scope::Guest,
             name: "recorded.brp".to_owned(),
             when: 1794062400,
             mode: "all_pick".to_owned(),
@@ -873,7 +875,7 @@ mod tests {
         });
         let store = client.world().non_send::<MenuCore>().store.clone();
         client.world_mut().non_send_mut::<MenuCore>().local_history =
-            super::super::local_matches::Archive::load(&store, 50);
+            super::super::local_matches::Archive::load(&store);
         client.until("metadata returns after restart", |client| {
             client
                 .world()

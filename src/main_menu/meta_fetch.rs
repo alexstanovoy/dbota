@@ -66,6 +66,7 @@ impl MenuCore {
             (
                 result.match_id,
                 super::local_matches::Saved {
+                    scope: self.library.scope(),
                     key: super::local_matches::service_key(&self.prefs.service, result.match_id.0),
                     file: None,
                     when: result.finished_at.0 / 1000,

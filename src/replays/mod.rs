@@ -9,6 +9,9 @@ mod disk;
 mod index;
 mod library;
 mod name;
+#[cfg(any(test, target_arch = "wasm32"))]
+mod probe;
+mod scope;
 
 #[cfg(target_arch = "wasm32")]
 pub use browser::open as open_browser;
@@ -22,3 +25,4 @@ pub use library::{Library, Notice, Saving, Standing};
 #[cfg(test)]
 pub(crate) use name::pass_time;
 pub use name::{now, wall_clock};
+pub use scope::Scope;

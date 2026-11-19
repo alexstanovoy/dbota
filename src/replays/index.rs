@@ -3,12 +3,14 @@
 //! fetched. Pure data and rules, no I/O: both stores (a folder, the browser's private
 //! storage) read and write it the same way.
 
+use super::Scope;
 use std::collections::HashSet;
 
 /// The first line of an index; a file that starts otherwise is not read.
-const MAGIC: &str = "dbota-replays 1";
+const MAGIC: &str = "dbota-replays 2";
+const LEGACY_MAGIC: &str = "dbota-replays 1";
 /// Rows an index holds at most, wanted ones included: a bound on a damaged file's work.
-const MAX_ROWS: usize = 10_000;
+pub(super) const MAX_ROWS: usize = 10_000;
 /// Longest row read, in bytes.
 const MAX_ROW_LEN: usize = 2048;
 /// Longest text a row keeps of a replay's players or outcome, in characters.
@@ -27,6 +29,7 @@ pub const MIN_BYTES: u64 = 1024;
 /// One kept replay.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
+    pub scope: Scope,
     /// The file's name: `20261030-153045-solo_mid-4711.brp`.
     pub name: String,
     /// When the match ended, in seconds since 1970 (UTC).
@@ -49,6 +52,7 @@ pub struct Record {
 /// client closed before the fetch (or before the match ended) still gets it next time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Wanted {
+    pub scope: Scope,
     pub match_id: u64,
     /// When the match was entered, in seconds since 1970.
     pub since: u64,
@@ -113,9 +117,12 @@ impl Index {
     pub fn parse(text: &str) -> Index {
         let mut index = Index::default();
         let mut lines = text.lines();
-        if lines.next() != Some(MAGIC) {
-            return index;
-        }
+        let scoped = match lines.next() {
+            Some(MAGIC) => true,
+            Some(LEGACY_MAGIC) => false,
+            _ => return index,
+        };
+        let mut names = HashSet::new();
         for line in lines.take(MAX_ROWS) {
             if line.len() > MAX_ROW_LEN {
                 continue;
@@ -132,14 +139,25 @@ impl Index {
                     players,
                     outcome,
                     owner @ ..,
-                ] if owner.len() <= 1 => {
+                ] if owner.len() <= if scoped { 2 } else { 1 } => {
                     let (Ok(when), Ok(bytes)) = (when.parse(), bytes.parse()) else {
                         continue;
                     };
                     if !valid_name(name) {
                         continue;
                     }
+                    let scope = if scoped {
+                        owner
+                            .get(1)
+                            .map_or(Scope::Unattributed, |field| Scope::from_index(field))
+                    } else {
+                        Scope::Unattributed
+                    };
+                    if !names.insert(*name) {
+                        continue;
+                    }
                     index.records.push(Record {
+                        scope,
                         name: (*name).to_owned(),
                         when,
                         bytes,
@@ -154,9 +172,12 @@ impl Index {
                             .map(bota_proto::SlotId),
                     });
                 }
-                ["w", match_id, since, mode] => {
-                    if let (Ok(match_id), Ok(since)) = (match_id.parse(), since.parse()) {
+                ["w", match_id, since, mode, scope] if scoped => {
+                    if let (Ok(match_id), Ok(since), scope @ Scope::Account(_)) =
+                        (match_id.parse(), since.parse(), Scope::from_index(scope))
+                    {
                         index.wanted.push(Wanted {
+                            scope,
                             match_id,
                             since,
                             mode: mode_name(mode),
@@ -178,19 +199,26 @@ impl Index {
                 .map_or_else(|| "-".to_owned(), |id| id.to_string());
             let owner = r
                 .owner
-                .map_or_else(String::new, |slot| format!("\t{}", slot.0));
+                .map_or_else(|| "-".to_owned(), |slot| slot.0.to_string());
             out.push_str(&format!(
-                "r\t{}\t{}\t{id}\t{}\t{}\t{}\t{}{owner}\n",
+                "r\t{}\t{}\t{id}\t{}\t{}\t{}\t{}\t{owner}\t{}\n",
                 r.when,
                 r.bytes,
                 r.mode,
                 r.name,
                 clean(&r.players, MAX_TEXT),
-                clean(&r.outcome, MAX_TEXT)
+                clean(&r.outcome, MAX_TEXT),
+                r.scope.index_field()
             ));
         }
         for w in &self.wanted {
-            out.push_str(&format!("w\t{}\t{}\t{}\n", w.match_id, w.since, w.mode));
+            out.push_str(&format!(
+                "w\t{}\t{}\t{}\t{}\n",
+                w.match_id,
+                w.since,
+                w.mode,
+                w.scope.index_field()
+            ));
         }
         out
     }
@@ -204,31 +232,30 @@ impl Index {
         self.records.iter().find(|r| r.name == name)
     }
 
-    /// The kept replay of an online match.
-    pub fn of_match(&self, match_id: u64) -> Option<&Record> {
-        self.records.iter().find(|r| r.match_id == Some(match_id))
-    }
-
     /// Takes in a replay (one of the same name is replaced) and drops the oldest ones past the
     /// policy's caps; the names of the replays dropped, whose files the caller removes.
     pub fn insert(&mut self, record: Record, policy: &Policy) -> Vec<String> {
+        let scope = record.scope;
         self.records.retain(|r| r.name != record.name);
         if let Some(id) = record.match_id {
-            self.wanted.retain(|w| w.match_id != id);
+            self.unwant(scope, id);
         }
         self.records.push(record);
         self.sort();
-        self.prune(policy)
+        self.prune(policy, scope)
     }
 
     /// Drops the oldest replays until the count and the bytes fit the policy.
-    pub fn prune(&mut self, policy: &Policy) -> Vec<String> {
+    pub fn prune(&mut self, policy: &Policy, scope: Scope) -> Vec<String> {
         let mut kept = 0usize;
         let mut bytes = 0u64;
         let mut dropped = Vec::new();
         // Newest first: once a replay does not fit, no older one is kept either.
         let mut full = false;
         self.records.retain(|r| {
+            if !scope.includes(r.scope) {
+                return true;
+            }
             full = full
                 || kept >= policy.max_count
                 || bytes.saturating_add(r.bytes) > policy.max_bytes;
@@ -251,11 +278,14 @@ impl Index {
 
     /// Notes a match whose replay is to be fetched; one noted already stays as it was.
     pub fn want(&mut self, wanted: Wanted) {
-        if self.wanted.iter().any(|w| w.match_id == wanted.match_id)
+        if self
+            .wanted
+            .iter()
+            .any(|w| w.scope == wanted.scope && w.match_id == wanted.match_id)
             || self
                 .records
                 .iter()
-                .any(|r| r.match_id == Some(wanted.match_id))
+                .any(|r| r.scope == wanted.scope && r.match_id == Some(wanted.match_id))
         {
             return;
         }
@@ -265,8 +295,9 @@ impl Index {
         self.wanted.push(wanted);
     }
 
-    pub fn unwant(&mut self, match_id: u64) {
-        self.wanted.retain(|w| w.match_id != match_id);
+    pub fn unwant(&mut self, scope: Scope, match_id: u64) {
+        self.wanted
+            .retain(|w| w.scope != scope || w.match_id != match_id);
     }
 
     /// Drops the matches waited for longer than the service keeps their replay.
@@ -286,6 +317,7 @@ impl Index {
             match self.records.iter_mut().find(|r| &r.name == name) {
                 Some(row) => row.bytes = *bytes,
                 None => self.records.push(Record {
+                    scope: Scope::Unattributed,
                     name: name.clone(),
                     when: *modified,
                     bytes: *bytes,
@@ -303,7 +335,7 @@ impl Index {
 }
 
 /// Wanted matches held at most.
-const MAX_WANTED: usize = 16;
+pub(super) const MAX_WANTED: usize = 16;
 
 /// Whether `name` is a replay's file name as this library makes them: no path in it, `.brp` at
 /// its end, and nothing a file system or a page's download would take for more.
@@ -323,6 +355,7 @@ mod tests {
 
     fn record(name: &str, when: u64, bytes: u64) -> Record {
         Record {
+            scope: Scope::Account([1; 32]),
             name: name.to_owned(),
             when,
             bytes,
@@ -352,7 +385,7 @@ mod tests {
             max_bytes: 25,
             ..Policy::default()
         };
-        assert_eq!(index.prune(&by_bytes), ["3.brp"]);
+        assert_eq!(index.prune(&by_bytes, Scope::Account([1; 32])), ["3.brp"]);
         assert_eq!(index.records.len(), 2);
     }
 
@@ -361,6 +394,7 @@ mod tests {
         let mut index = Index::default();
         index.insert(record("a.brp", 7, 5), &Policy::default());
         index.want(Wanted {
+            scope: Scope::Account([1; 32]),
             match_id: 9,
             since: 3,
             mode: "solo_mid".to_owned(),
@@ -381,6 +415,7 @@ mod tests {
     fn a_replay_in_the_index_drops_its_wait_and_files_that_come_and_go_are_followed() {
         let mut index = Index::default();
         index.want(Wanted {
+            scope: Scope::Account([1; 32]),
             match_id: 4,
             since: 1,
             mode: "m".to_owned(),
@@ -409,10 +444,12 @@ mod owner_contract {
             1,
             "the locally attributed match remains in the library"
         );
+        assert_eq!(index.records[0].owner, Some(bota_proto::SlotId(1)));
+        assert_eq!(index.records[0].scope, super::Scope::Unattributed);
         assert_eq!(
-            index.render(),
-            text,
-            "owner slot is kept separately from ambiguous display names"
+            Index::parse(&index.render()),
+            index,
+            "no owner is guessed for a legacy file"
         );
     }
 }

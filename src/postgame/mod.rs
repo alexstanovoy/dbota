@@ -63,6 +63,7 @@ enum Stage {
 
 /// The summary of the game on screen, once it is over.
 pub struct PostGame {
+    history_scope_generation: Option<u64>,
     origin: Origin,
     /// The origin of the game being opened.
     next: Origin,
@@ -85,6 +86,7 @@ pub struct PostGame {
 impl Default for PostGame {
     fn default() -> Self {
         PostGame {
+            history_scope_generation: None,
             origin: Origin::Nothing,
             next: Origin::Nothing,
             stage: Stage::Idle,

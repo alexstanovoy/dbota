@@ -130,10 +130,11 @@ fn popup(kit: &mut Kit, root: Entity, confirm: &ConfirmView) {
         margin: UiRect::bottom(px(15)),
         ..default()
     });
-    let text = kit.text(card, confirm.text, 16.0, ink);
-    kit.commands
-        .entity(text)
-        .insert(TextLayout::justify(Justify::Center));
+    let text = kit.text(card, confirm.text.as_str(), 16.0, ink);
+    kit.commands.entity(text).insert(TextLayout {
+        justify: Justify::Center,
+        linebreak: LineBreak::WordOrCharacter,
+    });
     popup_answers(kit, card, Act::Answer(true), Act::Answer(false));
 }
 
@@ -435,7 +436,16 @@ pub fn my_games(
             format!("{}  {}", game.headline, game.rating)
         };
         kit.bold(label, title, 18.0, color);
-        kit.text(label, game.detail.clone(), 14.0, theme::INK_4);
+        if let Some(why) = &game.replay_problem {
+            kit.text(
+                label,
+                format!("Broken replay: {why}"),
+                14.0,
+                theme::ERROR_TEXT,
+            );
+        } else {
+            kit.text(label, game.detail.clone(), 14.0, theme::INK_4);
+        }
         if game.replay {
             kit.button(
                 row,

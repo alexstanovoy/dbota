@@ -173,6 +173,7 @@ impl Reader {
         path: std::path::PathBuf,
         mode: &str,
         owner: Option<bota_proto::SlotId>,
+        scope: crate::replays::Scope,
     ) {
         if self.pending.len() >= 16 {
             bevy::log::warn!("Local metadata queue is full; its temporary file is retained");
@@ -187,6 +188,7 @@ impl Reader {
             path,
             temporary: true,
             record: crate::replays::Record {
+                scope,
                 name,
                 owner,
                 when: crate::replays::now(),
@@ -280,6 +282,7 @@ fn read(path: &std::path::Path, record: &crate::replays::Record) -> Option<Saved
         &bota_replay::meta::decode(&metadata).ok()?,
     )?;
     Some(Saved {
+        scope: record.scope,
         key: record.name.clone(),
         file: Some(record.name.clone()),
         when: record.when,

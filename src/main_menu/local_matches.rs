@@ -4,7 +4,10 @@ use super::{
     history::{Match, ResultKind},
     store::SettingsStore,
 };
-use crate::{postgame::summary::MatchSummary, replays::Record};
+use crate::{
+    postgame::summary::MatchSummary,
+    replays::{Record, Scope},
+};
 use bota_proto::SlotId;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc};
@@ -22,6 +25,8 @@ pub struct CachedCard {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Saved {
+    #[serde(default = "Scope::unattributed")]
+    pub scope: Scope,
     pub key: String,
     pub file: Option<String>,
     pub when: u64,
@@ -218,6 +223,8 @@ impl Saved {
 
 #[derive(Default)]
 pub struct Archive {
+    scope: Scope,
+    policy_limit: Option<usize>,
     entries: Vec<Saved>,
     dirty: bool,
     retry_save: Option<bevy::platform::time::Instant>,
@@ -239,7 +246,7 @@ impl Archive {
         self.retry_save
     }
 
-    pub fn load(store: &SettingsStore, max_count: usize) -> Self {
+    pub fn load(store: &SettingsStore) -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let (send, receive) = std::sync::mpsc::sync_channel(1);
@@ -248,7 +255,7 @@ impl Archive {
             let spawned = std::thread::Builder::new()
                 .name("local-match-history".to_owned())
                 .spawn(move || {
-                    let entries = Self::read(&store, max_count);
+                    let entries = Self::read(&store);
                     if send.send(entries).is_ok() {
                         wake.wake();
                     }
@@ -264,23 +271,25 @@ impl Archive {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            // Browser records are bounded to the same fifty-entry policy. localStorage is
+            // Browser records have a bounded snapshot. localStorage is
             // synchronous; no worker can access it. No replay bytes are read here.
             Self {
-                entries: Self::read(store, max_count),
+                entries: Self::read(store),
                 revision: 1,
                 ..Default::default()
             }
         }
     }
 
-    fn read(store: &SettingsStore, max_count: usize) -> Vec<Saved> {
+    fn read(store: &SettingsStore) -> Vec<Saved> {
         let mut seen = HashSet::new();
-        let mut entries: Vec<_> = super::archive_storage::load(store, max_count)
+        let mut entries: Vec<_> = super::archive_storage::load(store)
             .into_iter()
             .filter_map(|mut entry| {
-                (entry.prepare() && entry.mode != "demo" && seen.insert(entry.key.clone()))
-                    .then_some(entry)
+                (entry.prepare()
+                    && entry.mode != "demo"
+                    && seen.insert((entry.scope, entry.key.clone())))
+                .then_some(entry)
             })
             .collect();
         entries.sort_by_key(|entry| std::cmp::Reverse(entry.when));
@@ -322,11 +331,12 @@ impl Archive {
             .iter()
             .enumerate()
             .filter(|(_, previous)| {
-                previous.key == entry.key
-                    || entry
-                        .file
-                        .as_ref()
-                        .is_some_and(|file| previous.file.as_ref() == Some(file))
+                previous.scope == entry.scope
+                    && (previous.key == entry.key
+                        || entry
+                            .file
+                            .as_ref()
+                            .is_some_and(|file| previous.file.as_ref() == Some(file)))
             })
             .map(|(index, _)| index)
             .collect();
@@ -348,10 +358,32 @@ impl Archive {
         for index in candidates.into_iter().rev() {
             self.entries.remove(index);
         }
+        let scope = entry.scope;
+        let other = self
+            .entries
+            .iter()
+            .filter(|entry| entry.scope != scope)
+            .count();
+        let mut remaining = max_count
+            .min(MAX_MATCHES)
+            .min(super::archive_storage::MAX_ENTRIES.saturating_sub(other));
+        if remaining == 0 {
+            bevy::log::warn!("Local match archive has no room for a new entry");
+            return;
+        }
         self.entries.push(entry);
         self.entries
             .sort_by_key(|entry| std::cmp::Reverse(entry.when));
-        self.entries.truncate(max_count.min(MAX_MATCHES));
+        self.entries.retain(|entry| {
+            if entry.scope != scope {
+                return true;
+            }
+            if remaining == 0 {
+                return false;
+            }
+            remaining -= 1;
+            true
+        });
         self.dirty = true;
         self.revision = self.revision.wrapping_add(1);
     }
@@ -381,9 +413,30 @@ impl Archive {
         }
     }
 
-    pub fn identities(&self, file: &str) -> Vec<bota_proto::SeatIdentity> {
+    pub fn set_scope(&mut self, scope: Scope) {
+        if self.scope != scope {
+            self.scope = scope;
+            self.revision = self.revision.wrapping_add(1);
+            *self.cards.get_mut() = Default::default();
+        }
+    }
+
+    pub fn set_policy_limit(&mut self, limit: usize) {
+        if self.policy_limit != Some(limit) {
+            self.policy_limit = Some(limit);
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
+    pub fn visible_entries(&self) -> impl Iterator<Item = &Saved> {
         self.entries
             .iter()
+            .filter(|entry| self.scope.includes(entry.scope))
+            .take(self.policy_limit.unwrap_or(MAX_MATCHES).min(MAX_MATCHES))
+    }
+
+    pub fn identities(&self, file: &str) -> Vec<bota_proto::SeatIdentity> {
+        self.visible_entries()
             .find(|entry| entry.file.as_deref() == Some(file))
             .map_or_else(Vec::new, |entry| entry.card(&[]).players)
     }
@@ -391,8 +444,7 @@ impl Archive {
     /// The side and hero of every seat of the match recorded in `file`, where its metadata was
     /// read.
     pub fn heroes(&self, file: &str) -> Vec<(bota_proto::Team, bota_proto::HeroId)> {
-        self.entries
-            .iter()
+        self.visible_entries()
             .find(|entry| entry.file.as_deref() == Some(file))
             .and_then(|entry| entry.summary.as_ref())
             .map_or_else(Vec::new, |summary| {
@@ -408,8 +460,7 @@ impl Archive {
         let mut cache = self.cards.borrow_mut();
         if cache.revision != self.revision || cache.records != records {
             cache.cards = Arc::new(
-                self.entries
-                    .iter()
+                self.visible_entries()
                     .map(|entry| entry.card(records))
                     .collect(),
             );
@@ -423,12 +474,13 @@ impl Archive {
         self.revision
     }
 
+    #[cfg(test)]
     pub fn entries(&self) -> &[Saved] {
         &self.entries
     }
 
     pub fn find(&self, key: &str) -> Option<&Saved> {
-        self.entries.iter().find(|entry| entry.key == key)
+        self.visible_entries().find(|entry| entry.key == key)
     }
 
     /// No frame-by-frame writes: one bounded snapshot after a match or a library change.
@@ -467,8 +519,7 @@ impl super::core::MenuCore {
     /// Sandbox sessions never supply a fallback.
     pub fn last_played_hero(&self) -> Option<bota_proto::HeroId> {
         self.local_history
-            .entries
-            .iter()
+            .visible_entries()
             .find_map(Saved::owned_hero)
     }
 
@@ -535,6 +586,7 @@ mod tests {
             assert!(writer.push(&record, true));
         }
         Saved {
+            scope: crate::replays::Scope::Guest,
             key: "recorded".to_owned(),
             file: None,
             when: 100,
@@ -602,6 +654,7 @@ mod tests {
         let first = archive.cards(&[]);
         assert!(Arc::ptr_eq(&first, &archive.cards(&[])));
         let record = crate::replays::Record {
+            scope: crate::replays::Scope::Guest,
             name: "kept.brp".to_owned(),
             when: 100,
             bytes: crate::replays::MIN_BYTES,
@@ -648,7 +701,7 @@ mod tests {
         assert!(!Arc::ptr_eq(&first, &loaded));
     }
     #[test]
-    fn a_policy_sized_archive_never_reloads_more_than_the_library_keeps() {
+    fn an_archive_reload_shows_only_the_current_replay_policy_limit() {
         let directory = crate::test_support::scratch_path("archive_policy_limit");
         if directory.exists() {
             std::fs::remove_dir_all(&directory).unwrap();
@@ -675,9 +728,14 @@ mod tests {
             std::thread::yield_now();
         }
         assert_eq!(
-            core.local_history.entries.len(),
+            core.local_history.cards(core.library.records()).len(),
             25,
-            "loading respects the library policy"
+            "the displayed history respects the library policy"
+        );
+        assert_eq!(
+            core.local_history.entries.len(),
+            50,
+            "the archive remains available if the limit is raised"
         );
     }
 
@@ -700,7 +758,7 @@ mod tests {
             saved.is_ok(),
             "a failed blob must not prevent the small index save: {saved:?}"
         );
-        let mut restored = Archive::load(&store, 50);
+        let mut restored = Archive::load(&store);
         wait_loaded(&mut restored);
         let cards = restored.cards(&[]);
         assert_eq!(cards.len(), 1, "the history row survives the missing blob");
@@ -750,7 +808,7 @@ mod tests {
             50,
             "the byte cap never silently drops matches"
         );
-        let mut restored = Archive::load(&store, 50);
+        let mut restored = Archive::load(&store);
         wait_loaded(&mut restored);
         assert_eq!(restored.entries.len(), 50);
         let ids: std::collections::HashSet<_> = restored
@@ -895,7 +953,7 @@ mod tests {
         });
         archive.insert(bad, 100);
         archive.save(&store).unwrap();
-        let mut restored = Archive::load(&store, 50);
+        let mut restored = Archive::load(&store);
         wait_loaded(&mut restored);
         assert!(
             restored.entries.iter().any(|entry| entry.key == key),
@@ -955,6 +1013,7 @@ mod details_privacy_tests {
         );
         for owner in [None, Some(SlotId(0))] {
             let saved = Saved {
+                scope: crate::replays::Scope::Guest,
                 key: "unfinished".into(),
                 file: None,
                 when: 0,

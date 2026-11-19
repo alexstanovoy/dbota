@@ -250,7 +250,7 @@ impl MenuCore {
         match replay {
             Replay::File(path) => self.start(Launch::Replay(path)),
             Replay::Blob(bytes) => self.start(Launch::Blob(super::core::Blob(bytes))),
-            Replay::Saved(file) => self.open_kept(&file),
+            Replay::Saved(file) => self.open_listed(&file),
         }
         Ok(())
     }

@@ -578,6 +578,10 @@ pub struct MenuCore {
     #[cfg(test)]
     pause_service_events: bool,
     conn: Conn,
+    connection_generation: u64,
+    history_scope_generation: u64,
+    pub(super) replay_scope: Option<crate::replays::Scope>,
+    delete_form: Option<Form>,
     /// Whether an account is signed in: its session is kept, the link to the service is not
     /// (it is open only while something live is on it, and a request opens it again).
     pub(super) account: bool,
@@ -778,7 +782,8 @@ impl MenuCore {
             bots: prefs.allow_matchmaking_bots,
             ..Default::default()
         };
-        let local_history = super::local_matches::Archive::load(&store, library.policy().max_count);
+        let mut local_history = super::local_matches::Archive::load(&store);
+        local_history.set_policy_limit(library.policy().max_count);
         MenuCore {
             local_history,
             local_meta: Default::default(),
@@ -797,6 +802,10 @@ impl MenuCore {
             #[cfg(test)]
             pause_service_events: false,
             conn: Conn::Offline,
+            connection_generation: 0,
+            history_scope_generation: 0,
+            replay_scope: None,
+            delete_form: None,
             account: false,
             credentials: None,
             outbox: Vec::new(),
@@ -930,6 +939,9 @@ impl MenuCore {
 
     /// The button of the page's form that has the keyboard, if one has.
     pub fn button_focus(&self) -> Option<&Act> {
+        if matches!(self.confirm, Some(Confirm::DeleteReplay(_))) {
+            return self.delete_form.as_ref().and_then(Form::focused_button);
+        }
         self.active_lobby_form().focused_button()
     }
 
@@ -1102,6 +1114,7 @@ impl MenuCore {
     pub fn launch_failed(&mut self, why: &str) {
         self.launching = false;
         let left = self.on_screen.take();
+        self.replay_scope = None;
         self.reconnect = self.last_seat.take();
         self.page = self.rest_page(left);
         self.form = Form::new(self.form_kind(), &self.prefs);
@@ -1120,6 +1133,7 @@ impl MenuCore {
     /// there is no seat to take again.
     pub fn left_game(&mut self, why: Option<&str>, over: bool) {
         let left = self.on_screen.take();
+        self.replay_scope = None;
         self.keep_left(left);
         self.launching = false;
         self.status = None;
@@ -1215,6 +1229,7 @@ impl MenuCore {
 
     /// Opens the control connection to the service in the prefs.
     fn connect(&mut self) {
+        self.connection_generation = self.connection_generation.wrapping_add(1);
         self.tried_service = true;
         self.asked.clear();
         self.retry_at = None;
@@ -1345,6 +1360,7 @@ impl MenuCore {
 
     /// Closes the link, keeping what the view shows of a signed-in account.
     fn drop_link(&mut self) {
+        self.connection_generation = self.connection_generation.wrapping_add(1);
         self.list_cache.disconnected();
         match (&mut self.client, self.account) {
             (Some(client), true) => client.hang_up(),
@@ -1444,13 +1460,14 @@ impl MenuCore {
     fn read_service(&mut self) {
         let mut heard = false;
         for _ in 0..MAX_PER_FRAME {
+            let generation = self.connection_generation;
             let Some(client) = &mut self.client else {
                 break;
             };
             match client.poll() {
                 Ok(Some(incoming)) => {
                     heard = true;
-                    self.take(incoming);
+                    self.take(generation, incoming);
                 }
                 Ok(None) => break,
                 Err(err) => {
@@ -1523,12 +1540,39 @@ impl MenuCore {
         }
     }
 
-    fn take(&mut self, incoming: Incoming) {
+    fn take(&mut self, generation: u64, incoming: Incoming) {
+        if generation != self.connection_generation {
+            return;
+        }
         match incoming {
             Incoming::Reply { seq, result } => self.take_reply(seq, result),
             Incoming::Event(event) if self.account => self.event(event),
             Incoming::Event(_) => {}
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn deferred_reply(&self, seq: u32, reply: Reply) -> impl FnOnce(&mut Self) + use<> {
+        let generation = self.connection_generation;
+        move |menu| {
+            menu.take(
+                generation,
+                Incoming::Reply {
+                    seq,
+                    result: Ok(reply),
+                },
+            )
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn history_request_for_test(&mut self, seq: u32) {
+        self.track_request(seq, Asked::History);
+    }
+
+    #[cfg(test)]
+    pub(super) fn join_prompt_for_test(&mut self) {
+        self.ask_password(LobbyId(77), "Alice's private lobby".into());
     }
 
     fn take_reply(&mut self, seq: u32, result: Result<Reply, Error>) {
@@ -1562,12 +1606,18 @@ impl MenuCore {
                 self.lobby_resume_failed(lobby, error_text(&error))
             }
             (Ok(reply), Some(Asked::LobbyUi(request))) => self.lobby_save_replied(reply, request),
-            (Ok(Reply::Welcome { rulesets, .. }), _) => {
+            (Ok(Reply::Welcome { rulesets, .. }), None)
+                if self.conn == Conn::Connecting && seq == 1 =>
+            {
                 self.receive_lobby_catalogue(&rulesets);
                 self.welcomed();
             }
-            (Ok(reply), asked) => self.replied(reply, asked.unwrap_or(Asked::Other)),
-            (Err(error), asked) => self.refused_request(&error, asked.unwrap_or(Asked::Other)),
+            (Ok(reply), Some(asked)) => self.replied(reply, asked),
+            (Err(error), Some(asked)) => self.refused_request(&error, asked),
+            (Err(error), None) if self.conn == Conn::Connecting && seq == 1 => {
+                self.lost(ClientError::Refused(error));
+            }
+            _ => {}
         }
     }
 
@@ -1608,11 +1658,11 @@ impl MenuCore {
                 }
             }
             Reply::LoggedIn {
+                me,
                 session,
                 activities,
-                ..
-            } => {
-                self.received_login(session, activities);
+            } if matches!(asked, Asked::Login | Asked::Register | Asked::Resume) => {
+                self.received_login(me.id, session, activities);
             }
             Reply::Handoffs { list } => {
                 for handoff in list.into_iter().take(MAX_GAMES) {
@@ -1691,6 +1741,7 @@ impl MenuCore {
 
     fn received_login(
         &mut self,
+        account: AccountId,
         session: bota_radovid::proto::SessionToken,
         activities: bota_radovid::proto::Activities,
     ) {
@@ -1698,6 +1749,10 @@ impl MenuCore {
         self.conn = Conn::LoggedIn;
         let first = !self.account;
         self.account = true;
+        self.set_history_scope(crate::replays::Scope::account(
+            &self.prefs.service,
+            account.0,
+        ));
         if self.page == Page::Leaderboard {
             self.board.refresh();
         }
@@ -1900,7 +1955,11 @@ impl MenuCore {
     }
 
     pub(super) fn my_id(&self) -> Option<AccountId> {
-        self.client.as_ref().and_then(|c| c.me()).map(|me| me.id)
+        self.client
+            .as_ref()
+            .filter(|_| self.account)
+            .and_then(|c| c.me())
+            .map(|me| me.id)
     }
 
     fn ask_history(&mut self) {
@@ -2209,6 +2268,10 @@ impl MenuCore {
 
     /// Acts on what the player did.
     pub fn act(&mut self, act: Act) {
+        if matches!(self.confirm, Some(Confirm::DeleteReplay(_))) {
+            self.act_delete_dialog(act);
+            return;
+        }
         if self.route_lobby_overlay(&act) {
             return;
         }
@@ -2436,17 +2499,43 @@ impl MenuCore {
         None
     }
 
+    fn act_delete_dialog(&mut self, act: Act) {
+        match act {
+            Act::Submit => {
+                let answer = self
+                    .delete_form
+                    .as_ref()
+                    .and_then(Form::focused_button)
+                    .cloned();
+                if let Some(answer) = answer {
+                    self.act_library(answer);
+                }
+            }
+            Act::NextField => self.keyboard().next(),
+            Act::PreviousField => self.keyboard().previous(),
+            Act::Answer(_) => {
+                self.act_library(act);
+            }
+            Act::Back => {
+                self.act_library(Act::Answer(false));
+            }
+            Act::Logout => self.logout(),
+            _ => {}
+        }
+    }
+
     fn act_library(&mut self, act: Act) -> Option<Act> {
         match act {
             Act::Demo(hero) => self.start_demo(bota_proto::HeroId(hero)),
             Act::OpenReplay(name) => self.open_listed(&name),
             Act::DeleteReplay(name) => {
-                if self
-                    .library
-                    .records()
-                    .iter()
-                    .any(|record| record.name == name)
-                {
+                if self.confirm.is_none() && self.library.visible(&name).is_some() {
+                    let mut form = Form::new(FormKind::None, &self.prefs);
+                    form.set_controls(vec![
+                        super::form::Item::Button(Act::Answer(false)),
+                        super::form::Item::Button(Act::Answer(true)),
+                    ]);
+                    self.delete_form = Some(form);
                     self.confirm = Some(Confirm::DeleteReplay(name));
                 }
             }
@@ -2465,18 +2554,21 @@ impl MenuCore {
             }
             Act::Quit if !cfg!(target_arch = "wasm32") => self.confirm = Some(Confirm::Quit),
             Act::Quit => {}
-            Act::Answer(yes) => match self.confirm.take() {
-                Some(Confirm::Quit) if yes => self.quit = true,
-                Some(Confirm::Leave) if yes => self.leave = true,
-                Some(Confirm::LeaveGame) if yes => {
-                    self.last_seat = None;
-                    self.leave_game = true;
+            Act::Answer(yes) => {
+                self.delete_form = None;
+                match self.confirm.take() {
+                    Some(Confirm::Quit) if yes => self.quit = true,
+                    Some(Confirm::Leave) if yes => self.leave = true,
+                    Some(Confirm::LeaveGame) if yes => {
+                        self.last_seat = None;
+                        self.leave_game = true;
+                    }
+                    Some(Confirm::LeaveSeat) if yes => self.leave_seat(),
+                    Some(Confirm::Rehost(lan)) if yes => self.host(lan),
+                    Some(Confirm::DeleteReplay(name)) if yes => self.library.delete(&name),
+                    _ => {}
                 }
-                Some(Confirm::LeaveSeat) if yes => self.leave_seat(),
-                Some(Confirm::Rehost(lan)) if yes => self.host(lan),
-                Some(Confirm::DeleteReplay(name)) if yes => self.library.delete(&name),
-                _ => {}
-            },
+            }
             Act::Back => self.back(),
             other => return Some(other),
         }
@@ -2683,6 +2775,11 @@ impl MenuCore {
     fn clear_account(&mut self) {
         self.store.remove(Entry::Session);
         self.account = false;
+        self.set_history_scope(crate::replays::Scope::Guest);
+        if matches!(self.on_screen, Some(OnScreen::Match(_) | OnScreen::Demo(_))) {
+            self.close_private_game();
+        }
+        self.join_prompt = None;
         self.account_profile = None;
         self.list_cache.clear();
         self.board = Default::default();
@@ -2724,6 +2821,39 @@ impl MenuCore {
         self.link_lost = false;
     }
 
+    fn set_history_scope(&mut self, scope: crate::replays::Scope) {
+        if self.library.scope() == scope {
+            return;
+        }
+        self.history_scope_generation = self.history_scope_generation.wrapping_add(1);
+        self.shelf = Default::default();
+        self.clear_browser_replay_state();
+        self.local_history.set_scope(scope);
+        self.library.set_scope(scope);
+        self.history_filter = Default::default();
+        self.history_picker = None;
+        self.history_page = 0;
+        self.confirm = None;
+        self.delete_form = None;
+        if self.replay_scope.take().is_some_and(|old| old != scope)
+            && self.on_screen == Some(OnScreen::Replay)
+        {
+            self.close_private_game();
+        }
+    }
+
+    fn close_private_game(&mut self) {
+        if self.launch.take().is_some() {
+            self.left_game(None, true);
+        } else {
+            self.leave = true;
+        }
+    }
+
+    pub(crate) fn history_scope_generation(&self) -> u64 {
+        self.history_scope_generation
+    }
+
     fn enter(&mut self, id: MatchId, watch: bool) {
         let handoff = self
             .games
@@ -2740,6 +2870,11 @@ impl MenuCore {
 
     /// The form with the keyboard: the password dialog's while it is up, else the page's.
     pub(super) fn keyboard(&mut self) -> &mut Form {
+        if matches!(self.confirm, Some(Confirm::DeleteReplay(_)))
+            && let Some(form) = &mut self.delete_form
+        {
+            return form;
+        }
         if self.lobby_ui.dialog.is_some() {
             return &mut self.lobby_ui.dialog_form;
         }
@@ -3318,6 +3453,7 @@ mod result_overlay_tests {
             let key = service_key(&core.prefs.service, 7);
             core.local_history.insert(
                 Saved {
+                    scope: crate::replays::Scope::Guest,
                     key,
                     file: None,
                     when: 0,

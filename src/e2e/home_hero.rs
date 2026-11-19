@@ -111,20 +111,24 @@ fn assert_empty_stage(client: &mut Client) {
 
 fn history_case(label: &str, played: bool, spectated: bool, corrupt: bool) {
     let folder = RecordingFolder::new(label);
-    let mut index = String::from("dbota-replays 1\n");
+    let mut index = String::from("dbota-replays 2\n");
     if played {
         let bytes = record(&folder.0, HeroId::SHADOW_FIEND, "played.brp");
-        index.push_str(&format!("r\t100\t{bytes}\t-\tlocal\tplayed.brp\t\t\t0\n"));
+        index.push_str(&format!(
+            "r\t100\t{bytes}\t-\tlocal\tplayed.brp\t\t\t0\t-\n"
+        ));
     }
     if spectated {
         let bytes = record(&folder.0, HeroId::PUDGE, "spectated.brp");
-        index.push_str(&format!("r\t200\t{bytes}\t-\tfile\tspectated.brp\t\t\t-\n"));
+        index.push_str(&format!(
+            "r\t200\t{bytes}\t-\tfile\tspectated.brp\t\t\t-\t-\n"
+        ));
     }
     if corrupt {
         std::fs::write(folder.0.join("corrupt.brp"), [0; 2048]).expect("corrupt recording");
         std::fs::write(folder.0.join("corrupt.meta"), b"unreadable metadata")
             .expect("corrupt sidecar");
-        index.push_str("r\t300\t2048\t-\tlocal\tcorrupt.brp\t\t\t0\n");
+        index.push_str("r\t300\t2048\t-\tlocal\tcorrupt.brp\t\t\t0\t-\n");
     }
     std::fs::write(folder.0.join("index.txt"), index).expect("explicit personal attribution");
     let mut client = Client::run(&["--window", "1440x900"]);
@@ -415,13 +419,13 @@ fn home_uses_the_last_local_games_hero_and_releases_the_stage_when_a_match_opens
     let _ = std::fs::remove_dir_all(&directory);
     let _folder = RecordingFolder(directory.clone());
     std::fs::create_dir_all(&directory).expect("private replay folder");
-    let mut index = String::from("dbota-replays 1\n");
+    let mut index = String::from("dbota-replays 2\n");
     for (when, hero, name, logical) in [
         (100, HeroId::SHADOW_FIEND, "sf.brp", "hero.nevermore.model"),
         (200, HeroId::PUDGE, "pudge.brp", "hero.pudge.model"),
     ] {
         let bytes = record(&directory, hero, name);
-        index.push_str(&format!("r\t{when}\t{bytes}\t-\tlocal\t{name}\t\t\t0\n"));
+        index.push_str(&format!("r\t{when}\t{bytes}\t-\tlocal\t{name}\t\t\t0\t-\n"));
         std::fs::write(directory.join("index.txt"), &index).expect("the explicit local owner");
         crate::main_menu::tests::install_local_library(
             &mut client.world_mut().non_send_mut::<MenuCore>(),

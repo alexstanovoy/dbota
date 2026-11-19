@@ -36,7 +36,7 @@ pub enum Summary {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Stamp {
     pub len: u64,
-    pub modified: std::time::SystemTime,
+    pub modified: u64,
 }
 
 /// Why a replay with no match in it has nothing to watch.
@@ -254,6 +254,8 @@ impl Sides {
 )]
 #[derive(Default)]
 pub struct Shelf {
+    #[cfg(target_arch = "wasm32")]
+    browser: std::collections::HashMap<String, (Stamp, Option<String>)>,
     known: std::collections::HashMap<PathBuf, (Stamp, Summary)>,
     #[cfg(not(target_arch = "wasm32"))]
     asked: Option<std::sync::mpsc::Sender<(PathBuf, Stamp)>>,
@@ -266,6 +268,31 @@ pub struct Shelf {
     allow(dead_code, reason = "a browser reads no replay files")
 )]
 impl Shelf {
+    #[cfg(target_arch = "wasm32")]
+    pub fn browser_status(&self, name: &str, stamp: Stamp) -> Option<Option<&str>> {
+        let (seen, problem) = self.browser.get(name)?;
+        (*seen == stamp).then_some(problem.as_deref())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn note_browser(&mut self, name: &str, stamp: Stamp, problem: Option<String>) {
+        if self.browser.len() >= 2000 {
+            self.browser.clear();
+        }
+        let prior = self.browser_status(name, stamp);
+        if problem.is_some() || !matches!(prior, Some(Some(_))) {
+            self.browser.insert(name.to_owned(), (stamp, problem));
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn problem(&self, path: &Path, stamp: Stamp) -> Option<&str> {
+        match self.known.get(path) {
+            Some((seen, Summary::Broken(why))) if *seen == stamp => Some(why),
+            _ => None,
+        }
+    }
+
     /// What is known of `path` as it is now; a file not read yet (or changed
     /// since) is asked for and shows as being read.
     pub fn summary(&mut self, path: &Path, stamp: Stamp) -> Summary {

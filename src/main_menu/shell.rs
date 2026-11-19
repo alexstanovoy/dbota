@@ -443,6 +443,9 @@ fn guard(
         Source::Replay(player) if core.replay_from_menu() => player.error().map(|e| e.to_string()),
         _ => None,
     };
+    if let Some(error) = &unreadable {
+        core.kept_replay_failed(error);
+    }
     let lost = (game.lost && !game.source.is_redialing()) || unreadable.is_some();
     let why = lost.then(|| match &unreadable {
         Some(err) => format!("The replay cannot be read: {err}"),

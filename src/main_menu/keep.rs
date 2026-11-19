@@ -51,6 +51,7 @@ struct Fetch {
 /// The file a local game's server writes its replay into.
 #[cfg(not(target_arch = "wasm32"))]
 struct Recording {
+    scope: replays::Scope,
     owner: Option<bota_proto::SlotId>,
     path: std::path::PathBuf,
     metadata_only: bool,
@@ -68,6 +69,10 @@ pub(super) struct Keeper {
     /// A kept replay asked for whose bytes are to be opened when read (a browser's).
     #[cfg(target_arch = "wasm32")]
     open_name: Option<String>,
+    #[cfg(target_arch = "wasm32")]
+    playing_name: Option<String>,
+    #[cfg(target_arch = "wasm32")]
+    probe_pending: Option<String>,
     /// Whether the matches waited for were looked through since the last sign-in.
     swept: bool,
     /// The service that said it keeps no replays of its matches.
@@ -100,6 +105,7 @@ impl MenuCore {
     pub fn set_replay_policy(&mut self, policy: replays::Policy) {
         if self.library.policy() != policy {
             self.library.set_policy(policy);
+            self.local_history.set_policy_limit(policy.max_count);
         }
     }
 
@@ -108,6 +114,7 @@ impl MenuCore {
         self.meta_start(launch);
         match launch {
             Launch::Seat(handoff) if !self.service_keeps_none() => self.library.want(Wanted {
+                scope: self.library.scope(),
                 match_id: handoff.match_id.0,
                 since: replays::now(),
                 mode: handoff.ruleset.0.clone(),
@@ -136,6 +143,7 @@ impl MenuCore {
             .clone()
             .or_else(|| metadata.clone())
             .map(|path| Recording {
+                scope: self.library.scope(),
                 path,
                 metadata_only: replay.is_none(),
                 mode,
@@ -181,18 +189,27 @@ impl MenuCore {
             && let Some(recording) = self.keeper.recording.take()
         {
             if recording.metadata_only || !self.library.keeping() {
-                self.local_meta
-                    .request_temporary(recording.path, recording.mode, recording.owner);
+                self.local_meta.request_temporary(
+                    recording.path,
+                    recording.mode,
+                    recording.owner,
+                    recording.scope,
+                );
             } else {
                 let path = recording.path;
-                let name = self
-                    .library
-                    .adopt(path.clone(), recording.mode, recording.owner);
+                let name = self.library.adopt(
+                    path.clone(),
+                    recording.mode,
+                    recording.owner,
+                    recording.scope,
+                );
                 self.adopted_result_replay(&path, name);
             }
         }
         #[cfg(target_arch = "wasm32")]
-        let _ = left;
+        if left == Some(OnScreen::Replay) {
+            self.keeper.playing_name = None;
+        }
     }
 
     /// A match of the account ended: its replay is fetched if it is waited for.
@@ -200,7 +217,6 @@ impl MenuCore {
         if self
             .library
             .wanted()
-            .iter()
             .any(|w| w.match_id == result.match_id.0)
         {
             self.queue_fetch(result.match_id, Some(result.clone()), false);
@@ -219,7 +235,16 @@ impl MenuCore {
         self.keeper.open_match = None;
         self.keeper.not_kept = None;
         self.keeper.swept = false;
-        self.library.forget_wanted();
+        self.clear_browser_replay_state();
+    }
+
+    pub(super) fn clear_browser_replay_state(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.keeper.open_name = None;
+            self.keeper.playing_name = None;
+            self.keeper.probe_pending = None;
+        }
     }
 
     fn keep_sweep(&mut self) {
@@ -233,7 +258,6 @@ impl MenuCore {
         let ended: Vec<MatchId> = self
             .library
             .wanted()
-            .iter()
             .map(|w| MatchId(w.match_id))
             .filter(|id| !self.games.iter().any(|g| g.match_id == *id))
             .collect();
@@ -280,7 +304,6 @@ impl MenuCore {
         let mode = self
             .library
             .wanted()
-            .iter()
             .find(|w| w.match_id == match_id.0)
             .map(|w| w.mode.clone())
             .or_else(|| result.as_ref().map(|r| r.ruleset.0.clone()))
@@ -329,7 +352,7 @@ impl MenuCore {
 
     fn kept(&mut self, notice: Notice) {
         match notice {
-            Notice::Saved(record) => {
+            Notice::Saved(record) if self.library.scope().includes(record.scope) => {
                 if let Some(id) = record.match_id {
                     self.library.unwant(id);
                 }
@@ -342,7 +365,11 @@ impl MenuCore {
                     self.open_kept(&record.name);
                 }
             }
-            Notice::NotSaved { match_id, why } => {
+            Notice::NotSaved {
+                scope,
+                match_id,
+                why,
+            } if self.library.scope().includes(scope) => {
                 bevy::log::info!("replay not kept: {why}");
                 if let Some(id) = match_id {
                     // A replay of no match, or one the player does not want, is not fetched again.
@@ -354,17 +381,50 @@ impl MenuCore {
             }
             #[cfg(target_arch = "wasm32")]
             Notice::Loaded { name, bytes } => {
-                if self.keeper.open_name.take_if(|n| *n == name).is_some() {
+                if self.keeper.open_name.take_if(|n| *n == name).is_some()
+                    && self.library.visible(&name).is_some()
+                    && !self.in_game()
+                    && !self.launching
+                {
                     self.start(Launch::Blob(Blob(Arc::from(bytes))));
+                    self.replay_scope = Some(self.library.scope());
+                    self.keeper.playing_name = Some(name);
                 }
             }
             #[cfg(target_arch = "wasm32")]
             Notice::LoadFailed { name, why } => {
+                self.note_browser_replay(&name, Some(why.clone()));
                 if self.keeper.open_name.take_if(|n| *n == name).is_some() {
                     self.tell(format!("The replay cannot be opened: {why}"), true);
                 }
             }
+            #[cfg(target_arch = "wasm32")]
+            Notice::Probed { name, problem }
+                if self.keeper.probe_pending.take_if(|n| *n == name).is_some() =>
+            {
+                self.note_browser_replay(&name, problem);
+            }
+            _ => {}
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn note_browser_replay(&mut self, name: &str, problem: Option<String>) {
+        if let Some(record) = self.library.visible(name) {
+            if problem.is_some() {
+                bevy::log::info!("replays: a kept replay is unreadable");
+            }
+            self.shelf.note_browser(name, stamp_of(record), problem);
+        }
+    }
+
+    pub(super) fn kept_replay_failed(&mut self, why: &str) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(name) = self.keeper.playing_name.take() {
+            self.note_browser_replay(&name, Some(super::text::line(why, super::text::MESSAGE)));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = why;
     }
 
     /// One piece of a replay arrived: kept and the next asked for, or the whole handed over.
@@ -431,6 +491,7 @@ impl MenuCore {
         if let Some(metadata) = metadata {
             self.local_history.insert(
                 super::local_matches::Saved {
+                    scope: self.library.scope(),
                     key: super::local_matches::service_key(&want.service, match_id.0),
                     file: saved.as_ref().map(|record| record.name.clone()),
                     when: saved
@@ -497,10 +558,18 @@ impl MenuCore {
 
     /// Opens a kept replay.
     pub(super) fn open_kept(&mut self, name: &str) {
+        if self.library.visible(name).is_none() {
+            return;
+        }
+        if self.in_game() || self.launching {
+            self.tell("Disconnect from the game you are in first".to_owned(), true);
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(path) = self.library.path(name) {
                 self.start(Launch::Replay(path));
+                self.replay_scope = Some(self.library.scope());
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -513,19 +582,23 @@ impl MenuCore {
     /// WATCH REPLAY of a finished match: the kept replay, else fetched from the service now.
     pub(super) fn watch_replay(&mut self, match_id: MatchId) {
         if let Some(name) = self.library.kept(match_id.0).map(|r| r.name.clone()) {
-            self.open_kept(&name);
+            self.open_listed(&name);
             return;
         }
+        let result = self
+            .history
+            .iter()
+            .chain(&self.results)
+            .find(|result| result.match_id == match_id)
+            .cloned();
+        let Some(result) = result.filter(|_| self.logged_in()) else {
+            return;
+        };
         if self.library.standing() == replays::Standing::Unavailable {
             self.tell("This client keeps no replays".to_owned(), true);
             return;
         }
-        let result = self
-            .results
-            .iter()
-            .find(|r| r.match_id == match_id)
-            .cloned();
-        self.queue_fetch(match_id, result, true);
+        self.queue_fetch(match_id, Some(result), true);
     }
 
     /// Opens the replay listed under `name`.
@@ -539,7 +612,6 @@ impl MenuCore {
         else {
             return;
         };
-        #[cfg(not(target_arch = "wasm32"))]
         if let super::replay_info::Summary::Broken(why) = self.summary_of(&record) {
             self.tell(format!("That replay cannot be watched: {why}"), true);
             return;
@@ -558,11 +630,40 @@ impl MenuCore {
                 self.shelf.summary(&path, stamp_of(record));
             }
         }
+        #[cfg(target_arch = "wasm32")]
+        if self.keeper.probe_pending.is_none()
+            && let Some(record) = self.library.records().iter().find(|record| {
+                self.shelf
+                    .browser_status(&record.name, stamp_of(record))
+                    .is_none()
+            })
+        {
+            let name = record.name.clone();
+            self.library.probe(&name);
+            self.keeper.probe_pending = Some(name);
+        }
+    }
+
+    pub(super) fn replay_problem(&self, record: &replays::Record) -> Option<String> {
+        let stamp = stamp_of(record);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = self.library.path(&record.name)?;
+            self.shelf.problem(&path, stamp).map(str::to_owned)
+        }
+        #[cfg(target_arch = "wasm32")]
+        self.shelf
+            .browser_status(&record.name, stamp)
+            .flatten()
+            .map(str::to_owned)
     }
 
     /// The summary of a listed replay.
     pub(super) fn summary_of(&self, record: &replays::Record) -> super::replay_info::Summary {
         use super::replay_info::Summary;
+        if let Some(why) = self.replay_problem(record) {
+            return Summary::Broken(why);
+        }
         let identities = self.local_history.identities(&record.name);
         if !record.players.is_empty() || !identities.is_empty() {
             let sides = if record.players.is_empty() {
@@ -589,11 +690,10 @@ impl MenuCore {
 }
 
 /// The identity of a listed file, which a change of reads anew.
-#[cfg(not(target_arch = "wasm32"))]
 fn stamp_of(record: &replays::Record) -> super::replay_info::Stamp {
     super::replay_info::Stamp {
         len: record.bytes,
-        modified: std::time::UNIX_EPOCH + std::time::Duration::from_secs(record.when),
+        modified: record.when,
     }
 }
 

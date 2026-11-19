@@ -6,8 +6,10 @@
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use super::backend::{Backend, Done, Op};
-use super::index::{Index, MAX_BYTES, MAX_TEXT, MIN_BYTES, Policy, Record, Wanted, clean};
-use super::name;
+use super::index::{
+    Index, MAX_BYTES, MAX_ROWS, MAX_TEXT, MAX_WANTED, MIN_BYTES, Policy, Record, Wanted, clean,
+};
+use super::{Scope, name};
 
 /// What a finished request tells the menu.
 #[derive(Debug, PartialEq, Eq)]
@@ -15,12 +17,21 @@ pub enum Notice {
     /// A replay is kept.
     Saved(Record),
     /// A replay could not be kept: of which match, and why.
-    NotSaved { match_id: Option<u64>, why: String },
+    NotSaved {
+        scope: Scope,
+        match_id: Option<u64>,
+        why: String,
+    },
     /// A replay's bytes, asked for with [`Library::fetch`].
     #[cfg(target_arch = "wasm32")]
     Loaded { name: String, bytes: Vec<u8> },
     #[cfg(target_arch = "wasm32")]
     LoadFailed { name: String, why: String },
+    #[cfg(target_arch = "wasm32")]
+    Probed {
+        name: String,
+        problem: Option<String>,
+    },
 }
 
 /// Where the library stands with its store.
@@ -62,10 +73,13 @@ pub struct Library {
     reply: Sender<Done>,
     done: Receiver<Done>,
     index: Index,
+    scope: Scope,
+    #[cfg(target_arch = "wasm32")]
+    generation: u64,
+    visible: Vec<Record>,
+    pending_names: std::collections::HashSet<String>,
     policy: Policy,
     standing: Standing,
-    /// Sign-out can happen before the browser has finished reading the index.
-    forget_loaded_wants: bool,
     /// Saves asked for before the index was read.
     waiting: Vec<(Record, Vec<u8>)>,
     notices: Vec<Notice>,
@@ -83,9 +97,13 @@ impl Library {
             reply,
             done,
             index: Index::default(),
+            scope: Scope::Guest,
+            #[cfg(target_arch = "wasm32")]
+            generation: 0,
+            visible: Vec::new(),
+            pending_names: Default::default(),
             policy: Policy::default(),
             standing: Standing::Loading,
-            forget_loaded_wants: false,
             waiting: Vec::new(),
             notices: Vec::new(),
             changed: false,
@@ -116,12 +134,46 @@ impl Library {
         self.standing
     }
 
-    pub fn records(&self) -> &[Record] {
-        &self.index.records
+    pub fn scope(&self) -> Scope {
+        self.scope
     }
 
-    pub fn wanted(&self) -> &[Wanted] {
-        &self.index.wanted
+    pub fn set_scope(&mut self, scope: Scope) {
+        self.scope = scope;
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        self.rebuild_view();
+        if self.standing == Standing::Ready {
+            bevy::log::info!("replays: {} kept", self.records().len());
+        }
+    }
+
+    fn rebuild_view(&mut self) {
+        self.visible.clear();
+        self.visible.extend(
+            self.index
+                .records
+                .iter()
+                .filter(|record| self.scope.includes(record.scope))
+                .cloned(),
+        );
+    }
+
+    pub fn records(&self) -> &[Record] {
+        &self.visible
+    }
+
+    pub fn visible(&self, name: &str) -> Option<&Record> {
+        self.records().iter().find(|record| record.name == name)
+    }
+
+    pub fn wanted(&self) -> impl Iterator<Item = &Wanted> {
+        self.index
+            .wanted
+            .iter()
+            .filter(|wanted| self.scope.includes(wanted.scope))
     }
 
     pub fn policy(&self) -> Policy {
@@ -137,9 +189,7 @@ impl Library {
     /// The file of a kept replay, where replays are files.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn path(&self, name: &str) -> Option<std::path::PathBuf> {
-        self.index
-            .find(name)
-            .and_then(|r| self.backend.path(&r.name))
+        self.visible(name).and_then(|r| self.backend.path(&r.name))
     }
 
     /// The folder replays are kept in, where they are files.
@@ -148,12 +198,16 @@ impl Library {
     }
 
     pub fn kept(&self, match_id: u64) -> Option<&Record> {
-        self.index.of_match(match_id)
+        self.records().iter().find(|r| r.match_id == Some(match_id))
     }
 
     /// Notes a match whose replay is to be fetched, even after a restart.
     pub fn want(&mut self, wanted: Wanted) {
-        if self.standing == Standing::Unavailable || !self.policy.keep {
+        if self.standing == Standing::Unavailable
+            || !self.policy.keep
+            || !matches!(self.scope, Scope::Account(_))
+            || wanted.scope != self.scope
+        {
             return;
         }
         self.index.want(wanted);
@@ -161,17 +215,8 @@ impl Library {
     }
 
     pub fn unwant(&mut self, match_id: u64) {
-        self.index.unwant(match_id);
+        self.index.unwant(self.scope, match_id);
         self.changed = true;
-    }
-
-    /// Drops the previous account's downloads while leaving its saved files on this device.
-    pub fn forget_wanted(&mut self) {
-        self.forget_loaded_wants = self.standing == Standing::Loading;
-        if !self.index.wanted.is_empty() {
-            self.index.wanted.clear();
-            self.changed = true;
-        }
     }
 
     /// Whether a replay is saved at all now.
@@ -179,26 +224,46 @@ impl Library {
         self.policy.keep && self.standing != Standing::Unavailable
     }
 
+    fn index_has_room(&self) -> bool {
+        self.index
+            .records
+            .len()
+            .saturating_add(self.pending_names.len())
+            < MAX_ROWS - MAX_WANTED
+    }
+
     /// Keeps a replay, unless the player turned saving off or it holds no match.
     pub fn save(&mut self, saving: Saving) -> Option<Record> {
         let match_id = saving.match_id;
         if self.standing == Standing::Unavailable || (!self.policy.keep && !saving.explicit) {
             self.notices.push(Notice::NotSaved {
+                scope: self.scope,
                 match_id,
                 why: "saving replays is off".to_owned(),
             });
             return None;
         }
         let len = saving.bytes.len() as u64;
-        if let Some(why) = unworthy(len) {
+        let problem = if self.index_has_room() {
+            unworthy(len)
+        } else {
+            Some("the replay index is full")
+        };
+        if let Some(why) = problem {
             self.notices.push(Notice::NotSaved {
+                scope: self.scope,
                 match_id,
                 why: why.to_owned(),
             });
             return None;
         }
         // Replays saved in one second still have an order: the later is the newer.
-        let when = name::now().max(self.index.records.first().map_or(0, |r| r.when + 1));
+        let when = name::now().max(
+            self.index
+                .records
+                .first()
+                .map_or(0, |r| r.when.saturating_add(1)),
+        );
         let mut record = self.record(
             &saving.mode,
             match_id,
@@ -208,6 +273,8 @@ impl Library {
             &saving.outcome,
         );
         record.owner = saving.owner;
+        record.scope = self.scope;
+        self.pending_names.insert(record.name.clone());
         let saved = record.clone();
         match self.standing {
             Standing::Ready => self.backend.run(
@@ -229,6 +296,7 @@ impl Library {
         from: std::path::PathBuf,
         mode: &str,
         owner: Option<bota_proto::SlotId>,
+        scope: Scope,
     ) -> Option<String> {
         let len = std::fs::metadata(&from).map_or(0, |m| m.len());
         if !self.keeping() || len < MIN_BYTES {
@@ -236,8 +304,14 @@ impl Library {
             let _ = std::fs::remove_file(&from);
             return None;
         }
+        if !self.index_has_room() {
+            bevy::log::warn!("The replay index is full; the recording has been retained");
+            return None;
+        }
         let mut record = self.record(mode, None, name::now(), len, "", "");
         record.owner = owner;
+        record.scope = scope;
+        self.pending_names.insert(record.name.clone());
         let name = record.name.clone();
         self.backend
             .run(Op::Adopt { record, from }, self.reply.clone());
@@ -254,9 +328,10 @@ impl Library {
         outcome: &str,
     ) -> Record {
         let file = name::unused(name::file_name(when, mode, match_id), |n| {
-            self.index.find(n).is_some()
+            self.index.find(n).is_some() || self.pending_names.contains(n)
         });
         Record {
+            scope: self.scope,
             name: file,
             when,
             bytes,
@@ -271,9 +346,24 @@ impl Library {
     /// Asks for a kept replay's bytes; they come as [`Notice::Loaded`].
     #[cfg(target_arch = "wasm32")]
     pub fn fetch(&mut self, name: &str) {
+        self.get(name, false);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn probe(&mut self, name: &str) {
+        self.get(name, true);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn get(&self, name: &str, prefix: bool) {
+        if self.visible(name).is_none() {
+            return;
+        }
         self.backend.run(
             Op::Get {
                 name: name.to_owned(),
+                prefix,
+                generation: self.generation,
             },
             self.reply.clone(),
         );
@@ -281,7 +371,8 @@ impl Library {
 
     /// Forgets a replay and its file, as the pruning does, at the player's word.
     pub fn delete(&mut self, name: &str) {
-        if self.index.remove(name) {
+        if self.visible(name).is_some() && self.index.remove(name) {
+            self.rebuild_view();
             self.backend.run(
                 Op::Remove {
                     names: vec![name.to_owned()],
@@ -318,17 +409,15 @@ impl Library {
                 // Matches noted while the index was being read stay noted.
                 let early = std::mem::take(&mut self.index.wanted);
                 self.index = index.map_or_else(Index::default, |t| Index::parse(&t));
-                if std::mem::take(&mut self.forget_loaded_wants) {
-                    self.index.wanted.clear();
-                }
                 for wanted in early {
                     self.index.want(wanted);
                 }
                 self.index.reconcile(&files);
                 self.index.expire(name::now());
-                let dropped = self.index.prune(&self.policy);
+                let dropped = self.index.prune(&self.policy, self.scope);
+                self.rebuild_view();
                 self.standing = Standing::Ready;
-                bevy::log::info!("replays: {} kept", self.index.records.len());
+                bevy::log::info!("replays: {} kept", self.records().len());
                 if !dropped.is_empty() {
                     self.backend
                         .run(Op::Remove { names: dropped }, self.reply.clone());
@@ -343,8 +432,10 @@ impl Library {
                 record,
                 error: None,
             } => {
+                self.pending_names.remove(&record.name);
                 let dropped = self.index.insert(record.clone(), &self.policy);
-                bevy::log::info!("replays: {} kept", self.index.records.len());
+                self.rebuild_view();
+                bevy::log::info!("replays: {} kept", self.records().len());
                 self.write_index();
                 if !dropped.is_empty() {
                     self.backend
@@ -355,20 +446,42 @@ impl Library {
             Done::Put {
                 record,
                 error: Some(why),
-            } => self.notices.push(Notice::NotSaved {
-                match_id: record.match_id,
-                why,
-            }),
+            } => {
+                self.pending_names.remove(&record.name);
+                self.notices.push(Notice::NotSaved {
+                    scope: record.scope,
+                    match_id: record.match_id,
+                    why,
+                });
+            }
             #[cfg(target_arch = "wasm32")]
-            Done::Got { name, result } => self.notices.push(match result {
-                Ok(bytes) => Notice::Loaded { name, bytes },
-                Err(why) => Notice::LoadFailed { name, why },
-            }),
+            Done::Got {
+                name,
+                generation,
+                prefix,
+                result,
+            } => {
+                if generation == self.generation && self.visible(&name).is_some() {
+                    self.notices.push(if prefix {
+                        let problem = match result {
+                            Ok(bytes) => super::probe::problem(bytes).err().map(str::to_owned),
+                            Err(why) => Some(why),
+                        };
+                        Notice::Probed { name, problem }
+                    } else {
+                        match result {
+                            Ok(bytes) => Notice::Loaded { name, bytes },
+                            Err(why) => Notice::LoadFailed { name, why },
+                        }
+                    });
+                }
+            }
             Done::Failed(why) => bevy::log::warn!("replays: {why}"),
             Done::Unavailable(why) => {
                 bevy::log::warn!("replays are not kept: {why}");
                 self.standing = Standing::Unavailable;
                 self.waiting.clear();
+                self.pending_names.clear();
             }
         }
     }
