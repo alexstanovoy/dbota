@@ -79,10 +79,7 @@ impl Facts {
             attack_range: unit.attack_range,
             ranged: unit.projectile_speed.is_some(),
             health: (
-                unit.max_hp
-                    + (attributes.strength
-                        * bota_proto::Fixed::from_int(bota_core::rules::HP_PER_STRENGTH))
-                    .to_int(),
+                unit.max_hp + bota_core::strength_health(attributes.strength),
                 per_second(
                     unit.hp_regen,
                     bota_core::rules::HP_REGEN_PER_STRENGTH,
@@ -90,10 +87,7 @@ impl Facts {
                 ),
             ),
             mana: (
-                unit.max_mana
-                    + (attributes.intelligence
-                        * bota_proto::Fixed::from_int(bota_core::rules::MANA_PER_INTELLIGENCE))
-                    .to_int(),
+                unit.max_mana + bota_core::intelligence_mana(attributes.intelligence),
                 per_second(
                     unit.mana_regen,
                     bota_core::rules::MANA_REGEN_PER_INTELLIGENCE,

@@ -884,7 +884,8 @@ fn gives(k: u8, total: f32) -> Vec<(&'static str, String)> {
         0 => vec![
             (
                 "strength_hp",
-                ((total * rules::HP_PER_STRENGTH as f32).floor() as i32).to_string(),
+                // The server pays for whole points of strength (`bota_core::whole_points`).
+                (((total + 0.01).floor() as i32) * rules::HP_PER_STRENGTH).to_string(),
             ),
             (
                 "strength_hp_regen",
@@ -904,7 +905,8 @@ fn gives(k: u8, total: f32) -> Vec<(&'static str, String)> {
         _ => vec![
             (
                 "intelligence_mana",
-                ((total * rules::MANA_PER_INTELLIGENCE as f32).floor() as i32).to_string(),
+                // And of intelligence.
+                (((total + 0.01).floor() as i32) * rules::MANA_PER_INTELLIGENCE).to_string(),
             ),
             (
                 "intelligence_mana_regen",

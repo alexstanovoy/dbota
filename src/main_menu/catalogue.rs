@@ -523,14 +523,8 @@ fn combat(kit: &mut Kit, root: Entity, hero: &bota_core::HeroDef) {
         unit.attack_speed + bota_core::agility_attack_speed(unit.attributes),
     );
     let armor = unit.armor as f32 + bota_core::agility_armor(unit.attributes).to_f32();
-    let health = unit.max_hp
-        + (unit.attributes.strength
-            * bota_proto::Fixed::from_int(bota_core::rules::HP_PER_STRENGTH))
-        .to_int();
-    let mana = unit.max_mana
-        + (unit.attributes.intelligence
-            * bota_proto::Fixed::from_int(bota_core::rules::MANA_PER_INTELLIGENCE))
-        .to_int();
+    let health = unit.max_hp + bota_core::strength_health(unit.attributes.strength);
+    let mana = unit.max_mana + bota_core::intelligence_mana(unit.attributes.intelligence);
     let per_second = |base: bota_proto::Fixed, per_point: bota_proto::Fixed, points| {
         ((base + points * per_point)
             * bota_proto::Fixed::from_int(bota_core::rules::TICKS_PER_SECOND as i32))
