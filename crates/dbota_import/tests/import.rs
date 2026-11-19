@@ -175,12 +175,25 @@ fn the_plan_takes_every_line_and_the_tooltips() {
         &plan.items[8],
         Item::SoundMixer { out, .. } if out == "sounds/mixer.txt"
     ));
-    assert!(matches!(
-        &plan.items[9],
-        Item::Tooltips { wanted, out, .. }
-            if wanted.names == ["item_boots", "nevermore_requiem", "pudge_innate_graft_flesh"]
-                && wanted.heroes == ["nevermore"] && out == "text/tooltips.json"
-    ));
+    let Item::Tooltips { wanted, out, .. } = &plan.items[9] else {
+        panic!("the plan contains the tooltip import");
+    };
+    let mut names = vec![
+        "item_boots",
+        "nevermore_requiem",
+        "pudge_innate_graft_flesh",
+    ];
+    // Talent labels are imported for the whole catalogue, including heroes absent from the ids.
+    for hero in bota_core::HEROES {
+        if let Some(tree) = hero.talents {
+            names.extend(tree.iter().map(|talent| talent.key()));
+        }
+    }
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(wanted.names, names);
+    assert_eq!(wanted.heroes, ["nevermore"]);
+    assert_eq!(out, "text/tooltips.json");
     // The hero's voice pack comes after the labels, before the icons.
     assert!(matches!(
         &plan.items[11],
