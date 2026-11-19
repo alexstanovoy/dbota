@@ -959,21 +959,21 @@ fn unfinished_match_details_only_draw_the_owner_while_finished_details_draw_both
 fn every_hero_page_draws_pinned_game_values() {
     use bevy::prelude::*;
     use bota_proto::HeroId;
-    // Dota 7.42: base health 200 ("increased from 120"): Pudge's 25 strength 750, Shadow
-    // Fiend's 19 618.
+    // Dota 7.42: base health 200 ("increased from 120") and 20 a point of strength ("decreased
+    // from 22 to 20"): Pudge's 25 strength 700, Shadow Fiend's 19 580.
     let expected = [
         (
             HeroId::PUDGE,
             [
                 "25", "13", "16", "+ 3.0", "+ 1.4", "+ 1.8", "70–76", "2.2", "175", "280", "1.5 s",
-                "750", "267",
+                "700", "267",
             ],
         ),
         (
             HeroId::SHADOW_FIEND,
             [
                 "19", "25", "16", "+ 2.7", "+ 3.6", "+ 2.2", "41–47", "4.2", "525", "305", "1.3 s",
-                "618", "267",
+                "580", "267",
             ],
         ),
     ];
