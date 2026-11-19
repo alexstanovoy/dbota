@@ -62,10 +62,12 @@ def run_service_page(page_server, endpoint, shots):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(args=[*BROWSER_ARGS, "--ignore-certificate-errors"])
         page = browser.new_page()
-        public = re.compile(r"^wss://bota\.lubush\.space/")
-        page.route_web_socket(public, lambda connection: connection.close())
-        with page.expect_websocket(predicate=lambda ws: public.match(ws.url), timeout=90000):
-            page.goto(url)
+        console = []
+        page.on("console", lambda message: console.append(message.text))
+        page.route_web_socket(re.compile(r"^wss://bota\.lubush\.space/"), lambda connection: connection.close())
+        page.goto(url)
+        wait_console(page, console, r"service wss://bota\.lubush\.space did not pass its check:", 90,
+                     "the new browser client to check the public service")
         page.close()
         for path, result in [("", "passed its check"), ("/wrong", "did not pass its check: CannotConnect")]:
             address = endpoint + path
