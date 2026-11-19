@@ -266,6 +266,37 @@ fn match_seed(core: &bota_client_core::App, seat: Option<SlotId>) -> u64 {
     })
 }
 
+#[derive(Default)]
+struct ReplayVoice {
+    last: Option<(u32, f32)>,
+}
+
+impl ReplayVoice {
+    fn follow(&mut self, core: &bota_client_core::App, delta: f32) -> (f32, bool, bool) {
+        let bota_client_core::Source::Replay(replay) = &core.source else {
+            self.last = None;
+            return (1.0, false, false);
+        };
+        let tick = core.view().map(|view| view.tick);
+        let previous = std::mem::replace(&mut self.last, tick.map(|tick| (tick, replay.speed)));
+        let jump = match (previous, tick) {
+            (Some((before, speed)), Some(tick)) => {
+                // Snapshots are discrete. Allow normal playback plus one second of snapshots
+                // drained after a read budget was exhausted.
+                let rate = f32::from(core.tick_rate());
+                let normal = (delta * speed + 1.0) * rate;
+                replay.speed != speed
+                    || tick < before
+                    || tick.saturating_sub(before) as f32 > normal
+            }
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        let catching_up = replay.status() == bota_client_core::ReplayStatus::CatchingUp;
+        (replay.speed, replay.paused, jump || catching_up)
+    }
+}
+
 /// Asks the hero what the match told it this frame, and says what it answers. Nothing is
 /// asked before the game shows, and the match's loading waits for the pack.
 #[allow(clippy::too_many_arguments)]
@@ -277,6 +308,8 @@ fn speak(
     mut mixer: ResMut<Mixer>,
     mut speech: ResMut<Speech>,
     mut memory: Local<listen::Memory>,
+    mut replay: Local<ReplayVoice>,
+    active: bevy::prelude::Query<Entity, With<VoiceClock>>,
     settings: Res<crate::config::Settings>,
     loading: Res<crate::loading::Loading>,
     fog: Res<crate::fog::FogGrid>,
@@ -285,6 +318,16 @@ fn speak(
     real: Res<Time<bevy::time::Real>>,
 ) {
     let core = &session.0;
+    let (speed, paused, jumped) = replay.follow(core, time.delta_secs());
+    if paused || jumped {
+        speech.stop();
+        for player in &active {
+            commands.entity(player).try_despawn();
+        }
+        if let Pack::Resident(resident) = &mut voice.pack {
+            resident.waiting = None;
+        }
+    }
     let (Some(view), Pack::Resident(resident), true) =
         (core.view(), &mut voice.pack, loading.done())
     else {
@@ -302,6 +345,9 @@ fn speak(
         resident.waiting = None;
     }
     resident.last = now;
+    if paused || jumped {
+        return;
+    }
     let hero = seat(core).and_then(|s| view.player(s)).and_then(|p| p.unit);
     let mut sound = |resident: &mut Resident, waiting: Waiting| {
         let player = play(
@@ -310,6 +356,7 @@ fn speak(
             time.elapsed(),
             resident,
             &waiting.choice,
+            speed,
         );
         // A line the mixer refused was not said: nothing of it is remembered.
         if player.is_some() {
@@ -318,7 +365,7 @@ fn speak(
                 .accept(&resident.rules, waiting.query, waiting.concept, now);
         }
         if let Some(player) = player {
-            let clock = VoiceClock::new(1.0);
+            let clock = VoiceClock::new(speed);
             commands.entity(player).insert(clock.clone());
             if let Some(face) = resident.faces[waiting.choice.sound].clone() {
                 speech.say_heard(hero, face, player, clock, real.elapsed_secs());
@@ -383,6 +430,7 @@ fn play(
     now: Duration,
     resident: &Resident,
     choice: &Choice,
+    speed: f32,
 ) -> Option<Entity> {
     let rules = &resident.rules;
     let line = &rules.rules[choice.rule].lines[choice.line];
@@ -391,6 +439,7 @@ fn play(
         event,
         on_player: true,
         channel: Channel::Voices,
+        speed,
         ..Request::default()
     };
     let source = resident.sounds[choice.sound].clone();

@@ -1442,6 +1442,130 @@ fn a_small_jump_is_detected_beside_larger_smooth_movement() {
     );
 }
 
+fn start_replay_face(client: &mut Client, command: &str) {
+    use bevy::audio::{AudioPlayer, AudioSource, PlaybackSettings};
+    use bota_client_core::Source;
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 8_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut wave = hound::WavWriter::new(&mut bytes, spec).expect("a wave writer");
+    for _ in 0..spec.sample_rate * 2 {
+        wave.write_sample(4096i16).expect("a sample");
+    }
+    wave.finalize().expect("a complete wave");
+    let world = client.world_mut();
+    let source = world
+        .resource_mut::<Assets<AudioSource>>()
+        .add(AudioSource {
+            bytes: bytes.into_inner().into(),
+        });
+    let clock = crate::audio_output::VoiceClock::new(1.0);
+    let player = world
+        .spawn((
+            AudioPlayer::new(source),
+            PlaybackSettings::DESPAWN,
+            clock.clone(),
+        ))
+        .id();
+    let now = world.resource::<Time<bevy::time::Real>>().elapsed_secs();
+    world
+        .resource_mut::<Speech>()
+        .say_heard(None, timed_face(97), player, clock.clone(), now);
+    for _ in 0..60 {
+        client.step_frames(1);
+        let world = client.world();
+        let now = world.resource::<Time<bevy::time::Real>>().elapsed_secs();
+        if timed_mouth(world.resource::<Speech>(), now).1 > 0.2 {
+            return;
+        }
+    }
+    let world = client.world();
+    let now = world.resource::<Time<bevy::time::Real>>().elapsed();
+    let queued = world.get::<AudioPlayer>(player).is_some();
+    let played = world
+        .resource::<crate::audio_output::Output>()
+        .presentation(now)
+        .map(|present| present(&clock, queued));
+    let Source::Replay(replay) = &client.core().source else {
+        panic!("a replay")
+    };
+    panic!(
+        "the test voice never opened its jaw before {command}: played {played:?}, queued {queued},         face {:?}, replay {:?} at {} ({:?})",
+        timed_mouth(world.resource::<Speech>(), now.as_secs_f32()),
+        replay.status(),
+        client.tick(),
+        replay.error(),
+    );
+}
+
+#[test]
+fn playback_clock_clears_old_speech_on_replay_pause_speed_change_and_scrub() {
+    use bota_client_core::{Intent, Source};
+    let mut live = super::fog_pov::Spectated::hero("0", HeroId::PUDGE);
+    live.cheat(Cheat::StartGame);
+    let start = live.client.tick();
+    live.wait("enough recorded playback", |_, c| c.tick() > start + 360);
+    let file = live.save();
+    let mut client = Client::run(&[
+        "--replay",
+        file.path().to_str().expect("a replay path"),
+        "--pov",
+        "0",
+    ]);
+    client
+        .world_mut()
+        .resource_mut::<crate::config::Settings>()
+        .voice = false;
+    client
+        .world_mut()
+        .insert_resource(crate::audio_output::DeviceBuffers {
+            buffer: Pacing::Hz60.device_buffer(),
+            ahead: 2,
+            sample_rate: Pacing::Hz60.sample_rate(),
+        });
+    client
+        .world_mut()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            10,
+        )));
+    super::hud_layout::on_screen(&mut client);
+    client.within(Duration::from_secs(60), "the loaded replay is playing", |client| {
+        client.world().resource::<crate::loading::Loading>().done()
+            && client.core().view().is_some()
+            && matches!(&client.core().source, Source::Replay(player) if !player.paused && !player.finished())
+    });
+    client.frames(1);
+    for command in ["pause", "speed", "scrub"] {
+        start_replay_face(&mut client, command);
+        match command {
+            "pause" => client.core_mut().act(Intent::TogglePause),
+            "speed" => client.core_mut().act(Intent::Faster),
+            _ => {
+                let Source::Replay(player) = &mut client.core_mut().source else {
+                    panic!("a replay")
+                };
+                player.advance_ticks(120.0);
+            }
+        }
+        client.frames(1);
+        let world = client.world();
+        let now = world.resource::<Time<bevy::time::Real>>().elapsed_secs();
+        assert_eq!(
+            timed_mouth(world.resource::<Speech>(), now),
+            (0.0, 0.0),
+            "old replay jaw moved after {command}"
+        );
+        if command == "pause" {
+            client.core_mut().act(Intent::TogglePause);
+            client.frames(1);
+        }
+    }
+}
+
 #[test]
 fn playback_clock_catches_up_without_jumping_when_a_buffer_returns() {
     let line = timed_face(97);
