@@ -75,6 +75,11 @@ pub const LET_GO: f32 = 7.0 * RELEASE;
 const PENDING: usize = 8;
 /// A newly available output buffer may be ahead of a face that held through an underrun.
 const CATCH_UP_RATE: f32 = 1.5;
+/// A phoneme contributes across a forward window, so its centre belongs at the audio cursor.
+pub const PHONEME_CENTRE: f32 = crate::face::PHONEME_FILTER / 2.0;
+/// If a line takes the mouth while another is audible, build its pose from zero as the old
+/// pose is released. Its phoneme clock can still start exactly at the new line's sample zero.
+const TAKEOVER_RISE: f32 = 0.04;
 
 #[derive(Resource, Default)]
 pub struct Speech {
@@ -94,6 +99,8 @@ struct Line {
     end: f32,
     /// Last pose time and media position. An unstarted line stays in pre-roll.
     presented: Option<(f32, f32)>,
+    preroll: Option<f32>,
+    takeover: Option<f32>,
     presented_end: Option<f32>,
     held: Option<f32>,
 }
@@ -104,14 +111,30 @@ impl Line {
     }
 
     fn at(&self, now: f32) -> f32 {
-        self.held.unwrap_or_else(|| {
-            let position = if self.player.is_some() {
-                self.presented.map_or(0.0, |(_, position)| position)
-            } else {
-                now - self.began
-            };
-            position - self.lead
-        })
+        if let Some(held) = self.held {
+            return held;
+        }
+        if self.player.is_none() {
+            return now - self.began - self.lead;
+        }
+        let Some((_, position)) = self.presented else { return -self.lead };
+        if let Some(from) = self.preroll.filter(|_| position < 0.0) {
+            let progress = ((position - from) / -from).clamp(0.0, 1.0);
+            return -self.lead + (self.lead - PHONEME_CENTRE) * progress;
+        }
+        position - PHONEME_CENTRE
+    }
+
+    fn gain(&self, now: f32) -> f32 {
+        self.takeover.map_or(1.0, |began| ((now - began) / TAKEOVER_RISE).clamp(0.0, 1.0))
+    }
+
+    fn schedule(&mut self, now: f32, position: f32) {
+        if position >= 0.0 {
+            return;
+        }
+        self.preroll.get_or_insert(position.max(PHONEME_CENTRE - self.lead));
+        self.present(now, position);
     }
 
     fn present(&mut self, now: f32, position: f32) {
@@ -119,7 +142,7 @@ impl Line {
         let position = self.presented.map_or(position, |(last, previous)| {
             position.min(previous + speed * CATCH_UP_RATE * (now - last).max(0.0))
         });
-        let end = self.end + self.lead;
+        let end = self.end + PHONEME_CENTRE;
         if position > end
             && let Some((last, previous)) = self.presented
             && previous <= end
@@ -137,6 +160,7 @@ struct Leaving {
     face: Arc<LineFace>,
     /// How far into it the line stopped, and when.
     at: f32,
+    gain: f32,
     since: f32,
 }
 
@@ -156,6 +180,7 @@ fn release(age: f32) -> f32 {
 #[derive(Clone, Copy, Default)]
 pub struct Saying<'a> {
     pub line: Option<(&'a LineFace, f32)>,
+    gain: f32,
     leaving: &'a [Leaving],
     residues: &'a [Residue],
     unit: Option<EntityId>,
@@ -203,6 +228,8 @@ impl Speech {
             lead,
             end,
             presented: None,
+            preroll: None,
+            takeover: None,
             presented_end: None,
             held: None,
         };
@@ -227,7 +254,6 @@ impl Speech {
         !self.waiting.is_empty()
     }
 
-    #[cfg(test)]
     pub fn active_playback(&self) -> Option<(&VoiceClock, Entity)> {
         let line = self.line.as_ref()?;
         Some((line.voice.as_ref()?, line.player?))
@@ -236,6 +262,7 @@ impl Speech {
     pub fn saying(&self, unit: Option<EntityId>, now: f32) -> Saying<'_> {
         Saying {
             line: self.of(unit, now),
+            gain: self.line.as_ref().map_or(1.0, |line| line.gain(now)),
             leaving: &self.leaving,
             residues: &self.residues,
             unit,
@@ -298,7 +325,7 @@ impl Speech {
         for line in self.leaving.extract_if(.., |line| line.unit == unit) {
             room.clear();
             evaluate(&line.face, line.at, room);
-            let left = release(now - line.since);
+            let left = line.gain * release(now - line.since);
             for (&name, &value) in room.iter() {
                 *residue.controls.entry(name).or_insert(0.0) += value * left;
             }
@@ -317,6 +344,11 @@ impl Speech {
         self.waiting.clear();
         self.leaving.clear();
         self.residues.clear();
+    }
+
+    pub fn interrupt(&mut self, now: f32) {
+        self.leave(now);
+        self.waiting.clear();
     }
 
     #[cfg(test)]
@@ -339,13 +371,8 @@ impl Speech {
         if let Some(line) = self.line.as_mut().filter(|line| line.player.is_some()) {
             match heard(line) {
                 Heard::At(position) => line.present(now, position),
-                Heard::Ended => self.leave(now),
-                Heard::Gone => {
-                    let unit = line.unit;
-                    self.line = None;
-                    self.leaving.retain(|line| line.unit != unit);
-                    self.residues.retain(|residue| residue.unit != unit);
-                }
+                Heard::Scheduled(position) => line.schedule(now, position),
+                Heard::Ended | Heard::Gone => self.leave(now),
                 Heard::Waiting => {}
             }
         }
@@ -355,21 +382,29 @@ impl Speech {
                 true
             }
             Heard::Ended | Heard::Gone => false,
+            Heard::Scheduled(position) => {
+                line.schedule(now, position);
+                true
+            }
             Heard::At(_) | Heard::Waiting => true,
         });
-        // Audio can start in a different order from the requests. A voice with less media
-        // played at its rate started later; coincident starts favour the newest request.
-        let latest = self
-            .waiting
-            .iter()
-            .enumerate()
-            .rev()
-            .filter_map(|(index, line)| Some((index, line.presented?.1 / line.speed())))
-            .min_by(|(_, a), (_, b)| a.total_cmp(b));
+        let has_line = self.line.is_some();
+        let latest = self.waiting.iter().enumerate().rev().filter_map(|(index, line)| {
+            let position = line.presented?.1;
+            (!has_line || position > 0.0).then_some((index, position / line.speed()))
+        }).min_by(|(_, a), (_, b)| match (*a >= 0.0, *b >= 0.0) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            (false, false) => b.total_cmp(a),
+            _ => a.total_cmp(b),
+        });
         if let Some((index, _)) = latest {
             self.leave(now);
             self.line = self.waiting.remove(index);
-            self.waiting.retain(|line| line.presented.is_none());
+            if has_line && let Some(line) = &mut self.line {
+                line.takeover = Some(now);
+            }
+            self.waiting.retain(|line| line.presented.is_none_or(|(_, position)| position <= 0.0));
         }
     }
 
@@ -399,6 +434,7 @@ impl Speech {
         }
         self.leaving.push(Leaving {
             unit: line.unit,
+            gain: line.gain(now),
             face: line.face,
             at: at.min(line.end),
             since,
@@ -456,7 +492,8 @@ fn follow(
         || !speech.waiting.is_empty()
     {
         let Some(presentation) = output.presentation(time.elapsed()) else {
-            speech.stop();
+            speech.interrupt(now);
+            speech.finish(now);
             return;
         };
         speech.present(now, |line| {
@@ -593,12 +630,21 @@ impl Face {
             scene.apply(self.frozen.unwrap_or(now - self.began), controls);
         }
         if let Some((line, t)) = saying.line {
-            line.lipsync
-                .apply(t, &faces.phonemes, &self.ranges, controls);
+            if saying.gain >= 1.0 {
+                line.lipsync.apply(t, &faces.phonemes, &self.ranges, controls);
+            } else if saying.gain > 0.0 {
+                line_room.clear();
+                line_room.extend(controls.iter().map(|(&name, &weight)| (name, weight)));
+                line.lipsync.apply(t, &faces.phonemes, &self.ranges, line_room);
+                for (&name, &weight) in line_room.iter() {
+                    let value = controls.entry(name).or_insert(0.0);
+                    *value += saying.gain * (weight - *value);
+                }
+            }
         }
         let ours = |unit: Option<EntityId>| unit.is_none() || unit == saying.unit;
         for line in saying.leaving.iter().filter(|l| ours(l.unit)) {
-            let left = release(saying.now - line.since);
+            let left = line.gain * release(saying.now - line.since);
             line_room.clear();
             line.face
                 .lipsync
@@ -663,6 +709,9 @@ pub fn trace(
     time: Res<Time<bevy::time::Real>>,
     weights: Query<&MorphWeights>,
     mut traced: Local<(Option<Entity>, Option<String>)>,
+    args: Res<crate::Args>,
+    portrait: Query<(&ComputedNode, &UiGlobalTransform), With<crate::hud::PortraitRender>>,
+    output: Res<crate::audio_output::Output>,
 ) {
     let Some(actor) = stage.actor.as_ref().filter(|_| stage.drawing()) else {
         return;
@@ -672,6 +721,11 @@ pub fn trace(
     };
     if traced.0 != Some(actor.pivot) {
         traced.0 = Some(actor.pivot);
+        if args.speech_check && let Ok((node, transform)) = portrait.single() {
+            let size = node.size();
+            let top_left = transform.translation - size / 2.0;
+            println!("speech-check: crop {:.1} {:.1} {:.1} {:.1}", top_left.x, top_left.y, size.x, size.y);
+        }
         for (i, (_, names)) in face.nodes().enumerate() {
             println!("face-rig: {i} {}", names.join(" "));
         }
@@ -688,6 +742,12 @@ pub fn trace(
                 root.join(table).display()
             );
         }
+    }
+    if args.speech_check && let Some((clock, _)) = speech.active_playback()
+        && let Some(present) = output.presentation(time.elapsed())
+        && let Heard::At(position) = present(clock, true)
+    {
+        println!("speech-check: presented {position:.5}");
     }
     let t = line.map_or_else(|| "-".to_owned(), |(_, t)| format!("{t:.4}"));
     for (i, (node, _)) in face.nodes().enumerate() {
@@ -828,9 +888,9 @@ mod tests {
             &faces,
             (&mut controls, &mut room),
         );
-        let first = 0.044 / crate::face::PHONEME_FILTER * (-0.046f32 / RELEASE).exp();
-        let second = 0.044 / crate::face::PHONEME_FILTER * (-0.001f32 / RELEASE).exp();
-        let current = 0.001 / crate::face::PHONEME_FILTER;
+        let first = (-0.046f32 / RELEASE).exp();
+        let second = (-0.001f32 / RELEASE).exp();
+        let current = (0.001 + PHONEME_CENTRE) / crate::face::PHONEME_FILTER * (0.001 / TAKEOVER_RISE);
         let opening = controls.get(&jaw).copied().unwrap_or_default();
         // Neutral emphasis scales the table; derive that scale from an isolated phoneme.
         let mut full = Controls::new();

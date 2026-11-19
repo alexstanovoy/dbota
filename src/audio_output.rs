@@ -34,6 +34,8 @@ use rodio::cpal::{self, StreamError};
 use rodio::mixer::{Mixer, MixerSource};
 
 mod presentation;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod probe;
 use presentation::{Clock, Render};
 pub use presentation::{Played, VoiceClock};
 
@@ -217,12 +219,12 @@ impl Stream {
         }
     }
 
-    fn clock_time(&self, _now: Duration) -> f64 {
+    fn clock_time(&self, _now: Duration) -> Option<f64> {
         match self {
             Self::Device(device) => device.clock_time(),
-            Self::Silent(silent) => silent.opened.elapsed().as_secs_f64(),
+            Self::Silent(silent) => Some(silent.opened.elapsed().as_secs_f64()),
             #[cfg(test)]
-            Self::Pulled(pulled) => _now.saturating_sub(pulled.opened).as_secs_f64(),
+            Self::Pulled(pulled) => Some(_now.saturating_sub(pulled.opened).as_secs_f64()),
         }
     }
 }
@@ -376,10 +378,10 @@ struct DeviceStream {
 }
 
 impl DeviceStream {
-    fn clock_time(&self) -> f64 {
+    fn clock_time(&self) -> Option<f64> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.opened.elapsed().as_secs_f64()
+            Some(self.opened.elapsed().as_secs_f64())
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -389,20 +391,23 @@ impl DeviceStream {
                 js_sys::Reflect::get(object, &key.into()).ok()
             };
             use wasm_bindgen::JsCast as _;
+            if read(context.as_ref(), "state").and_then(|state| state.as_string()).as_deref() != Some("running") {
+                return None;
+            }
             if let Some(time) = read(context.as_ref(), "getOutputTimestamp")
                 .and_then(|method| method.dyn_into::<js_sys::Function>().ok())
                 .and_then(|method| method.call0(context.as_ref()).ok())
                 .and_then(|stamp| read(&stamp, "contextTime"))
                 .and_then(|time| time.as_f64())
             {
-                return time;
+                return Some(time);
             }
             let latency = |key| {
                 read(context.as_ref(), key)
                     .and_then(|time| time.as_f64())
                     .unwrap_or(0.0)
             };
-            (context.current_time() - latency("baseLatency") - latency("outputLatency")).max(0.0)
+            Some((context.current_time() - latency("baseLatency") - latency("outputLatency")).max(0.0))
         }
     }
 }
@@ -601,14 +606,25 @@ struct Remove;
 pub(crate) struct Output(Device<Stream>);
 
 impl Output {
+    #[cfg(test)]
+    pub(crate) fn disconnect(&mut self, report_failure: bool) {
+        if report_failure {
+            self.0.failed.store(true, Ordering::Release);
+        } else {
+            self.0.stream = None;
+        }
+    }
+
     pub(crate) fn presentation(
         &self,
         now: Duration,
     ) -> Option<impl Fn(&VoiceClock, bool) -> Played + '_> {
         let stream = self.0.stream.as_ref()?;
         let clock = stream.clock();
-        let frame = clock.frame_at(stream.clock_time(now));
-        Some(move |voice: &VoiceClock, queued| voice.played(clock, frame, queued))
+        let time = stream.clock_time(now);
+        Some(move |voice: &VoiceClock, queued| {
+            time.map_or(Played::Waiting, |time| voice.played(clock, time, queued))
+        })
     }
 }
 
@@ -655,7 +671,7 @@ fn supervise(
     match output.0.supervise(now) {
         Some(Change::Lost) => {
             if let Some(speech) = &mut speech {
-                speech.stop();
+                speech.interrupt(time.elapsed_secs());
             }
             for (entity, once) in &sinks {
                 if once {
@@ -898,7 +914,7 @@ mod start_under_the_balance {
             (peak(&buffer[buffer.len() / 2..]) - before).abs() < 0.002,
             "the mixer clock clipped the resumed voice's PCM"
         );
-        let played = tracked.played(&clock, clock.frame_at(11.01), true);
+        let played = tracked.played(&clock, 11.01, true);
         let expected = (buffer.len() / channels - first) as f32 / SILENT_RATE as f32 + 0.01;
         assert!(
             matches!(played, Played::At(at) if (at - expected).abs() < 0.0002),

@@ -168,6 +168,7 @@ if [ "$have_install" = 1 ]; then
         step replay record_replay
     fi
     step visual tools/visual_check.sh "$replay"
+    step native-audio python3 tools/audio_check.py "$(client_binary release)" "$logs/native-audio"
     step browser tools/browser_check.sh
 fi
 

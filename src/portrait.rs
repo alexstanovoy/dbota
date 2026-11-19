@@ -897,7 +897,7 @@ pub(crate) fn pose_actor(
             .insert(AnimationGraphHandle(graph.clone()));
         if let Ok(mut p) = players.get_mut(player) {
             let active = p.play(*node).repeat();
-            if actor.still.is_some() {
+            if actor.still.is_some() || args.speech_check {
                 active.pause();
             }
         }

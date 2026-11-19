@@ -85,5 +85,7 @@ in_private_environment python3 web/test/smoke.py --import-page "$pages/replay" -
     --replay-page "$pages/replay" --scene-page "$pages/web" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
     --fullscreen-page "$pages/video" \
     --replays-page "$pages/plain" --server "$server" --radovid "$radovid_bin"
+APIS=webgl2 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --speech-check --face-trace" OUT=$pages/speech web/build.sh
+in_private_environment python3 web/test/smoke.py --only-wire --speech-page "$pages/speech"
 # The real mouse: a headful Chromium on an X server (Xwayland) in a private compositor, moved through XTEST.
 DBOTA_HEADLESS_XWAYLAND=1 "$here/tools/headless.sh" python3 web/test/smoke.py --only-wire --cursor-input-page "$pages/replay"

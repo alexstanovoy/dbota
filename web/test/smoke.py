@@ -1162,6 +1162,55 @@ def check_sound_page(directory):
     server.shutdown()
 
 
+def check_speech_page(directory):
+    """A queued voice leaves the drawn mouth still until the audio context can run."""
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        try:
+            page.goto(base + "?cache=http&gpu=webgl2")
+            wait_console(page, console, r"speech-check: queued", 600, "a resident voice to queue")
+            rectangle = wait_console(
+                page, console, r"speech-check: crop ([0-9.]+) ([0-9.]+) ([0-9.]+) ([0-9.]+)",
+                60, "the visible portrait bounds",
+            )
+            x, y, w, h = map(float, rectangle.groups())
+            clip = {"x": x + 0.20 * w, "y": y + 0.42 * h, "width": 0.60 * w, "height": 0.42 * h}
+            assert page.evaluate("dbota_audio_state()") == "suspended"
+            snapshot = lambda: page.screenshot(clip=clip, timeout=5000)
+            frames = lambda: [line for line in console if re.match(r"face: 0 ", line)]
+            rest_count = len(frames())
+            still = snapshot()
+            page.wait_for_function(
+                """() => new Promise(done => requestAnimationFrame(
+                    () => requestAnimationFrame(() => done(true))))""", timeout=10000,
+            )
+            assert snapshot() == still, "the mouth pixels changed before the first gesture"
+            resting = frames()[rest_count:]
+            assert len(resting) >= 2 and len(set(resting)) == 1 and resting[0].startswith("face: 0 - "), (
+                "the drawn mouth moved before the first gesture", resting[-4:]
+            )
+            assert not any(line.startswith("speech-check: presented") for line in console)
+
+            page.keyboard.press("Shift")
+            wait_console(page, console, r"speech-check: presented [0-9.]+", 30, "the first presented audio")
+            images = {still}
+            for _ in range(8):
+                images.add(snapshot())
+                page.wait_for_timeout(25)
+            positions = [float(m[1]) for line in console
+                         if (m := re.search(r"speech-check: presented ([0-9.]+)", line))]
+            assert page.evaluate("dbota_audio_state()") == "running"
+            assert len(positions) > 1 and positions[-1] - positions[0] > 0.10, positions
+            assert len(images) >= 3, "the rendered mouth region did not change during playback"
+            assert len(set(frames())) > 2, "the drawn morph weights did not change"
+            assert not problems, problems
+            print(f"browser audio: zero pre-gesture mouth changes, {len(images)} distinct mouth crops; "
+                  f"presentation advanced {positions[-1] - positions[0]:.3f} s")
+        finally:
+            browser.close()
+            server.shutdown()
+
+
 def check_boot_page(directory):
     """The page never spins for ever: each way the start can go wrong ends on the failure screen or the
     asset screen, saying which stage failed. A part of the page that does not load, a page that never
@@ -1971,6 +2020,7 @@ def main():
     ap.add_argument("--fonts-page", type=pathlib.Path, help="any build: the page holds its interface fonts")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
     ap.add_argument("--launch-page", type=pathlib.Path, help="any build: the client starts and draws without a panic")
+    ap.add_argument("--speech-page", type=pathlib.Path, help="a replay build with --speech-check --face-trace")
     ap.add_argument("--sound-page", type=pathlib.Path, help="any build: the audio context is resumed by the first gesture")
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
     ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
@@ -1994,6 +2044,8 @@ def main():
         check_served_cache(args.served_page)
     if args.sound_page:
         check_sound_page(args.sound_page)
+    if args.speech_page:
+        check_speech_page(args.speech_page)
     if args.launch_page:
         check_launch_page(args.launch_page)
     if args.startup_page:

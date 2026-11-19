@@ -339,6 +339,9 @@ pub struct Args {
     /// line its hero says. For the talking-portrait test.
     #[arg(long)]
     pub face_trace: bool,
+    /// Queue one voice when the replay portrait is ready, for the browser's sound check.
+    #[arg(long, hide = true, requires_all = ["replay", "face_trace"])]
+    pub speech_check: bool,
     /// Debug: draw the ranges and camp boxes as if Alt were held.
     #[arg(long)]
     pub show_ranges: bool,
@@ -426,7 +429,11 @@ pub enum Command {
     CacheDir,
     /// Print where this process would play its sounds, opening nothing: `device` (the machine's
     /// default) or `silent` (a client of a test, a check or a measurement, `DBOTA_NULL_AUDIO`).
-    AudioOutput,
+    AudioOutput {
+        /// Run the native sink's controlled playback check.
+        #[arg(long, hide = true)]
+        probe: bool,
+    },
 }
 
 impl Args {
@@ -493,7 +500,11 @@ fn run_command(command: &Command, cache: &std::path::Path) -> AppExit {
             println!("{}", cache.display());
             AppExit::Success
         }
-        Command::AudioOutput => {
+        Command::AudioOutput { probe: true } => ended(
+            "audio-output",
+            audio_output::probe::run().map(|()| true).map_err(|error| error.to_string()),
+        ),
+        Command::AudioOutput { probe: false } => {
             println!("{}", audio_output::Kind::requested().name());
             AppExit::Success
         }

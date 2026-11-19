@@ -350,7 +350,7 @@ pub(crate) struct Portrait;
 /// The render of the unit's model in the bottom panel's portrait, over its
 /// background.
 #[derive(Component)]
-struct PortraitRender;
+pub(crate) struct PortraitRender;
 
 /// The ring round the panel's level, filled with the experience gathered
 /// towards the next.

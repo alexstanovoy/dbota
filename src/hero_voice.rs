@@ -188,11 +188,44 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<HeroVoice>()
         .add_systems(
             Update,
-            (follow_seat, load::receive, speak.after(load::receive))
+            (
+                follow_seat,
+                load::receive,
+                speak.run_if(|args: Res<crate::Args>| !args.speech_check),
+                speech_check.run_if(|args: Res<crate::Args>| args.speech_check),
+            )
                 .chain()
                 .after(crate::kill_calls::Observed),
         )
         .add_systems(PostUpdate, report.in_set(crate::loading::Report));
+}
+
+/// Queue a resident line through the same mixer and presentation clock that the match uses.
+fn speech_check(
+    mut commands: Commands,
+    time: Res<Time>,
+    real: Res<Time<bevy::time::Real>>,
+    voice: Res<HeroVoice>,
+    stage: Res<crate::portrait::Stage>,
+    hud: Res<crate::ui::HudShown>,
+    mut mixer: ResMut<Mixer>,
+    mut speech: ResMut<Speech>,
+    mut queued: Local<bool>,
+) {
+    if *queued || !hud.0 || stage.actor.as_ref().and_then(|actor| actor.face.as_ref()).is_none() {
+        return;
+    }
+    let Some(resident) = voice.resident() else { return };
+    let Some((index, face)) = resident.faces.iter().enumerate().filter_map(|(index, face)|
+        face.as_ref().map(|face| (index, face))
+    ).find(|(_, face)| (2.0..8.0).contains(&face.lipsync.end())) else { return };
+    let request = Request { event: "speech-check", on_player: true, channel: Channel::Voices, ..Request::default() };
+    let Some(player) = mixer.start_heard(&mut commands, time.elapsed(), &request, resident.sounds[index].clone()) else { return };
+    let clock = VoiceClock::new(1.0);
+    commands.entity(player).insert(clock.clone());
+    speech.say_heard(stage.unit(), face.clone(), player, clock, real.elapsed_secs());
+    *queued = true;
+    println!("speech-check: queued");
 }
 
 /// The seat whose hero speaks: the one played, or watched as or through.
@@ -320,7 +353,7 @@ fn speak(
     let core = &session.0;
     let (speed, paused, jumped) = replay.follow(core, time.delta_secs());
     if paused || jumped {
-        speech.stop();
+        speech.interrupt(real.elapsed_secs());
         for player in &active {
             commands.entity(player).try_despawn();
         }

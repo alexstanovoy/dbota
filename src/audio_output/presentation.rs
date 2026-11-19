@@ -77,15 +77,24 @@ impl Clock {
         &self.0.buffers[(sequence % BUFFER_HISTORY as u64) as usize]
     }
 
-    pub(super) fn frame_at(&self, now: f64) -> Option<f64> {
+    fn history(&self) -> impl Iterator<Item = Buffer> + '_ {
         let newest = self.0.newest.load(Ordering::Acquire);
         let oldest = newest.saturating_sub(BUFFER_HISTORY as u64);
-        let buffer = ((oldest + 1)..=newest)
+        ((oldest + 1)..=newest)
             .rev()
             .filter_map(|sequence| self.slot(sequence).read(sequence))
-            .find(|buffer| buffer.at <= now)?;
+    }
+
+    pub(super) fn frame_at(&self, now: f64) -> Option<f64> {
+        let buffer = self.history().find(|buffer| buffer.at <= now)?;
         let frames = (now - buffer.at) * f64::from(self.0.rate.get());
         Some(buffer.first as f64 + frames.min(buffer.frames as f64))
+    }
+
+    fn time_of(&self, frame: u64) -> Option<f64> {
+        let buffer = self.history()
+            .find(|buffer| frame >= buffer.first && frame - buffer.first < buffer.frames)?;
+        Some(buffer.at + (frame - buffer.first) as f64 / f64::from(self.0.rate.get()))
     }
 
     fn publish(&self, buffer: Buffer) {
@@ -142,6 +151,7 @@ impl Render {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Played {
     Waiting,
+    Scheduled(f32),
     At(f32),
     Ended,
     Gone,
@@ -182,7 +192,7 @@ impl VoiceClock {
         }
     }
 
-    pub(super) fn played(&self, clock: &Clock, frame: Option<f64>, queued: bool) -> Played {
+    pub(super) fn played(&self, clock: &Clock, now: f64, queued: bool) -> Played {
         let Some(output) = self.0.output.get() else {
             return if queued {
                 Played::Waiting
@@ -196,12 +206,12 @@ impl VoiceClock {
 
         let first = self.0.first.load(Ordering::Acquire);
         let end = self.0.end.load(Ordering::Acquire);
+        let frame = clock.frame_at(now);
         let Some(frame) = frame.filter(|&frame| first != UNSET && frame > first as f64) else {
-            return if queued || first != UNSET {
-                Played::Waiting
-            } else {
-                Played::Gone
-            };
+            if first != UNSET && let Some(start) = clock.time_of(first) {
+                return Played::Scheduled(((now - start).min(0.0) as f32) * self.speed());
+            }
+            return if queued || first != UNSET { Played::Waiting } else { Played::Gone };
         };
         if end != UNSET && frame >= end as f64 {
             return Played::Ended;
@@ -276,7 +286,7 @@ mod tests {
             clock.clone(),
             rodio::buffer::SamplesBuffer::new(channels, rate, vec![0.25; 150]),
         ));
-        let heard = |voice: &VoiceClock, now| voice.played(&clock, clock.frame_at(now), true);
+        let heard = |voice: &VoiceClock, now| voice.played(&clock, now, true);
 
         let mut buffer = [0.0; 100];
         render.fill(&mut buffer, 0.25);
@@ -284,7 +294,7 @@ mod tests {
             buffer, [0.25; 100],
             "the voice contributes from the buffer's first sample"
         );
-        assert_eq!(heard(&first, 0.249), Played::Waiting);
+        assert!(matches!(heard(&first, 0.249), Played::Scheduled(at) if (at + 0.001).abs() < 1e-5));
         assert_eq!(heard(&first, 0.275), Played::At(0.025));
         assert_eq!(
             heard(&first, 0.75),
@@ -308,7 +318,7 @@ mod tests {
             &[0.5; 50],
             "only the new voice remains after the old one ends"
         );
-        assert_eq!(heard(&next, 0.799), Played::Waiting);
+        assert!(matches!(heard(&next, 0.799), Played::Scheduled(at) if (at + 0.001).abs() < 1e-5));
         assert_eq!(heard(&first, 0.82), Played::At(0.12));
         assert_eq!(heard(&next, 0.82), Played::At(0.02));
         assert_eq!(

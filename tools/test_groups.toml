@@ -316,6 +316,7 @@ paths = [
     "src/mixer.rs",
     "src/channels.rs",
     "src/attenuation.rs",
+    "tools/audio_check.py",
     "src/audio_output.rs",
     "src/audio_output/**",
     "src/voice.rs",
