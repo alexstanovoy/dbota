@@ -59,7 +59,10 @@ fn the_explicit_install_is_found_on_a_private_home() {
         .join(format!("explicit-install-{}", std::process::id()));
     let install = root.join("dota");
     std::fs::create_dir_all(install.join("game/dota")).expect("install directory");
-    std::fs::write(install.join("game/dota/pak01_dir.vpk"), []).expect("install marker");
+    // An empty VPK v1 directory still has the signature that Steam discovery checks.
+    let empty_package = [0x34, 0x12, 0xaa, 0x55, 1, 0, 0, 0, 1, 0, 0, 0, 0];
+    std::fs::write(install.join("game/dota/pak01_dir.vpk"), empty_package)
+        .expect("empty package directory");
     let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
         .args([
             "--exact",
