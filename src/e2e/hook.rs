@@ -60,6 +60,7 @@ struct Frame {
     hook_told: bool,
     /// How many frames of the hook's particle have been drawn so far (cards, lights, models).
     drawn: u32,
+    drawn_endings: u32,
     /// Pudge's place in the sim's frame, if the view shows him.
     pudge: Option<Vec2>,
     /// The enemy heroes the view shows, in the sim's frame.
@@ -351,6 +352,7 @@ fn record(
             .collect(),
         hook_told: view.projectiles.iter().any(|p| p.inflictor == hook),
         drawn: playing.drawn(effect),
+        drawn_endings: playing.drawn_endings(effect),
         pudge: home,
         enemies: view
             .units
@@ -386,6 +388,7 @@ enum AfterLaunch {
     Wait,
     Move(Spot),
     HideCaster(Spot),
+    LoseSharedVision,
     CatchAlly,
     KillCaught,
     KillCaster,
@@ -434,10 +437,16 @@ fn record_throws_with(
         if !matches!(after_launch, AfterLaunch::HideCaster(_)) {
             game.cheat(Cheat::TimeOfDay { night: true });
         }
+        let offset = if matches!(after_launch, AfterLaunch::LoseSharedVision) {
+            game.cheat(Cheat::AllVision { on: true });
+            450
+        } else {
+            0
+        };
         game.cheat(Cheat::CreateHero {
             hero: HeroId::SHADOW_FIEND,
             enemy: true,
-            at: at + Spot::from_ints(distance, 0),
+            at: at + Spot::from_ints(distance, offset),
         });
         game.next_side(Team::Dire);
         game.client.core_mut().pinned = None;
@@ -512,6 +521,19 @@ fn record_throws_with(
                         .any(|t| t.head.is_some_and(|h| h.returning))
                 });
                 game.cheat(Cheat::Teleport { at: spot });
+            }
+            AfterLaunch::LoseSharedVision => {
+                game.wait(
+                    "the opponent sees the start and head of the return",
+                    |_, client| {
+                        client.view().tethers.iter().any(|tether| {
+                            tether
+                                .head
+                                .is_some_and(|head| head.returning && head.origin.is_some())
+                        })
+                    },
+                );
+                game.cheat(Cheat::AllVision { on: false });
             }
             AfterLaunch::HideCaster(spot) => {
                 game.wait("the launch is seen", |_, client| {
@@ -1253,6 +1275,33 @@ fn review_a_caster_leaving_sight_does_not_take_the_visible_head_or_chain_with_hi
 }
 
 #[test]
+fn a_return_seen_without_the_hand_has_no_ending_in_fog_live_or_in_replay() {
+    let (file, live) =
+        record_throws_with(false, 1, YARD, Some(1_100), AfterLaunch::LoseSharedVision);
+    let replay = play(&file, 1, YARD);
+    for (name, frames) in [("side stream", &live), ("side replay", &replay)] {
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame.visible_caster && frame.returning && frame.head().is_some()),
+            "{name}: the observer first sees the caster and returning hook"
+        );
+        assert!(
+            frames
+                .iter()
+                .any(|frame| !frame.visible_caster && frame.returning && frame.head().is_some()),
+            "{name}: the returning head stays drawn after the caster enters fog"
+        );
+    }
+    let ending_count = |frames: &[Frame]| frames.last().expect("a drawn return").drawn_endings;
+    assert_eq!(
+        [ending_count(&live), ending_count(&replay)],
+        [0, 0],
+        "the hidden hand left a visible return trail on the side stream or replay"
+    );
+}
+
+#[test]
 fn review_the_caught_hook_moves_with_the_animated_victim_and_stops_spinning() {
     let file = record_throws(true, 1, MID);
     let frames = play(&file, 0, MID);
@@ -1552,7 +1601,7 @@ fn rewinding_a_completed_hook_leaves_no_return_trail_in_the_paused_view() {
         client
             .world()
             .resource::<crate::particles::Playing>()
-            .drawn_endings(&effect)
+            .endings_this_frame(&effect)
     };
     client.within(SOON, "a visible launch", |client| {
         client
@@ -1580,14 +1629,21 @@ fn rewinding_a_completed_hook_leaves_no_return_trail_in_the_paused_view() {
                 .resource::<crate::fog::FogGrid>()
                 .worked_out_at()
                 == Some(launch.tick)
+            && client
+                .world()
+                .resource::<Frames>()
+                .0
+                .last()
+                .is_some_and(|frame| frame.tick == launch.tick && frame.head().is_some())
     });
-    let before = endings(&client);
-    client.frames(3);
-    assert_eq!(
-        endings(&client),
-        before,
-        "the paused launch still draws the completed return"
-    );
+    for frame in 0..4 {
+        assert_eq!(
+            endings(&client),
+            0,
+            "the paused launch still draws the completed return on frame {frame}"
+        );
+        client.frames(1);
+    }
 }
 
 #[test]

@@ -12,7 +12,11 @@ pub enum EffectSight {
     Point,
     KnownPoint(bota_proto::SeenBy),
     Witnessed(bota_proto::SeenBy),
-    FlightEnd(bota_proto::SeenBy, Vec2),
+    FlightEnd {
+        seen: bota_proto::SeenBy,
+        tip: Vec2,
+        trail_origin: Option<Vec2>,
+    },
     Unit(bota_proto::EntityId),
     Projectile(bota_proto::EntityId),
 }
@@ -23,6 +27,7 @@ struct FlightRecord {
     id: bota_proto::EntityId,
     at: Vec2,
     seen: bota_proto::SeenBy,
+    trail_origin: Option<Vec2>,
 }
 
 struct Presentation {
@@ -106,6 +111,7 @@ impl Playing {
         handle: Handle,
         projectile: &bota_proto::ProjectileView,
         seen: bota_proto::SeenBy,
+        trail_origin: Option<Vec2>,
     ) {
         if self.simulation.contains(handle)
             && let Some(presentation) = self.presentation.get_mut(&handle)
@@ -114,7 +120,15 @@ impl Playing {
                 id: projectile.id,
                 at: Vec2::new(projectile.pos.x.to_f32(), projectile.pos.y.to_f32()),
                 seen,
+                trail_origin,
             });
+        }
+    }
+
+    /// A visible head without its witnessed tether cannot keep an older trail.
+    pub fn clear_flight_observation(&mut self, handle: Handle) {
+        if let Some(presentation) = self.presentation.get_mut(&handle) {
+            presentation.flight = None;
         }
     }
 
@@ -138,18 +152,21 @@ impl Playing {
         let last = self.presentation.get(&handle).and_then(|presentation| {
             let flight = presentation.flight?;
             (!sight.has_projectile(flight.id)
-                && !sight.fog().hides(Some(flight.seen))
-                && sight.allows_point(flight.at.x, flight.at.y))
-            .then_some((flight.seen, flight.at))
+                && allows_ending(sight, flight.seen, flight.at, flight.trail_origin))
+            .then_some(EffectSight::FlightEnd {
+                seen: flight.seen,
+                tip: flight.at,
+                trail_origin: flight.trail_origin,
+            })
         });
         match last {
-            Some((seen, at)) => {
+            Some(ending) => {
                 if let (Some(instance), Some(presentation)) = (
                     self.simulation.get_mut(handle),
                     self.presentation.get_mut(&handle),
                 ) {
                     instance.end();
-                    presentation.sight = EffectSight::FlightEnd(seen, at);
+                    presentation.sight = ending;
                 }
             }
             None => self.cancel(handle),
@@ -247,6 +264,11 @@ impl Playing {
     }
 
     #[cfg(test)]
+    pub fn endings_this_frame(&self, effect: &Arc<Effect>) -> u32 {
+        self.simulation.endings_this_frame(effect)
+    }
+
+    #[cfg(test)]
     pub fn instances_of<'a>(
         &'a self,
         effect: &'a Arc<Effect>,
@@ -285,15 +307,28 @@ impl InstanceRef<'_> {
     }
 }
 
+fn allows_ending(
+    sight: &crate::fog::EventSight,
+    seen: bota_proto::SeenBy,
+    tip: Vec2,
+    trail_origin: Option<Vec2>,
+) -> bool {
+    !sight.fog().hides(Some(seen))
+        && sight.allows_point(tip.x, tip.y)
+        && trail_origin.is_none_or(|at| sight.allows_point(at.x, at.y))
+}
+
 fn permitted(permission: EffectSight, instance: &Instance, sight: &crate::fog::EventSight) -> bool {
     match permission {
         EffectSight::Public => true,
         EffectSight::Unit(id) => sight.visible_unit(id).is_some(),
         EffectSight::Projectile(id) => sight.sees_projectile(id),
         EffectSight::Witnessed(seen) => !sight.fog().hides(Some(seen)),
-        EffectSight::FlightEnd(seen, at) => {
-            !sight.fog().hides(Some(seen)) && sight.allows_point(at.x, at.y)
-        }
+        EffectSight::FlightEnd {
+            seen,
+            tip,
+            trail_origin,
+        } => allows_ending(sight, seen, tip, trail_origin),
         EffectSight::KnownPoint(seen) if sight.fog().hides(Some(seen)) => false,
         EffectSight::Point | EffectSight::KnownPoint(_) => {
             instance.nodes.first().is_some_and(|node| {

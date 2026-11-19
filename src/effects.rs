@@ -380,7 +380,7 @@ fn missiles(
         let handle = match body {
             Body::Effect(handle) | Body::Grenade(handle) | Body::Line(handle) => handle,
         };
-        playing.note_flight(handle, &f.missile, sight.knowledge(f.missile.seen_by));
+        playing.note_flight(handle, &f.missile, sight.knowledge(f.missile.seen_by), None);
         match body {
             Body::Effect(handle) => shooters.steer(f, at, dir, &mut playing, handle),
             // Its effect is pulled to where it will be a tick on.

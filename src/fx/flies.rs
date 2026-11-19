@@ -309,6 +309,7 @@ impl FlightPresentation<'_, '_> {
             handle,
             &flight.missile,
             sight.knowledge(flight.missile.seen_by),
+            None,
         );
         let tip = above_ground(&self.ground, Vec2::new(flight.x, flight.y), MISSILE_HEIGHT);
         let delta = Vec3::new(flight.x - flight.tail_x, 0.0, -(flight.y - flight.tail_y));
@@ -406,9 +407,10 @@ impl FlightPresentation<'_, '_> {
             };
             visible_head = self.place_tether(rule, effect, key, position, draws);
             if let Some(handle) = visible_head {
-                if tether
-                    .head
-                    .is_some_and(|head| head.returning && head.origin.is_some())
+                if whole
+                    && tether
+                        .head
+                        .is_some_and(|head| head.returning && head.origin.is_some())
                     && let Some(projectile) = sight
                         .core()
                         .view()
@@ -418,7 +420,10 @@ impl FlightPresentation<'_, '_> {
                         handle,
                         projectile,
                         sight.knowledge(projectile.seen_by),
+                        Some(place_of(launch).truncate()),
                     );
+                } else {
+                    self.playing.clear_flight_observation(handle);
                 }
                 let model = source
                     .and_then(|unit| self.unit_index.0.get(&unit.id))

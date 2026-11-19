@@ -75,6 +75,7 @@ pub struct Simulation {
 struct DrawCounts {
     drawn: Vec<(Arc<Effect>, u32)>,
     endings: Vec<(Arc<Effect>, u32)>,
+    endings_this_frame: Vec<(Arc<Effect>, u32)>,
 }
 
 impl Simulation {
@@ -88,6 +89,10 @@ impl Simulation {
         }
         self.clock = 0.0;
         self.stage_owed = 0.0;
+        if let Some(counts) = &mut self.draw_counts {
+            counts.endings.clear();
+            counts.endings_this_frame.clear();
+        }
     }
 
     /// Opt in to collecting per-effect frame counts for a host that needs draw observations.
@@ -107,6 +112,13 @@ impl Simulation {
         self.draw_counts
             .as_ref()
             .map_or(0, |counts| count_of(&counts.endings, effect))
+    }
+
+    /// Ending instances of this effect that contributed to the latest frame.
+    pub fn endings_this_frame(&self, effect: &Arc<Effect>) -> u32 {
+        self.draw_counts
+            .as_ref()
+            .map_or(0, |counts| count_of(&counts.endings_this_frame, effect))
     }
 
     /// How many times `effect` was started.
@@ -378,6 +390,9 @@ impl Simulation {
         frame.placed.clear();
         frame.quads.clear();
         frame.batches.clear();
+        if let Some(counts) = &mut playing.draw_counts {
+            counts.endings_this_frame.clear();
+        }
         let (Some(library), Some((camera, frustum))) = (library, camera) else {
             return;
         };
@@ -474,6 +489,7 @@ impl Simulation {
             {
                 if instance.ending() {
                     count_contribution(&mut counts.endings, &instance.effect);
+                    count_contribution(&mut counts.endings_this_frame, &instance.effect);
                 }
                 count_contribution(&mut counts.drawn, &instance.effect);
             }
