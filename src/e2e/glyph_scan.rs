@@ -111,8 +111,7 @@ fn the_glyph_and_the_scan_stand_in_the_two_wells_of_the_plate_against_the_minima
     }
 }
 
-/// Hovered, the Glyph says what it is in the game's words, and the wait it has to run (the Glyph is
-/// not ready before the game's fifth minute).
+/// Hovered, the Glyph uses the install's description and countdown label.
 #[test]
 fn the_glyph_has_the_games_popup_with_its_wait() {
     let (_server, mut client) = scene();
@@ -140,10 +139,23 @@ fn the_glyph_has_the_games_popup_with_its_wait() {
         super::hero_page::tooltip_words(&mut client)
     );
     client.frames(10);
+    let template = client
+        .world()
+        .resource::<crate::dota_text::Texts>()
+        .label(
+            "DOTA_HUD_GlyphCooldown",
+            &[("cooldown_time", "@time@".into())],
+        )
+        .expect("the install's Glyph countdown label");
+    let (before, after) = template.split_once("@time@").expect("the time placeholder");
+    let words = super::hero_page::tooltip_words(&mut client);
     assert!(
-        said(&mut client, "Cooldown:"),
-        "the wait in the popup: {:?}",
-        super::hero_page::tooltip_words(&mut client)
+        words
+            .iter()
+            .flat_map(|text| text.lines())
+            .filter_map(|line| line.trim().strip_prefix(before)?.strip_suffix(after))
+            .any(|time| time.parse::<u32>().is_ok_and(|seconds| seconds > 0)),
+        "the wait in the popup uses {template:?}: {words:?}"
     );
 }
 
