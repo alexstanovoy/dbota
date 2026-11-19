@@ -776,7 +776,7 @@ impl MenuCore {
             prefs.service = service;
         }
         // A new player lands on the sign-in of a service, not on an offline lobby.
-        Self::choose_first_service(&mut prefs, page_service.as_deref());
+        Self::choose_first_service(&mut prefs);
         let local_first = !cfg!(target_arch = "wasm32") && prefs.service.is_empty();
         let mut core = Self::initial(store, tls, prefs, library);
         core.page_service = page_service;

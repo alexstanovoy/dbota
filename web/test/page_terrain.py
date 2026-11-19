@@ -13,7 +13,7 @@ ARGUMENTS = (
     (50, ('--terrain-shots',), dict(type=pathlib.Path)),
     (60, ('--terrain-refused-shot',), dict(type=pathlib.Path, help="capture a match with an oversized ability icon")),
 )
-ORDER = 100
+ORDER = 110
 
 
 def run(args):

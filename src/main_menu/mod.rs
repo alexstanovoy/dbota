@@ -90,12 +90,14 @@ pub use lobby_controls::Action as LobbyAction;
 pub use play::PlayAction;
 #[cfg(test)]
 pub use play::Section as PlaySection;
+#[cfg(test)]
+pub(crate) use prefs::MAX_ADDED_SERVICES;
 pub(crate) use preview::loading_chat;
 pub use preview::{NAMES as PREVIEWS, view as preview};
 pub use service_previews::NAMES as SERVICE_PREVIEWS;
 pub use service_words::service_argument;
 #[cfg(test)]
-pub(crate) use services::{BuiltInGuard, ServiceAct, Verdict, built_in_for_test};
+pub(crate) use services::{BUILT_IN_HOST, BuiltInGuard, ServiceAct, Verdict, built_in_for_test};
 #[cfg(test)]
 pub(crate) use shell::handle_test_disconnect;
 pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};

@@ -11,7 +11,7 @@ FLAG = "--scene-page"
 ARGUMENTS = (
     (20, ('--scene-page',), dict(type=pathlib.Path, help="a replay build: forest and heroes drawn on both graphics APIs")),
 )
-ORDER = 90
+ORDER = 100
 
 
 def run(args):

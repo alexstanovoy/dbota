@@ -15,7 +15,7 @@ FLAG = "--cursor-page"
 ARGUMENTS = (
     (150, ('--cursor-page',), dict(type=pathlib.Path, help="a replay build: the cursor kept in a match")),
 )
-ORDER = 120
+ORDER = 130
 
 
 def run(args):

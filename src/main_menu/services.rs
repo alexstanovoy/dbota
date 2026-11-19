@@ -14,8 +14,8 @@ use super::core::{Act, MenuCore, Page};
 use super::prefs::{MAX_ADDED_SERVICES, Prefs};
 use super::service_words;
 
-/// The public service every client offers. The one place that says where it is.
-pub const BUILT_IN_ADDRESS: &str = "wss://bota.lubush.space";
+/// The host of the public service every client offers. The one place that says where it is.
+pub const BUILT_IN_HOST: &str = "bota.lubush.space";
 /// What the built-in service is called.
 pub const BUILT_IN_NAME: &str = "Public service";
 /// What the service of the page a browser runs in is called.
@@ -42,16 +42,11 @@ pub fn built_in_address() -> String {
             .unwrap_or_else(|| "wss://built-in.invalid".to_owned())
     });
     #[cfg(not(test))]
-    BUILT_IN_ADDRESS.to_owned()
+    format!("wss://{BUILT_IN_HOST}")
 }
 
-/// What a menu with no service chosen yet selects: the page's own service in a browser, else the
-/// built-in one. (Tests that do not run the menu as a new player's start with none, as menus did
-/// before there was a built-in service.)
-fn first_choice(page: Option<&str>) -> String {
-    if let Some(page) = page {
-        return page.to_owned();
-    }
+/// Tests that do not run the menu as a new player's start with no chosen service.
+fn first_choice() -> String {
     #[cfg(test)]
     if TEST_BUILT_IN.with(|built_in| built_in.borrow().is_none()) {
         return String::new();
@@ -299,11 +294,10 @@ impl MenuCore {
         }
     }
 
-    /// The first choice of a menu that has none yet, from the remembered one, else the
-    /// built-in service (the page's own in a browser).
-    pub(super) fn choose_first_service(prefs: &mut Prefs, page: Option<&str>) {
+    /// The first choice of a menu that has none yet is the built-in service.
+    pub(super) fn choose_first_service(prefs: &mut Prefs) {
         if prefs.service.is_empty() {
-            prefs.service = first_choice(page);
+            prefs.service = first_choice();
         }
     }
 
@@ -362,7 +356,7 @@ impl MenuCore {
         let address = match service_address(&typed) {
             Ok(address) => address,
             Err(fault) => {
-                self.tell(service_words::address_fault(fault).to_owned(), true);
+                self.tell(service_words::address_fault(fault), true);
                 return;
             }
         };
@@ -397,8 +391,7 @@ impl MenuCore {
         let removed = self.prefs.added_services.remove(at);
         self.checks.forget(&removed);
         if same(&self.prefs.service, &removed) {
-            let first = first_choice(self.page_service.as_deref());
-            self.use_service(first);
+            self.use_service(first_choice());
         } else {
             self.save_prefs();
             self.sync_service_controls();
@@ -483,6 +476,12 @@ impl MenuCore {
         Some(super::view::ServiceBanner {
             checking: verdict == Verdict::Checking,
             words: service_words::verdict(Some(&verdict)),
+            subject: match entry.origin {
+                // Its own name says which it is; a service the player typed is known by its
+                // host, which a name it gave itself could not stand in for.
+                Origin::BuiltIn => entry.name.clone(),
+                _ => host_name(&entry.address),
+            },
             name: entry.name,
             address: entry.address,
             open: self.service_ready(),
@@ -498,7 +497,7 @@ impl MenuCore {
         }
         match service_address(typed) {
             Ok(address) => TypedService::Address(address),
-            Err(fault) => TypedService::Refused(service_words::address_fault(fault).to_owned()),
+            Err(fault) => TypedService::Refused(service_words::address_fault(fault)),
         }
     }
 }
@@ -543,11 +542,9 @@ mod tests {
 
     #[test]
     fn the_built_in_service_is_the_public_one_in_the_canonical_form() {
-        assert_eq!(BUILT_IN_ADDRESS, "wss://bota.lubush.space");
-        assert_eq!(
-            service_address(BUILT_IN_ADDRESS).as_deref(),
-            Ok(BUILT_IN_ADDRESS)
-        );
+        let address = format!("wss://{BUILT_IN_HOST}");
+        assert_eq!(address, "wss://bota.lubush.space");
+        assert_eq!(service_address(&address), Ok(address));
     }
 
     #[test]

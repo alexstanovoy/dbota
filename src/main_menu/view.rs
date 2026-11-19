@@ -309,6 +309,9 @@ pub struct ServiceRow {
 /// What the way in's card says of the service signed in to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServiceBanner {
+    /// What a service that works is called in the one line that says so: the name of the
+    /// built-in service, else the host of the one the player chose.
+    pub subject: String,
     pub name: String,
     pub address: String,
     pub checking: bool,

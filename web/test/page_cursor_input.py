@@ -21,7 +21,7 @@ FLAG = "--cursor-input-page"
 ARGUMENTS = (
     (160, ('--cursor-input-page',), dict(type=pathlib.Path, help="a replay build: the cursor with a real mouse (X server)")),
 )
-ORDER = 130
+ORDER = 140
 
 
 def run(args):

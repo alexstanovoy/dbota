@@ -7,12 +7,13 @@ use super::core::Page;
 use super::form::FormKind;
 use super::preview::{field, form};
 use super::service_words;
-use super::services::{BUILT_IN_ADDRESS, BUILT_IN_NAME, Verdict};
+use super::services::{BUILT_IN_HOST, BUILT_IN_NAME, Verdict};
 use super::view::{MenuView, PageView, ServiceBanner, ServiceRow, ServicesView, TypedService};
 
 /// The names `--menu-preview` takes for the services.
-pub const NAMES: [&str; 18] = [
+pub const NAMES: [&str; 20] = [
     "service",
+    "service-many",
     "service-typing",
     "service-refused",
     "login-checking",
@@ -30,6 +31,7 @@ pub const NAMES: [&str; 18] = [
     "login-bad-address",
     "login-cannot-connect",
     "register-works",
+    "login-added-works",
 ];
 
 const ADDED: &str = "wss://arena.example.org:4460";
@@ -37,7 +39,7 @@ const ADDED: &str = "wss://arena.example.org:4460";
 fn verdict_of(name: &str) -> Option<Verdict> {
     Some(match name {
         "login-checking" => Verdict::Checking,
-        "login-works" | "register-works" => Verdict::Works(ServiceFound {
+        "login-works" | "register-works" | "login-added-works" => Verdict::Works(ServiceFound {
             name: "Dota arena".to_owned(),
         }),
         "login-host-not-found" => Verdict::Failed(ServiceFault::HostNotFound),
@@ -58,7 +60,7 @@ fn verdict_of(name: &str) -> Option<Verdict> {
 
 pub fn view(name: &str) -> Option<MenuView> {
     match name {
-        "service" | "service-typing" | "service-refused" => Some(list(name)),
+        "service" | "service-many" | "service-typing" | "service-refused" => Some(list(name)),
         "register-works" => Some(way_in(name, Page::Register)),
         _ => verdict_of(name).map(|_| way_in(name, Page::Login)),
     }
@@ -68,9 +70,20 @@ fn way_in(name: &str, page: Page) -> MenuView {
     let verdict = verdict_of(name).expect("a fixture with an outcome");
     let words = service_words::verdict(Some(&verdict));
     let open = matches!(verdict, Verdict::Works(_));
+    // The one a player typed is shown by its host; the built-in one by its name.
+    let added = name == "login-added-works";
     let banner = ServiceBanner {
+        subject: if added {
+            "arena.example.org:4460".to_owned()
+        } else {
+            BUILT_IN_NAME.to_owned()
+        },
         name: BUILT_IN_NAME.to_owned(),
-        address: BUILT_IN_ADDRESS.to_owned(),
+        address: if added {
+            ADDED.to_owned()
+        } else {
+            format!("wss://{BUILT_IN_HOST}")
+        },
         checking: matches!(verdict, Verdict::Checking),
         words,
         open,
@@ -113,7 +126,7 @@ fn list(name: &str) -> MenuView {
     let rows = vec![
         row(
             BUILT_IN_NAME,
-            BUILT_IN_ADDRESS,
+            &format!("wss://{BUILT_IN_HOST}"),
             true,
             false,
             Verdict::Works(ServiceFound {
@@ -135,15 +148,33 @@ fn list(name: &str) -> MenuView {
             Verdict::Checking,
         ),
     ];
+    // Far more than a window shows, the one in use among the last: the list scrolls to it.
+    let rows = if name == "service-many" {
+        (0..12)
+            .map(|n| {
+                let host = format!("arena{n}.example.org");
+                let verdict = match n % 3 {
+                    0 => Verdict::Failed(ServiceFault::Refused),
+                    1 => Verdict::Checking,
+                    _ => Verdict::Works(ServiceFound {
+                        name: "Arena".to_owned(),
+                    }),
+                };
+                row(&host, &format!("wss://{host}"), n == 9, true, verdict)
+            })
+            .collect()
+    } else {
+        rows
+    };
     let (typed, shown) = match name {
         "service-typing" => (
             TypedService::Address("wss://play.example.org".to_owned()),
             "https://play.example.org/lobby/",
         ),
         "service-refused" => (
-            TypedService::Refused(
-                service_words::address_fault(bota_radovid::AddressFault::Plain).to_owned(),
-            ),
+            TypedService::Refused(service_words::address_fault(
+                bota_radovid::AddressFault::Plain,
+            )),
             "ws://play.example.org",
         ),
         _ => (TypedService::Nothing, ""),

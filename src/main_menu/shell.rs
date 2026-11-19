@@ -79,6 +79,7 @@ pub fn plugin(app: &mut App) {
     super::hero_turn::plugin(app);
     super::preview::plugin(app);
     app.init_resource::<super::lobby_scroll::Positions>()
+        .init_resource::<super::service_page::Place>()
         .init_resource::<GameEpoch>()
         .init_resource::<super::availability::FocusKey>()
         .init_resource::<super::availability::MenuKeys>()
@@ -151,8 +152,13 @@ pub fn plugin(app: &mut App) {
                 super::lobby_scroll::scroll,
                 super::player_matches::reveal_focus,
                 super::player_matches::scrollbar_visibility,
+                super::service_page::keep_place,
             )
                 .after(bevy::ui::UiSystems::Layout),
+        )
+        .add_systems(
+            PostUpdate,
+            super::service_page::restore_place.before(bevy::ui::UiSystems::Layout),
         );
 }
 

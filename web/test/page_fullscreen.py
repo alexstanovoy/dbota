@@ -12,7 +12,7 @@ FLAG = "--fullscreen-page"
 ARGUMENTS = (
     (70, ('--fullscreen-page',), dict(type=pathlib.Path, help="a replay build opened on the Video settings")),
 )
-ORDER = 110
+ORDER = 120
 
 
 def run(args):

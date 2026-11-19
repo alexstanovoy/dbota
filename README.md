@@ -18,8 +18,8 @@ affiliated with or endorsed by Valve.
 
 - **Play locally:** host a lobby of up to ten players on your machine or LAN, on the full Dota map or Solo Mid, or
   join one by address. Empty seats stay empty; one player is one hero.
-- **Play online:** sign in to a radovid matchmaking service (the public one at `bota.lubush.space` is listed from the
-  first start; you can add your own and remove them, and each is checked before you can sign in) to queue for rated
+- **Play online:** sign in to a radovid matchmaking service (the default is the public one at `bota.lubush.space`;
+  you can add your own, choose any, and remove the ones you added; each is checked before you can sign in) to queue for rated
   matches, accept or decline a found
   match, create lobbies or search the open ones and join at once (a locked one asks for its password; its owner may
   turn the game's cheats on for everyone in it, shown to all before they ready), rejoin

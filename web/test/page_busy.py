@@ -16,7 +16,7 @@ FLAG = "--busy-page"
 ARGUMENTS = (
     (190, ('--busy-page',), dict(type=pathlib.Path, help="any build: a busy server's 503 is waited for and tried once more")),
 )
-ORDER = 150
+ORDER = 160
 
 
 def run(args):

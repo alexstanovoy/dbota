@@ -544,6 +544,8 @@ pub(super) fn way_in_column(kit: &mut Kit, root: Entity, scrolling: bool) -> Ent
         Node {
             column_gap: px(16),
             align_items: AlignItems::Center,
+            // The card under it gives way before it does.
+            flex_shrink: 0.0,
             ..default()
         },
     );
@@ -603,8 +605,14 @@ fn form_page(
         },
     );
     form_heading(kit, card, kind);
+    // A service that works is one quiet line; one that does not is told in full.
+    let works = service.is_some_and(|banner| banner.words.tone == super::service_words::Tone::Good);
     if let Some(banner) = service {
-        super::service_page::banner(kit, card, banner);
+        if works {
+            super::service_page::works_line(kit, card, banner);
+        } else {
+            super::service_page::banner(kit, card, banner);
+        }
     }
     // Signing in is for a service that passed its check; otherwise the card has none of it.
     let open = service.is_none_or(|banner| banner.open);
@@ -644,7 +652,7 @@ fn form_page(
     }
     // The way in's other ways: to another service (the way out without an account is under
     // the card).
-    if matches!(kind, FormKind::Login | FormKind::Register) {
+    if matches!(kind, FormKind::Login | FormKind::Register) && !works {
         kit.button(
             card,
             "CHANGE SERVICE",

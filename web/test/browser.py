@@ -32,6 +32,14 @@ def cache_folder():
     return pathlib.Path(given)
 
 
+# The environment of the services the checks start, which start game servers: without the variables that steer
+# a client or a server from outside (tools/client_environment.txt), such as a seat list in the caller's shell.
+def without_steering_variables():
+    listed = (HERE.parent.parent / "tools/client_environment.txt").read_text().splitlines()
+    steering = {line.strip() for line in listed if line.strip() and not line.startswith("#")}
+    return {name: value for name, value in os.environ.items() if name not in steering}
+
+
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -326,3 +334,49 @@ def assert_launch_labels_hidden(page):
 
 def assert_in(text, part):
     assert part in text, f"{part!r} not in {text!r}"
+
+
+def radovid_config(directory, page_dir, server_bin, port, game_port, cert, key, relay_port):
+    """A radovid for one demo ruleset whose games keep their replay and end quickly once the
+    player is gone, serving `page_dir` on its own origin."""
+    fingerprint = subprocess.run([server_bin, "--wire-fingerprint"], capture_output=True, text=True).stdout.strip()
+    return f"""
+listen = "127.0.0.1:{port}"
+database = "{directory}/radovid.db"
+tls_cert = "{cert}"
+tls_key = "{key}"
+game_ports = "{game_port}-{game_port}"
+lobby_teams = [5, 5]
+[web]
+static_dir = "{page_dir}"
+[password]
+memory_kib = 1024
+iterations = 1
+[artifacts]
+save_replays = true
+[limits]
+game_capacity = 1
+lobby_games_max = 1
+[[ruleset]]
+id = "demo"
+name = "Demo Hero"
+instant_solo = true
+info = "01"
+game = "bota"
+game_fingerprint = "{fingerprint}"
+teams = [1, 1]
+rated = false
+lobby_min_players = 1
+max_duration_secs = 600
+[ruleset.launcher]
+kind = "local"
+binary = "{server_bin}"
+public_url = "wss://127.0.0.1:{relay_port}"
+version_probe = ["--wire-fingerprint"]
+args = ["--map", "0", "--cheats", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0", "--ws-port", "{{port}}",
+        "--tls-cert", "{cert}", "--tls-key", "{key}", "--idle-timeout-secs", "1", "--heroes", "1", "--pick-secs", "1", "--tactical-secs", "0",
+        "--start-after-secs", "120", "--abandon-unjoined", "--empty-after-secs", "5"]
+env = {{ BOTA_SEATS = "{{seats}}" }}
+artifact = "{directory}/replays/replay-{{match_id}}.brp"
+artifact_args = ["--replay", "{{artifact}}"]
+"""

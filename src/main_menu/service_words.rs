@@ -3,7 +3,7 @@
 
 use bota_radovid::{AddressFault, ClientError, PROTO_VERSION, ServiceFault};
 
-use super::services::Verdict;
+use super::services::{BUILT_IN_HOST, Verdict};
 
 /// Said when the list is full.
 pub const TOO_MANY: &str = "The list is full. Remove a service before adding another.";
@@ -68,7 +68,7 @@ fn fault_words(fault: ServiceFault) -> (String, String) {
     let (headline, advice) = match fault {
         ServiceFault::BadAddress => (
             "This is not a service address",
-            "Use a host name, like bota.lubush.space.".to_owned(),
+            format!("Use a host name, like {BUILT_IN_HOST}."),
         ),
         ServiceFault::HostNotFound => (
             "Cannot find the host",
@@ -120,8 +120,8 @@ fn fault_words(fault: ServiceFault) -> (String, String) {
         ),
         ServiceFault::CannotConnect => (
             "The browser could not connect",
-            "The address may be wrong, the service may be down, or its certificate may not be \
-             valid. Check the address and try again."
+            "Check the full address, including the path after the host name. The service may be \
+             down or its certificate may be invalid."
                 .to_owned(),
         ),
     };
@@ -150,29 +150,36 @@ pub fn connection_words(error: &ClientError) -> String {
 
 /// The command line's service: its canonical address, or why it is none.
 pub fn service_argument(typed: &str) -> Result<String, String> {
-    bota_radovid::service_address(typed).map_err(|fault| address_fault(fault).to_owned())
+    bota_radovid::service_address(typed).map_err(address_fault)
 }
 
 /// Why an address typed for a service is none, and what to change.
-pub fn address_fault(fault: AddressFault) -> &'static str {
+pub fn address_fault(fault: AddressFault) -> String {
     match fault {
-        AddressFault::Empty => "Type the service's address, like bota.lubush.space.",
-        AddressFault::TooLong => "The address is too long.",
-        AddressFault::Spaces => "The address has a space in it. Remove it.",
-        AddressFault::Characters => "The address has a character that cannot be in an address.",
-        AddressFault::Scheme => {
-            "A service address starts with wss:// or has no start at all, like bota.lubush.space."
+        AddressFault::Empty => format!("Type the service's address, like {BUILT_IN_HOST}."),
+        AddressFault::TooLong => "The address is too long.".to_owned(),
+        AddressFault::Spaces => "The address has a space in it. Remove it.".to_owned(),
+        AddressFault::Characters => {
+            "The address has a character that cannot be in an address.".to_owned()
         }
+        AddressFault::Scheme => format!(
+            "A service address starts with wss:// or has no start at all, like {BUILT_IN_HOST}."
+        ),
         AddressFault::Plain => {
             "A service is reached over a secure connection. Use wss://, or leave the start out."
+                .to_owned()
         }
-        AddressFault::Credentials => "The address has a login in it (before @). Remove that part.",
-        AddressFault::QueryOrFragment => "Remove everything from ? or # onward.",
-        AddressFault::Host => {
-            "The host name is not valid. Use letters, digits, dashes and dots, like bota.lubush.space."
+        AddressFault::Credentials => {
+            "The address has a login in it (before @). Remove that part.".to_owned()
         }
-        AddressFault::Port => "The port after the colon must be a number from 1 to 65535.",
-        AddressFault::Path => "The part after the host name is not valid.",
+        AddressFault::QueryOrFragment => "Remove everything from ? or # onward.".to_owned(),
+        AddressFault::Host => format!(
+            "The host name is not valid. Use letters, digits, dashes and dots, like {BUILT_IN_HOST}."
+        ),
+        AddressFault::Port => {
+            "The port after the colon must be a number from 1 to 65535.".to_owned()
+        }
+        AddressFault::Path => "The part after the host name is not valid.".to_owned(),
     }
 }
 

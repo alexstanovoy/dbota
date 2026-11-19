@@ -131,6 +131,7 @@ echo "browser_check: KNOWN-INCOMPLETE: --replays-page checks the Demo Hero match
 in_private_environment python3 web/test/smoke.py \
     --launch-page "$pages/plain" --sound-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
     --fonts-page "$pages/plain" \
+    --services-page "$pages/plain" \
     --replay-page "$pages/replay" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
     --terrain-page "$pages/web" --fullscreen-page "$pages/video" \
     --replays-page "$pages/plain" --server "$server" --radovid "$radovid_bin"
