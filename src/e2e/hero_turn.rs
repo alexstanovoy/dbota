@@ -341,8 +341,14 @@ fn a_finger_dragging_across_the_hero_turns_it() {
 #[test]
 fn a_second_finger_on_the_hero_neither_turns_it_nor_takes_it_from_the_first() {
     let mut client = standing(Duration::from_millis(16));
-    let from = zone_centre(&mut client);
+    let zone = named(&mut client, "hero turn zone").expect("the zone over the hero");
+    let bounds = rect(&client, zone);
+    let from = bounds.center();
     let beside = from + Vec2::new(0.0, 60.0);
+    assert!(
+        bounds.contains(beside),
+        "both fingers start inside the turn zone"
+    );
     touch(&mut client, 7, TouchPhase::Started, from);
     touch(&mut client, 8, TouchPhase::Started, beside);
     for step in 1..=10 {
@@ -504,6 +510,29 @@ fn a_release_and_a_press_in_one_frame_leave_the_hero_held_by_the_press() {
         worn(&client),
         Some("cursor.grab"),
         "and its release lets go"
+    );
+}
+
+#[test]
+fn a_press_and_release_in_one_frame_leave_the_hero_unheld() {
+    let mut client = standing(Duration::from_millis(16));
+    let from = zone_centre(&mut client);
+    client.point(from);
+    client.step_frames(2);
+    left_button(&mut client, ButtonState::Pressed);
+    left_button(&mut client, ButtonState::Released);
+    client.step_frames(1);
+    assert_eq!(
+        worn(&client),
+        Some("cursor.grab"),
+        "the release restores the open hand"
+    );
+    client.point(from + Vec2::X * 50.0);
+    client.step_frames(2);
+    assert_eq!(
+        yaw(&client),
+        0.0,
+        "moving without a hold does not turn the hero"
     );
 }
 
