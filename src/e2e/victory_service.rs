@@ -16,20 +16,13 @@ use crate::main_menu::{Act, LobbyAction, MenuCore, Page};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 30);
 
-/// A service whose practice matches cheat, as its Demo Hero's do, so that the test fells the
-/// Ancient instead of playing the match.
-fn service_with_cheating_practice() -> crate::main_menu::tests::Service {
-    crate::main_menu::tests::start_service(true, |config| {
-        let practice = config
-            .find("id = \"practice\"")
-            .expect("the practice ruleset");
-        let args = practice
-            + config[practice..]
-                .find("args = [\"--map\", \"0\",")
-                .expect("its arguments");
-        let mut changed = config.clone();
-        changed.insert_str(args + "args = [".len(), "\"--cheats\", ");
-        changed
+/// Enables the same setup cheats as Demo Hero for the selected mode in this test service.
+fn service_with_cheats(mode: &str, save_replays: bool) -> crate::main_menu::tests::Service {
+    crate::main_menu::tests::start_service(save_replays, |mut config| {
+        let ruleset = config.find(&format!("id = \"{mode}\"")).expect("the ruleset");
+        let args = ruleset + config[ruleset..].find("args = [").expect("its arguments");
+        config.insert_str(args + "args = [".len(), "\"--cheats\", ");
+        config
     })
 }
 
@@ -37,7 +30,7 @@ fn menu(client: &Client) -> &MenuCore {
     client.world().non_send::<MenuCore>()
 }
 
-fn launch_practice(client: &mut Client) {
+fn launch_lobby(client: &mut Client, mode: &str) {
     act(client, Act::Go(Page::Lobbies));
     act(client, Act::LobbyUi(LobbyAction::Create));
     client.until("the lobby made", |c| {
@@ -47,13 +40,20 @@ fn launch_practice(client: &mut Client) {
     act(
         client,
         Act::LobbyUi(LobbyAction::EditMode(bota_radovid::proto::RulesetId(
-            "practice".to_owned(),
+            mode.to_owned(),
         ))),
     );
     act(client, Act::LobbyUi(LobbyAction::Save));
-    client.until("the practice lobby saved", |c| {
+    client.until("the lobby mode saved", |c| {
         menu(c).view().lobby_ui.editor.is_none()
     });
+    if mode == "full" {
+        let crate::main_menu::PageView::Lobby(lobby) = menu(client).view().body else {
+            panic!("the full lobby room is visible");
+        };
+        assert_eq!(lobby.settings.mode, "Full rules");
+        assert_eq!(lobby.teams.iter().map(|team| team.slots.len()).collect::<Vec<_>>(), [5, 5]);
+    }
     act(client, Act::ReadyLobby(true));
     client.until("the hero on the map", |c| {
         let core = c.core_mut();
@@ -70,9 +70,9 @@ fn launch_practice(client: &mut Client) {
 fn leaving_a_service_match_shows_a_readable_result_reason_without_a_finale() {
     use bevy::prelude::*;
 
-    let service = service_with_cheating_practice();
+    let service = service_with_cheats("practice", true);
     let mut client = signed_up(&service, "leaver");
-    launch_practice(&mut client);
+    launch_lobby(&mut client, "practice");
     client.until("the match may be left", |c| menu(c).view().can_leave_game);
     act(&mut client, Act::LeaveGame);
     act(&mut client, Act::Answer(true));
@@ -98,9 +98,9 @@ fn leaving_a_service_match_shows_a_readable_result_reason_without_a_finale() {
 
 #[test]
 fn a_service_match_ends_on_its_result_page_by_itself_with_the_game_left_and_the_account_free() {
-    let service = service_with_cheating_practice();
+    let service = service_with_cheats("full", true);
     let mut client = signed_up(&service, "alice");
-    launch_practice(&mut client);
+    launch_lobby(&mut client, "full");
     client.cheat(Cheat::AllVision { on: true });
     let ancient = |c: &Client| {
         c.view()
@@ -159,22 +159,6 @@ fn a_service_match_ends_on_its_result_page_by_itself_with_the_game_left_and_the_
     });
 }
 
-/// A service whose 1x1 rated mode cheats, so that the test fells a tower instead of playing.
-fn service_with_cheating_solo_mid() -> crate::main_menu::tests::Service {
-    crate::main_menu::tests::start_service(false, |config| {
-        let ruleset = config
-            .find("id = \"solo_mid\"")
-            .expect("the solo mid ruleset");
-        let args = ruleset
-            + config[ruleset..]
-                .find("args = [\"--map\", \"2\",")
-                .expect("its arguments");
-        let mut changed = config.clone();
-        changed.insert_str(args + "args = [".len(), "\"--cheats\", ");
-        changed
-    })
-}
-
 /// Runs a frame of each client, on the frame clock both are given, until `done` holds for both.
 fn both(clients: &mut [&mut Client; 2], what: &str, mut done: impl FnMut(&mut Client) -> bool) {
     let mut frames = 0u32;
@@ -200,7 +184,7 @@ fn both(clients: &mut [&mut Client; 2], what: &str, mut done: impl FnMut(&mut Cl
 /// may look for their next match at once.
 #[test]
 fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
-    let service = service_with_cheating_solo_mid();
+    let service = service_with_cheats("solo_mid", false);
     let mut alice = signed_up(&service, "alice");
     let mut bob = signed_up(&service, "bob");
     let solo = || bota_radovid::proto::RulesetId("solo_mid".to_owned());
