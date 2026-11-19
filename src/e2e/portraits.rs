@@ -15,15 +15,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bevy::camera::RenderTarget;
 use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{
+    RenderTarget,
+    primitives::{Frustum, Sphere},
+};
 use bevy::light::{AmbientLight, DirectionalLight};
 use bevy::prelude::*;
 use bota_proto::HeroId;
 use heatel::{DirSource, Vpk, find_game_dir};
 
 use super::harness::{Client, Server};
-use crate::portrait::Stage;
+use crate::portrait::{PortraitCamera, Stage};
 
 /// A KeyValues block of `portraits.txt`, read plainly: quoted keys, quoted values or blocks.
 enum Kv {
@@ -316,18 +319,23 @@ fn check_hero(hero: HeroId, all: &Kv, failures: &mut Vec<String>) {
     let default_camera = camera_of(default).expect("the default entry's camera");
     let camera_def = camera_of(entry).unwrap_or(default_camera);
     client.within(Duration::from_secs(120), "the portrait drawn", |c| {
-        c.world()
-            .resource::<Stage>()
-            .actor
-            .as_ref()
-            .is_some_and(|a| a.face.is_some())
+        let stage = c.world().resource::<Stage>();
+        stage.drawing() && stage.actor.as_ref().is_some_and(|a| a.face.is_some())
     });
-    // The worn effects step and draw a few frames after the model is posed, and on the frames
-    // the portrait is drawn (at most 30 a second): one of those is looked at.
+    let world = client.world_mut();
+    let mut cameras = world.query_filtered::<(&Transform, &Frustum), With<PortraitCamera>>();
+    let (camera, frustum) = cameras.single(world).expect("the portrait camera");
+    let centre_of_view = Sphere {
+        center: (camera.translation + camera.forward() * 100.0).into(),
+        radius: 1.0,
+    };
+    if !frustum.intersects_sphere(&centre_of_view, true) {
+        failures.push(format!(
+            "{name}: stage effects are culled with a stale camera on the first drawn frame"
+        ));
+    }
+    // The worn effects step only while the portrait is drawn.
     client.frames(30);
-    client.until("a frame the portrait is drawn on", |c| {
-        c.world().resource::<Stage>().drawing()
-    });
     let world = client.world_mut();
     let stage = world.resource::<Stage>();
     let live = stage.live().clone();

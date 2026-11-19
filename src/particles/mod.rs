@@ -40,6 +40,7 @@ pub fn plugin(app: &mut App) {
             PostUpdate,
             tick.after(TransformSystems::Propagate)
                 .after(crate::portrait::Aimed)
+                .after(bevy::camera::visibility::VisibilitySystems::UpdateFrusta)
                 .in_set(Simulation),
         )
         .add_systems(

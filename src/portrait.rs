@@ -1,6 +1,6 @@
 //! The bottom panel's portrait, as Dota draws it. With `animate_portrait`
 //! (Dota's "Animate Portrait", on by default) the unit's model plays its idle
-//! loop in the portrait, drawn at most [`RATE`] times a second; a hero's face
+//! loop in the portrait on every frame the HUD displays it. A hero's face
 //! plays its idle expression over it and, while the hero says a line, the
 //! line's lip sync (see `talk`). Off, a hero shows Dota's still picture of
 //! it, and a unit Dota has no picture of shows a render of its model made
@@ -550,7 +550,8 @@ pub fn plugin(app: &mut App) {
                 )
                     .chain()
                     .after(bevy::transform::TransformSystems::Propagate)
-                    .before(bevy::camera::CameraUpdateSystems),
+                    .before(bevy::camera::CameraUpdateSystems)
+                    .before(VisibilitySystems::UpdateFrusta),
                 on_stage
                     .in_set(VisibilitySystems::CheckVisibility)
                     .after(check_visibility_cpu_culling),
@@ -997,7 +998,7 @@ fn aim(
     mut stage: ResMut<Stage>,
     mut commands: Commands,
     children: Query<&Children>,
-    bounds: Query<(&Aabb, &GlobalTransform)>,
+    bounds: Query<(&Aabb, &GlobalTransform), Without<PortraitCamera>>,
     mut camera: Single<
         (
             &mut Camera,
@@ -1005,6 +1006,7 @@ fn aim(
             &mut Transform,
             &mut Projection,
             &mut AmbientLight,
+            &mut GlobalTransform,
         ),
         (With<PortraitCamera>, Without<PortraitLight>),
     >,
@@ -1044,7 +1046,11 @@ fn aim(
         return;
     };
     let at = |local: &Transform| Transform::from_translation(STAGE) * *local;
-    *camera.2 = at(&placed.camera);
+    let camera_place = at(&placed.camera);
+    camera.2.set_if_neq(camera_place);
+    // Aiming follows transform propagation. Publish the pose now so the first
+    // visible frame's render and particles use the same camera.
+    camera.5.set_if_neq(GlobalTransform::from(camera_place));
     *camera.3 = Projection::Perspective(PerspectiveProjection {
         fov: placed.vfov,
         aspect_ratio: SIZE.0 as f32 / SIZE.1 as f32,
@@ -1287,7 +1293,7 @@ fn fit(center: Vec3, radius: f32, default: Option<&Framing>) -> Placed {
 pub(crate) fn bounds_in(
     pivot: Entity,
     children: &Query<&Children>,
-    bounds: &Query<(&Aabb, &GlobalTransform)>,
+    bounds: &Query<(&Aabb, &GlobalTransform), Without<PortraitCamera>>,
 ) -> Option<(Vec3, f32)> {
     model_bounds(pivot, children, bounds).map(|(center, half)| (center, half.length().max(8.0)))
 }
@@ -1295,7 +1301,7 @@ pub(crate) fn bounds_in(
 pub(crate) fn model_bounds(
     pivot: Entity,
     children: &Query<&Children>,
-    bounds: &Query<(&Aabb, &GlobalTransform)>,
+    bounds: &Query<(&Aabb, &GlobalTransform), Without<PortraitCamera>>,
 ) -> Option<(Vec3, Vec3)> {
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for part in children.iter_descendants(pivot) {
