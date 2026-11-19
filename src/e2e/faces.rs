@@ -435,6 +435,61 @@ fn line_frames(authored: &AuthoredLine, step: f32) -> (usize, f32) {
     (((lead + end + 2.0 * lead) / step).ceil() as usize, lead)
 }
 
+/// How far the mouth runs ahead of what is heard. The face's clock trails the sound's start by the
+/// line's lead (the phonemes' filter span, 80 ms, for a line with no phoneme before its start);
+/// the filter shows the phonemes of the 80 ms ahead of the clock, centred 40 ms ahead; the output
+/// plays the sound its device buffers (two, [`DEVICE_AHEAD`]) after the frame it began on. So the
+/// mouth shows what is heard two buffers less 40 ms later: 45 ms ahead natively (buffers of
+/// 42.7 ms), 53 ms in a browser (46.4 ms), less half a frame a display holds each frame for
+/// (8 ms at 60 Hz, 2 ms at 240 Hz); a line whose phonemes start before it trails by as much more.
+/// Speech's own anticipation (lips form a sound before it is heard) is of this order.
+#[test]
+fn the_mouth_leads_what_is_heard_by_the_outputs_latency_less_half_the_phoneme_filter() {
+    let text = "dbota-lipsync 1\nphoneme 0.1 0.3 97\n";
+    let face = Arc::new(LineFace {
+        lipsync: crate::face::Lipsync::parse(text).expect("a lip sync"),
+        file: "a line".into(),
+    });
+    for (pacing, lead_ms) in [
+        (Pacing::Hz240, 45.3),
+        (Pacing::Hz60, 45.3),
+        (Pacing::Browser, 52.9),
+    ] {
+        let buffer = pacing.device_buffer().as_secs_f32();
+        let times: Vec<f32> = pacing
+            .frames(1.0)
+            .iter()
+            .scan(0.0, |t, step| {
+                *t += step.as_secs_f32();
+                Some(*t)
+            })
+            .collect();
+        let heard_from = times[1];
+        let mut speech = Speech::default();
+        speech.say(None, face.clone(), Some(Entity::PLACEHOLDER), times[0]);
+        for &now in &times {
+            let position = buffer * ((now - heard_from) / buffer + DEVICE_AHEAD).floor();
+            let report = if now < heard_from {
+                Heard::Waiting
+            } else {
+                Heard::At(position)
+            };
+            speech.hear(now, report);
+            let Some((_, t)) = speech.of(None, now).filter(|_| now >= heard_from) else {
+                continue;
+            };
+            let shown = t + crate::face::PHONEME_FILTER / 2.0;
+            let heard = (now - heard_from) - DEVICE_AHEAD * buffer;
+            let ahead_ms = (shown - heard) * 1000.0;
+            assert!(
+                (ahead_ms - lead_ms).abs() < 0.2,
+                "{} at {now:.3} s: the mouth {ahead_ms:.1} ms ahead of the sound",
+                pacing.name()
+            );
+        }
+    }
+}
+
 /// Every voice line of the hero's resident pack, of every kind, with its lip sync; and how many
 /// of its lines have no lip sync.
 fn lines(client: &Client, hero: HeroId) -> (Vec<AuthoredLine>, usize) {
