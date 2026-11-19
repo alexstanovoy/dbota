@@ -33,6 +33,11 @@ const DOWN: [(f32, f32); 2] = [(0.10, 0.0), (0.75, 100.0)];
 
 /// The backdrop over the whole of `root` from `top` down, under everything spawned after it.
 pub fn draw(kit: &mut Kit, root: Entity, backdrop: Backdrop, top: f32) {
+    let Backdrop::Still(side) = backdrop;
+    let accent = match side {
+        Side::Radiant => theme::RESULT_RADIANT_ROW,
+        Side::Dire => theme::RESULT_DIRE_ROW,
+    };
     let area = kit
         .commands
         .spawn((
@@ -45,21 +50,22 @@ pub fn draw(kit: &mut Kit, root: Entity, backdrop: Backdrop, top: f32) {
                 ..default()
             },
             BackgroundColor(theme::GROUND),
+            // A side-coloured backdrop fills the first menu frame while its full-size art decodes.
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                ColorStop::new(accent, percent(0.0)),
+                ColorStop::new(theme::GROUND, percent(100.0)),
+            ])),
             Pickable::IGNORE,
             Name::new("menu background"),
             ChildOf(root),
         ))
         .id();
-    match backdrop {
-        Backdrop::Still(side) => {
-            let art = match side {
-                Side::Radiant => "menu.background.radiant",
-                Side::Dire => "menu.background.dire",
-            };
-            let picture = kit.art(area, art, crate::ui::fill());
-            kit.commands.entity(picture).insert(Cover);
-        }
-    }
+    let art = match side {
+        Side::Radiant => "menu.background.radiant",
+        Side::Dire => "menu.background.dire",
+    };
+    let picture = kit.art(area, art, crate::ui::fill());
+    kit.commands.entity(picture).insert(Cover);
     for (stops, across) in [(&ACROSS[..], true), (&DOWN[..], false)] {
         let stops = stops
             .iter()

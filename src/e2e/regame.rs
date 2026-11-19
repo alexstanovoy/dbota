@@ -722,3 +722,62 @@ fn each_broken_replay_reports_its_own_read_error_once() {
         }
     });
 }
+
+#[test]
+fn the_first_menu_frame_has_a_backdrop_while_its_texture_is_unavailable() {
+    let mut client = Client::run(&[]);
+    let server = Server::start(1, &[]);
+    connect(&mut client, &server);
+    pick(&mut client);
+    client.until("the match has drawn", |c| {
+        c.world().resource::<Loading>().done()
+    });
+    let world = client.world_mut();
+    let path = world
+        .resource::<crate::manifest::Manifest>()
+        .file("menu.background.radiant")
+        .expect("the menu backdrop");
+    let full_size = world.resource::<AssetServer>().load::<Image>(path);
+    client.until("the menu texture to hold out of rendering", |c| {
+        c.world()
+            .resource::<Assets<Image>>()
+            .contains(full_size.id())
+    });
+    client
+        .world_mut()
+        .resource_mut::<Assets<Image>>()
+        .remove(full_size.id());
+    act(&mut client, Act::Disconnect);
+    act(&mut client, Act::Answer(true));
+    client.until("the first drawn main menu frame", |c| {
+        if c.world().non_send::<MenuCore>().in_game() {
+            return false;
+        }
+        let world = c.world_mut();
+        world
+            .query::<(&Name, &InheritedVisibility, &ComputedNode)>()
+            .iter(world)
+            .any(|(name, visible, node)| {
+                name.as_str() == "menu background"
+                    && visible.get()
+                    && node.size().min_element() > 0.0
+            })
+    });
+    let world = client.world_mut();
+    assert!(
+        !world.resource::<Assets<Image>>().contains(full_size.id()),
+        "the full-size art must still be withheld"
+    );
+    let mut backdrops = world.query::<(
+        &Name,
+        &BackgroundGradient,
+        &InheritedVisibility,
+        &ComputedNode,
+    )>();
+    assert!(backdrops.iter(world).any(|(name, gradient, visible, size)| {
+        name.as_str() == "menu background"
+            && gradient.0.iter().any(|gradient| matches!(gradient, Gradient::Linear(linear)
+                if linear.stops.iter().any(|stop| stop.color != crate::theme::GROUND && stop.color.alpha() == 1.0)))
+            && visible.get() && size.size().min_element() > 0.0
+    }), "the first menu frame shows plain ground");
+}
