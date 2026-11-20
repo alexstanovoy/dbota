@@ -74,14 +74,14 @@ else
 fi
 DBOTA_INDEX_PAGE="$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_cache_index.py -v
 DBOTA_INDEX_PAGE="$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_voice_worker.py -v
-# Both match checks use the same Shadow Fiend replay from this build's protocol.
-match_replay=$work/ui-art.brp
+APIS=webgl2 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --speech-check --face-trace" OUT=$pages/speech web/build.sh
+in_private_environment python3 web/test/smoke.py --only-wire --speech-page "$pages/speech"
+art_replay=$work/ui-art.brp
 cargo run --manifest-path "$bota/Cargo.toml" --locked --release --quiet --target-dir "$server_target" \
-    -p bota_server --example local_match -- --replay "$match_replay" > "$work/ui-art-replay.log" 2>&1
-APIS=webgl2 DBOTA_WEB_REPLAY=$match_replay OUT=$pages/match-checks \
-    DBOTA_WEB_ARGS="--replay built-in --pov 0 --tip item:35 --trace-ui-art icons/abilities/nevermore_dark_lord.png,icons/abilities/nevermore_frenzy.png,hud/item_tooltip_active_psd.png --speech-check --face-trace" \
-    web/build.sh
-in_private_environment python3 web/test/smoke.py --only-wire --ui-art-page "$pages/match-checks" --speech-page "$pages/match-checks"
+    -p bota_server --example local_match -- --replay "$art_replay" > "$work/ui-art-replay.log" 2>&1
+APIS=webgl2 DBOTA_WEB_REPLAY=$art_replay OUT=$pages/ui-art \
+    DBOTA_WEB_ARGS="--replay built-in --pov 0 --tip item:item_magic_stick" web/build.sh
+in_private_environment python3 web/test/smoke.py --only-wire --ui-art-page "$pages/ui-art"
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/replay web/build.sh
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video" APIS=webgpu OUT=$pages/video web/build.sh
 PROFILE=web DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/web web/build.sh

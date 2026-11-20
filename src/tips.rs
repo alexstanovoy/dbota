@@ -405,22 +405,35 @@ fn entering_tip(look: &Lookup, id: u16) -> Option<Content> {
     look.ability(id, 1, max)
 }
 
-/// `--tip item:ID`, `--tip shop:ID` or `--tip ability:ID:LEVEL`: a popup that
+/// `--tip item:KEY`, `--tip shop:KEY` or `--tip ability:ID:LEVEL`: a popup that
 /// stays, for screenshots.
 fn forced_tip(look: &Lookup, spec: &str) -> Option<Content> {
     let mut parts = spec.split(':');
     let kind = parts.next()?;
-    let id: u16 = parts.next()?.parse().ok()?;
-    match kind {
-        "item" => look.item(id, None),
-        "shop" => look.item(id, item_def(bota_proto::ItemId(id)).map(|d| d.cost)),
-        // A buff with ten seconds left, at Dota's 30 ticks a second.
-        "buff" => Some(buff_tip(look, id, Some(300), 30)),
-        _ => {
-            let level = parts.next().and_then(|l| l.parse().ok()).unwrap_or(1);
-            look.ability(id, level, 4)
-        }
+    let value = parts.next()?;
+    if matches!(kind, "item" | "shop") {
+        let item = value
+            .parse()
+            .map(bota_proto::ItemId)
+            .ok()
+            .or_else(|| bota_core::item_by_key(value))?;
+        let price = if kind == "shop" {
+            item_def(item).map(|def| def.cost)
+        } else {
+            None
+        };
+        return look.item(item.0, price);
     }
+    let id = value.parse().ok()?;
+    // A buff with ten seconds left, at Dota's 30 ticks a second.
+    if kind == "buff" {
+        return Some(buff_tip(look, id, Some(300), 30));
+    }
+    let level = parts
+        .next()
+        .and_then(|level| level.parse().ok())
+        .unwrap_or(1);
+    look.ability(id, level, 4)
 }
 
 /// What of a query's boxes the cursor is over, if any.

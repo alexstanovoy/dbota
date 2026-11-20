@@ -258,7 +258,6 @@ paths = [
     "src/talk.rs",
     "src/talk_check.rs",
     "src/script.rs",
-    "src/script/art.rs",
     "src/e2e/faces.rs",
     "src/e2e/face_frames.rs",
     "src/e2e/portraits.rs",

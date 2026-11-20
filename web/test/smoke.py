@@ -68,6 +68,7 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
   the display mode and F11 put the canvas fullscreen and leaving it turns the setting back.
 """
 import argparse
+import base64
 import ctypes
 import ctypes.util
 import functools
@@ -1162,23 +1163,51 @@ def check_sound_page(directory):
     server.shutdown()
 
 
+# Interior samples at the smoke viewport's default HUD scale and unpositioned cursor.
+# The two left samples are from the D and F ability slots. The strip sample avoids its label.
+HUD_ART_REGIONS = (
+    ("Presence of the Dark Lord", (650, 635, 22, 25)),
+    ("Feast of Souls", (682, 635, 23, 25)),
+    ("Magic Stick active strip", (130, 175, 60, 11)),
+)
+
+
 def check_ui_art_page(directory):
-    """The real browser renderer prepares the two hero icons and active tooltip band."""
+    """Both hero icons and the open item tooltip colour the rendered match canvas."""
     with sync_playwright() as p:
         server, base, browser, page, console, problems = opened(p, directory)
         try:
             page.goto(base + "?cache=http&gpu=webgl2")
-            wait_console(
-                page, console,
-                r"ui-art: drew icons/abilities/nevermore_dark_lord.png, icons/abilities/nevermore_frenzy.png, "
-                r"hud/item_tooltip_active_psd.png",
-                180, "the match HUD's prepared texture batches",
-            )
+            wait_loading_cover(page, console)
             assert any("dbota: drawing with webgl2" in line for line in console), console
-            assert page.locator("#dbota").is_visible()
-            page.screenshot(path=str(HERE.parent.parent / "temp/smoke-ui-art.png"))
+            screenshot = page.locator("#dbota").screenshot(
+                path=str(HERE.parent.parent / "temp/smoke-ui-art.png"), timeout=60000,
+            )
+            samples = page.evaluate("""async ({png, regions}) => {
+                const frame = new Image();
+                frame.src = 'data:image/png;base64,' + png;
+                await frame.decode();
+                const canvas = document.createElement('canvas');
+                canvas.width = frame.width;
+                canvas.height = frame.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(frame, 0, 0);
+                return regions.map(([x, y, width, height], region) => {
+                    const rgba = ctx.getImageData(x, y, width, height).data;
+                    let coloured = 0;
+                    for (let at = 0; at < rgba.length; at += 4) {
+                        const [r, g, b, a] = rgba.subarray(at, at + 4);
+                        const red = r >= 25 && r >= Math.max(g, b) + 12;
+                        const blue = b >= 58 && b >= r + 24 && b >= g + 20;
+                        if (a === 255 && (region === regions.length - 1 ? blue : red)) coloured++;
+                    }
+                    return [coloured, width * height];
+                });
+            }""", {"png": base64.b64encode(screenshot).decode(), "regions": [rect for _, rect in HUD_ART_REGIONS]})
+            for (name, _), (coloured, total) in zip(HUD_ART_REGIONS, samples, strict=True):
+                assert coloured * 25 >= total, f"{name} art colour in {coloured}/{total} pixels"
             assert not problems, problems
-            print("match HUD: 3 drawn textures at the browser image budget")
+            print(f"match HUD: coloured pixels in both icons and the active tooltip strip {samples}")
         finally:
             browser.close()
             server.shutdown()
@@ -2077,7 +2106,7 @@ def main():
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
     ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
     ap.add_argument("--cursor-input-page", type=pathlib.Path, help="a replay build: the cursor with a real mouse (X server)")
-    ap.add_argument("--ui-art-page", type=pathlib.Path, help="a match replay with a traced HUD and active item tooltip")
+    ap.add_argument("--ui-art-page", type=pathlib.Path, help="a match replay with Shadow Fiend's HUD and an active item tooltip")
     ap.add_argument("--boot-page", type=pathlib.Path, help="any build: every way the start can go wrong ends on a screen")
     ap.add_argument("--busy-page", type=pathlib.Path, help="any build: a busy server's 503 is waited for and tried once more")
     ap.add_argument("--pixels-page", type=pathlib.Path, help="a replay build: the canvas drawn at its device pixels")

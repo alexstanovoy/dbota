@@ -302,7 +302,7 @@ pub struct Args {
     /// service needed (for screenshots: `--frames N --screenshot FILE`).
     #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS.iter().copied().chain(postgame::preview::NAMES.iter().copied())))]
     pub menu_preview: Option<String>,
-    /// Debug: keep a tooltip open: `item:ID` (id of the item), `shop:ID`, `buff:ID` (an effect with ten seconds left),
+    /// Debug: keep a tooltip open: `item:KEY` or `shop:KEY` (item key or id), `buff:ID` (an effect with ten seconds left),
     /// `ability:ID:LEVEL`, `stats` (the stats tooltip) or `talents` (the
     /// talent tree).
     #[arg(long, value_name = "KIND:ID")]
@@ -401,9 +401,6 @@ pub struct Args {
     /// `await:menu`, `shot:FILE`, `wait:SECONDS`.
     #[arg(long, value_name = "STEPS")]
     pub script: Option<String>,
-    /// Debug: trace these comma-separated cache image paths when drawn in the match UI.
-    #[arg(long, value_delimiter = ',')]
-    pub trace_ui_art: Vec<String>,
 }
 
 /// What else than playing dbota can do.

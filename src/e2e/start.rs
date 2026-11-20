@@ -329,8 +329,14 @@ fn a_slow_loading_keeps_the_connection_and_enters_the_match() {
     assert!(!client.core().lost, "still connected in the match");
 }
 
+#[derive(Resource)]
+struct HudSurface(Handle<Image>);
+
+#[derive(Resource, Default)]
+struct HudCapture(Option<Image>);
+
 fn prepare_art_hud(app: &mut App) {
-    app.add_systems(
+    app.init_resource::<HudCapture>().add_systems(
         PostStartup,
         |mut commands: Commands,
          mut camera: Single<
@@ -345,33 +351,141 @@ fn prepare_art_hud(app: &mut App) {
                 bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
                 None,
             ));
-            *camera.1 = bevy::camera::RenderTarget::Image(image.into());
+            *camera.1 = bevy::camera::RenderTarget::Image(image.clone().into());
             commands
                 .entity(camera.0)
                 .insert(bevy::ui::IsDefaultUiCamera);
+            commands.insert_resource(HudSurface(image));
         },
     );
 }
 
+fn hud_pixels(client: &mut Client) -> Image {
+    use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+
+    let target = client.world().resource::<HudSurface>().0.clone();
+    client.world_mut().spawn(Screenshot::image(target)).observe(
+        |capture: On<ScreenshotCaptured>, mut pixels: ResMut<HudCapture>| {
+            pixels.0 = Some(capture.image.clone());
+        },
+    );
+    client.until("the rendered HUD frame", |c| {
+        c.world().resource::<HudCapture>().0.is_some()
+    });
+    client
+        .world_mut()
+        .resource_mut::<HudCapture>()
+        .0
+        .take()
+        .expect("captured frame")
+}
+
+fn hud_rect(world: &World, entity: Entity) -> Rect {
+    let size = world
+        .get::<ComputedNode>(entity)
+        .expect("laid out HUD")
+        .size();
+    let centre = world
+        .get::<bevy::ui::UiGlobalTransform>(entity)
+        .expect("HUD position")
+        .translation;
+    Rect::from_center_size(centre, size)
+}
+
+fn assert_art_pixels(
+    frame: &Image,
+    rect: Rect,
+    name: &str,
+    has_art_colour: impl Fn([u8; 4]) -> bool,
+) {
+    let first = rect.min.ceil().as_uvec2();
+    let last = rect.max.floor().as_uvec2();
+    assert_eq!(
+        frame.texture_descriptor.format,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb
+    );
+    assert!(
+        rect.min.cmpge(Vec2::ZERO).all()
+            && last.cmple(UVec2::new(frame.width(), frame.height())).all(),
+        "{name} is inside the frame"
+    );
+    assert!(
+        last.cmpge(first + UVec2::splat(4)).all(),
+        "{name} has a visible sample region"
+    );
+    let rgba = frame.data.as_deref().expect("readback produced pixels");
+    let stride = frame.width() as usize * 4;
+    assert_eq!(rgba.len(), stride * frame.height() as usize);
+    let area = last - first;
+    let mut coloured = 0;
+    for y in first.y..last.y {
+        for x in first.x..last.x {
+            let at = y as usize * stride + x as usize * 4;
+            coloured += u32::from(has_art_colour(rgba[at..at + 4].try_into().unwrap()));
+        }
+    }
+    assert!(
+        coloured * 25 >= area.x * area.y,
+        "{name} art colour in {coloured}/{} pixels at {rect:?}",
+        area.x * area.y
+    );
+    eprintln!("{name} art colour in {coloured}/{} pixels", area.x * area.y);
+}
+
 #[test]
-fn shadow_fiends_icons_and_the_active_item_header_reach_match_draw_batches() {
+fn shadow_fiends_icons_and_the_active_item_header_colour_the_match_hud() {
     let server = Server::start(2, &[]);
     super::harness::quiet_seat(&server, HeroId::PUDGE);
     let mut client = Client::join_rendered(
         &server,
         HeroId::SHADOW_FIEND,
-        &[
-            "--trace-ui-art",
-            "icons/abilities/nevermore_dark_lord.png,icons/abilities/nevermore_frenzy.png,hud/item_tooltip_active_psd.png",
-            "--tip",
-            "item:35",
-        ],
+        &["--tip", "item:item_magic_stick"],
         prepare_art_hud,
     );
     super::hud_layout::on_screen(&mut client);
-    client.within(
-        std::time::Duration::from_secs(20),
-        "both hero icons and the item header in textured UI batches",
-        |c| c.world().resource::<crate::script::art::Trace>().drawn(),
+
+    let (player, unit, kit) = crate::hud::subject(client.core());
+    assert!(player.is_some(), "the match HUD has a player");
+    let abilities = crate::hud::subject_abilities(unit, kit);
+    let slots = ["nevermore_dark_lord", "nevermore_frenzy"].map(|key| {
+        abilities
+            .iter()
+            .position(|ability| {
+                bota_core::ability_def(ability.id).is_some_and(|def| def.key == key)
+            })
+            .expect("the ability is on Shadow Fiend's HUD") as u8
+    });
+    let world = client.world_mut();
+    let icons = slots.map(|slot| {
+        let entity = world
+            .query::<(Entity, &crate::hud::AbilityBox)>()
+            .iter(world)
+            .find_map(|(entity, ability)| (ability.0 == slot).then_some(entity))
+            .expect("the icon's layout");
+        let rect = hud_rect(world, entity);
+        Rect::from_center_size(rect.center(), rect.size() * 0.72)
+    });
+    let band = world
+        .query_filtered::<(Entity, &InheritedVisibility), With<crate::tip_band::Band>>()
+        .iter(world)
+        .find_map(|(entity, visible)| visible.get().then_some(entity))
+        .expect("the visible Magic Stick header");
+    let band = hud_rect(world, band);
+    // Sample far from the header text and the clipped edges of the art.
+    let strip = Rect::from_corners(
+        band.min + band.size() * Vec2::new(0.55, 0.2),
+        band.min + band.size() * Vec2::new(0.85, 0.8),
     );
+    let frame = hud_pixels(&mut client);
+    for (name, rect) in ["Presence of the Dark Lord", "Feast of Souls"]
+        .into_iter()
+        .zip(icons)
+    {
+        assert_art_pixels(&frame, rect, name, |[r, g, b, a]| {
+            a == 255 && r >= 25 && r.saturating_sub(g.max(b)) >= 12
+        });
+    }
+    assert_art_pixels(&frame, strip, "Magic Stick active strip", |[r, g, b, a]| {
+        a == 255 && b >= 58 && b.saturating_sub(r) >= 24 && b.saturating_sub(g) >= 20
+    });
 }

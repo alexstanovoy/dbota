@@ -82,8 +82,6 @@ use bevy::{
 use crate::main_menu::MenuCore;
 use crate::session::Session;
 
-pub(crate) mod art;
-
 /// Seconds any step may wait for what it waits for.
 const PATIENCE: f32 = 120.0;
 
@@ -353,8 +351,6 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
 }
 
 pub fn plugin(app: &mut App) {
-    let paths = app.world().resource::<crate::Args>().trace_ui_art.clone();
-    art::install(app, paths);
     let Some(text) = app.world().resource::<crate::Args>().script.clone() else {
         return;
     };
