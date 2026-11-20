@@ -739,7 +739,10 @@ mod tests {
 
     /// The items the install's localization has no entry for at all (a recipe the game never
     /// names); the client names them itself ([`crate::item_names`]).
-    const WITHOUT_TEXT: &[&str] = &["item_recipe_specialists_array"];
+    const WITHOUT_TEXT: &[&str] = &[
+        "item_recipe_specialists_array",
+        "item_recipe_ultimate_scepter",
+    ];
 
     /// Every item the server knows, through the resolver and the install's own text: a name, and a
     /// description unless the game has none ([`WITHOUT_DESCRIPTION`]), which then shows a stat line

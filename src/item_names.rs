@@ -165,6 +165,19 @@ pub const FALLBACK: &[(&str, &str)] = &[
     ("item_crellas_crozier", "Crella's Crozier"),
     ("item_recipe_crellas_crozier", "Recipe: Crella's Crozier"),
     ("item_recipe_maelstrom", "Recipe: Maelstrom"),
+    ("item_aghanims_shard", "Aghanim's Shard"),
+    ("item_aghanims_shard_roshan", "Aghanim's Shard - Consumable"),
+    ("item_recipe_ultimate_scepter", "Recipe: Aghanim's Scepter"),
+    ("item_ultimate_scepter", "Aghanim's Scepter"),
+    (
+        "item_recipe_ultimate_scepter_2",
+        "Recipe: Aghanim's Blessing",
+    ),
+    ("item_ultimate_scepter_2", "Aghanim's Blessing"),
+    (
+        "item_ultimate_scepter_roshan",
+        "Aghanim's Blessing - Roshan",
+    ),
 ];
 
 /// The English name of the item whose Dota key is `key`, if the table has one.
