@@ -1531,8 +1531,6 @@ def assert_in(text, part):
 CLICK_PLAY = (1140, 688)
 CLICK_CUSTOM_LOBBIES = (1140, 478)
 CLICK_CREATE_LOBBY = (1140, 549)
-CLICK_LOBBY_NAME = (526, 284)
-CLICK_LOBBY_OK = (578, 502)
 CLICK_REPLAYS = (395, 15)
 CLICK_START = (1135, 688)
 
@@ -1801,11 +1799,6 @@ def start_practice(page, console, shot):
     shot(page, "3-home")
     for at in (CLICK_PLAY, CLICK_CUSTOM_LOBBIES, CLICK_CREATE_LOBBY):
         click_drawn(page, at)
-    shot(page, "4-create-lobby")
-    click_drawn(page, CLICK_LOBBY_NAME)
-    page.keyboard.type("alone")
-    after_frames(page)
-    click_drawn(page, CLICK_LOBBY_OK)
     wait_console(page, console, "lobby: creation confirmed", 300, "lobby creation")
     after_frames(page)
     shot(page, "5-lobby")
@@ -1875,6 +1868,7 @@ def drive_replays_page(work, port, evidence):
         wait_for_sign_in(page)
         wait_console(page, console, r"replays: 1 kept", 600, "the replay listed again")
         click_drawn(page, CLICK_REPLAYS)
+        shot(page, "7-replay-list")
         page.keyboard.press("Enter")  # first row starts on WATCH
         wait_console(page, console, r"match known: tick \d+", 600, "the stored replay to play")
         shot(page, "8-watch")
