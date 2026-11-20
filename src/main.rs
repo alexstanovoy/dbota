@@ -540,7 +540,10 @@ fn main() -> AppExit {
         Err(exit) => return exit,
     };
     #[cfg(target_arch = "wasm32")]
-    let mut args = arguments();
+    let mut args = {
+        webpage::report_panics();
+        arguments()
+    };
     args.read_environment = true;
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -746,10 +749,7 @@ fn start(
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
     #[cfg(target_arch = "wasm32")]
-    {
-        webpage::report_panics();
-        app.add_plugins(webpage::plugin);
-    }
+    app.add_plugins(webpage::plugin);
     let exit = app.run();
     // The window, the GPU and the sound device are let go before dbota starts again.
     drop(app);

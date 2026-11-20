@@ -37,8 +37,9 @@ a picked folder are read).
 The Origin Private File System holds `dbota/current.txt`, naming the finished copy, and the copy in `dbota/copy-<time>/`:
 its files, `index.txt` and `stamp.txt` (the asset fingerprint of the build that made it, then the size and modification
 time of `pak01_dir.vpk`). A whole install's copy is about 1.1 GB. An import writes a new folder and names it in
-`current.txt` only once its index and stamp are written, then removes the copy before it: a stopped, failed or
-cut-off import (a closed tab) never replaces a copy, and what it left is removed at the next start. A copy another
+`current.txt` with a writable file stream after its index and stamp are written. The browser commits that pointer
+when the stream closes. Web Locks serialize imports across tabs, and an import preserves the previous copy until
+publication succeeds. Unfinished copies are reclaimed under the lock. A copy another
 build made, one of an older layout, or one without its index is not read: the first-run screen asks for the folder
 again. Before it starts, an import asks the browser for as much room as an import may write (1.6 GB) and says how much
 there is when the browser gives less. As it starts, the client asks the browser to keep the copy for good

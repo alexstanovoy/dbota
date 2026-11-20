@@ -355,6 +355,7 @@ def unsupported(p, page_dir):
     and that a desktop dbota exists; no download link while no release names one."""
     cases = [
         ("no private storage", "Object.defineProperty(navigator, 'storage', {value: undefined});", "Private storage"),
+        ("no import lock", "Object.defineProperty(navigator, 'locks', {value: undefined});", "Web Locks"),
         ("no folder dialog", "delete window.showDirectoryPicker; delete HTMLInputElement.prototype.webkitdirectory;",
          "choose a folder"),
         ("no graphics", """delete Navigator.prototype.gpu;

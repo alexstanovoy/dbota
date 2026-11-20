@@ -26,8 +26,8 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{
     DedicatedWorkerGlobalScope, File, FileList, FileReaderSync, FileSystemDirectoryHandle,
     FileSystemFileHandle, FileSystemGetDirectoryOptions, FileSystemGetFileOptions,
-    FileSystemReadWriteOptions, FileSystemRemoveOptions, FileSystemSyncAccessHandle, MessageEvent,
-    FileSystemWritableFileStream, StorageEstimate,
+    FileSystemReadWriteOptions, FileSystemRemoveOptions, FileSystemSyncAccessHandle,
+    FileSystemWritableFileStream, MessageEvent, StorageEstimate,
 };
 
 use dbota_import::browser::{self, CURRENT, IMPORT_LOCK, LEVELS, MAX_PICKED, PACKAGE, ROOT};
@@ -414,8 +414,10 @@ async fn publish_current(root: &FileSystemDirectoryHandle, name: &str) -> Result
     let options = FileSystemGetFileOptions::new();
     options.set_create(true);
     let handle: FileSystemFileHandle = wait(root.get_file_handle_with_options(CURRENT, &options))
-        .await?.unchecked_into();
-    let stream: FileSystemWritableFileStream = wait(handle.create_writable()).await?.unchecked_into();
+        .await?
+        .unchecked_into();
+    let stream: FileSystemWritableFileStream =
+        wait(handle.create_writable()).await?.unchecked_into();
     if let Err(why) = wait(stream.write_with_str(&format!("{name}\n")).map_err(said)?).await {
         let _ = wait(stream.abort()).await;
         return Err(why);
@@ -429,7 +431,10 @@ async fn publish_current(root: &FileSystemDirectoryHandle, name: &str) -> Result
 }
 
 fn missing(error: &JsValue) -> bool {
-    Reflect::get(error, &"name".into()).ok().and_then(|name| name.as_string()).as_deref()
+    Reflect::get(error, &"name".into())
+        .ok()
+        .and_then(|name| name.as_string())
+        .as_deref()
         == Some("NotFoundError")
 }
 
@@ -468,7 +473,10 @@ async fn current_copy(root: &FileSystemDirectoryHandle) -> Result<Option<String>
     if file.size() > browser::MAX_CURRENT as f64 {
         return Ok(None);
     }
-    let text = wait(file.text()).await?.as_string().ok_or("the cache pointer could not be read")?;
+    let text = wait(file.text())
+        .await?
+        .as_string()
+        .ok_or("the cache pointer could not be read")?;
     Ok(browser::current_copy(&text).map(str::to_owned))
 }
 
@@ -532,7 +540,9 @@ async fn import_from(data: JsValue) -> Result<(), Failure> {
             .unchecked_into();
     // Keep even a stale published copy until its successor has committed.
     let kept = current_copy(&root).await.map_err(Failure::failed)?;
-    sweep(&root, kept.as_deref()).await.map_err(Failure::failed)?;
+    sweep(&root, kept.as_deref())
+        .await
+        .map_err(Failure::failed)?;
     if let Some(free) = room().await
         && free < ROOM
     {
@@ -560,7 +570,12 @@ async fn import_from(data: JsValue) -> Result<(), Failure> {
         Ok(Some(report)) if !STOPPING.get() => match publish_current(&root, &name).await {
             Ok(true) => {
                 if let Err(why) = sweep(&root, Some(&name)).await {
-                    web_sys::console::warn_1(&format!("The cache was published but old copies could not be removed: {why}").into());
+                    web_sys::console::warn_1(
+                        &format!(
+                            "The cache was published but old copies could not be removed: {why}"
+                        )
+                        .into(),
+                    );
                 }
                 Ok(Some(report))
             }

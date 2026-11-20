@@ -307,6 +307,15 @@ pub(super) fn picked(run: &mut FirstRun, picked: Picked) {
 /// hold is lifted). A browser's copy is always made anew: it cannot tell an install's files from
 /// the last import's without reading them.
 pub(super) fn import(run: &mut FirstRun, _force: bool) {
+    if PAGE.with_borrow(|page| page.worker.is_none())
+        && let Err(why) = start_worker(run.tell.clone())
+    {
+        run.screen = Screen::Ready;
+        run.trouble(format!(
+            "{why}. Reload the page and choose your Dota 2 folder again."
+        ));
+        return;
+    }
     PAGE.with_borrow_mut(|page| page.queued = true);
     // Kept in this browser for good where it lets a page ask (Firefox asks the player; Chromium
     // decides by itself): a browser short of space then does not evict it with the site's other
@@ -409,21 +418,32 @@ pub(super) fn start_again(
     let Some(window) = web_sys::window() else {
         return;
     };
-    if let Ok(Some(storage)) = window.session_storage() {
-        let _ = if reimport {
-            storage.set_item(REIMPORT, "1")
-        } else {
-            storage.remove_item(REIMPORT)
-        };
+    if reimport {
+        let asked = window.session_storage().and_then(|storage| {
+            storage
+                .ok_or_else(|| JsValue::from_str("session storage is unavailable"))?
+                .set_item(REIMPORT, "1")
+        });
+        if let Err(why) = asked {
+            crate::webpage::failed(
+                "Re-import could not start",
+                "Allow site storage in your browser, reload dbota and try again.",
+                &said(&why),
+            );
+            return;
+        }
+    } else if let Ok(Some(storage)) = window.session_storage() {
+        let _ = storage.remove_item(REIMPORT);
     }
     info!(
         "first run: loading the page again{}",
         if reimport { " to re-import" } else { "" }
     );
     if let Err(e) = window.location().reload() {
-        warn!(
-            "first run: the page could not be loaded again: {}",
-            said(&e)
+        crate::webpage::failed(
+            "The browser could not reload dbota",
+            "Reload this tab to continue.",
+            &said(&e),
         );
     }
 }
