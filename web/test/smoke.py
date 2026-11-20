@@ -560,7 +560,7 @@ def wait_browser_state(page, observe, what, timeout):
 
 
 def check_fullscreen_page(directory, shots=False):
-    """Windowed fullscreen in Settings puts the canvas fullscreen (inside the click's gesture), the
+    """Windowed fullscreen in Settings puts the canvas fullscreen (inside the selection gesture), the
     page leaving it (Esc) turns the setting back, and F11 is the same fullscreen. Headless Chromium
     keeps its viewport, so the canvas filling a bigger screen is not seen here."""
     with sync_playwright() as p:
@@ -580,12 +580,14 @@ def check_fullscreen_page(directory, shots=False):
             except PlaywrightTimeout as error:
                 raise AssertionError(what) from error
 
-        # The settings window is open on its Video section (--settings video), drawn into the 1280 by
-        # 720 viewport: the Display mode field is at (848, 397) (the browser has no Resolution row,
-        # so it is the first row of Display) and the second option of its list, Windowed fullscreen,
-        # at (820, 454).
-        click_drawn(page, (848, 397))
-        click_drawn(page, (820, 454))
+        # The settings search stays in the sidebar while the video section moves with font and
+        # layout changes. Searching leaves one visible control, so the first Tab focuses it.
+        click_drawn(page, (302, 75))
+        page.keyboard.type("Display mode")
+        after_frames(page)
+        for key in ("Enter", "Tab", "Enter", "ArrowDown", "Enter"):
+            page.keyboard.press(key)
+            after_frames(page)
         fullscreen_becomes(True, "picking windowed fullscreen puts the canvas fullscreen")
         shot("fullscreen-picked")
         page.evaluate("document.exitFullscreen()")
