@@ -1687,7 +1687,10 @@ artifact_args = ["--replay", "{{artifact}}"]
 OPFS_REPLAYS = """async () => {
   const root = await navigator.storage.getDirectory();
   let dir;
-  try { dir = await root.getDirectoryHandle('dbota-replays'); } catch (e) { return []; }
+  try { dir = await root.getDirectoryHandle('dbota-replays'); } catch (error) {
+    if (error.name === 'NotFoundError') return [];
+    throw error;
+  }
   const out = [];
   for await (const [name, handle] of dir.entries()) {
     if (handle.kind !== 'file') continue;
@@ -1701,17 +1704,11 @@ OPFS_REPLAYS = """async () => {
   return out;
 }"""
 
-OPFS_PRACTICE_CLAIM = r"""async () => {
-  try {
-    const root = await navigator.storage.getDirectory();
-    const dir = await root.getDirectoryHandle('dbota-replays');
-    const index = await (await dir.getFileHandle('index.txt')).getFile();
-    const claim = (await index.text()).match(/^w\t(\d+)\t\d+\tpractice$/m);
-    return claim ? Number(claim[1]) : null;
-  } catch (error) {
-    if (error.name === 'NotFoundError') return null;
-    throw error;
-  }
+OPFS_REPLAY_INDEX = """async () => {
+  const store = globalThis.dbota_replays;
+  if (!store) return '';
+  if (store.kind !== 'opfs') throw new Error('the replay store must use OPFS');
+  return (await store.load()).index ?? '';
 }"""
 
 
@@ -1782,20 +1779,20 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
     print("replays: kept in OPFS from a match through radovid, listed and played")
 
 
-def practice_replay(work, match):
+def practice_replay(work, match_id):
     # The files can appear before the service publishes the match result.
     deadline = time.monotonic() + 300
-    replay = work / "replays" / f"replay-{match}.brp"
+    replay = work / "replays" / f"replay-{match_id}.brp"
     with sqlite3.connect((work / "radovid.db").as_uri() + "?mode=ro", uri=True) as database:
         while time.monotonic() < deadline:
             if replay.is_file() and database.execute(
-                "SELECT 1 FROM matches WHERE id = ? AND finished = 1", (match,),
+                "SELECT 1 FROM matches WHERE id = ? AND finished = 1", (match_id,),
             ).fetchone():
                 size = replay.stat().st_size
-                assert size >= 1024, f"practice replay {match} contains only {size} bytes"
+                assert size >= 1024, f"practice replay {match_id} contains only {size} bytes"
                 return size
             time.sleep(0.25)
-    raise AssertionError(f"the service did not record the result and replay for practice match {match}")
+    raise AssertionError(f"the service did not record the result and replay for practice match {match_id}")
 
 
 def start_practice(page, console, shot):
@@ -1820,11 +1817,12 @@ def start_practice(page, console, shot):
     shot(page, "5-lobby")
     click_drawn(page, CLICK_START)
     wait_console(page, console, r"match known: tick \d+", 600, "the practice match")
-    match = wait_browser_state(
-        page, lambda: page.evaluate(OPFS_PRACTICE_CLAIM), "the practice match's persisted replay claim", 300,
+    claim = wait_browser_state(
+        page, lambda: re.search(r"^w\t(\d+)\t\d+\tpractice$", page.evaluate(OPFS_REPLAY_INDEX), re.MULTILINE),
+        "the practice match's persisted replay claim", 300,
     )
     shot(page, "6-game")
-    return match
+    return int(claim[1])
 
 
 def wait_for_sign_in(page):
@@ -1832,9 +1830,9 @@ def wait_for_sign_in(page):
     after_frames(page)
 
 
-def saved_replays(page):
-    entries = page.evaluate(OPFS_REPLAYS)
-    return entries if any(name == "index.txt" for name, _ in entries) else None
+def saved_replay(page, match_id):
+    index = page.evaluate(OPFS_REPLAY_INDEX)
+    return re.search(rf"^r\t\d+\t\d+\t{match_id}\tpractice\t([^\t\n]+)\t", index, re.MULTILINE)
 
 
 def drive_replays_page(work, port, evidence):
@@ -1866,18 +1864,20 @@ def drive_replays_page(work, port, evidence):
                 page.screenshot(path=str(evidence / f"{name}.png"), timeout=600000)
 
         page, console, problems = visit()
-        match = start_practice(page, console, shot)
+        match_id = start_practice(page, console, shot)
         page.close()
         assert not problems, problems
-        replay_size = practice_replay(work, match)
+        replay_size = practice_replay(work, match_id)
 
         page, console, problems = visit()
         wait_for_sign_in(page)
         wait_console(page, console, r"replays: 1 kept", 300, "the replay kept in OPFS")
-        stored = wait_browser_state(page, lambda: saved_replays(page), "the replay's OPFS index", 300)
+        record = wait_browser_state(page, lambda: saved_replay(page, match_id), "the replay's OPFS index row", 300)
+        stored = page.evaluate(OPFS_REPLAYS)
         replay = [(name, size) for name, size in stored if name.endswith(".brp")]
         assert len(replay) == 1, f"the replay is stored in OPFS: {stored}"
         name, size = replay[0]
+        assert name == record[1], "the index names the stored replay"
         assert size == replay_size, "the stored replay is the service's file"
         assert any(file == "index.txt" for file, _ in stored), "the index is beside it"
         assert not problems, problems
