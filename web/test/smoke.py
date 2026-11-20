@@ -536,10 +536,10 @@ def check_scene_page(directory):
 
 
 def after_frames(page, count=3):
-    page.evaluate("""count => new Promise(done => {
-      function frame() { if (--count) requestAnimationFrame(frame); else done(); }
+    page.wait_for_function("""count => new Promise(done => {
+      function frame() { if (--count) requestAnimationFrame(frame); else done(true); }
       requestAnimationFrame(frame);
-    })""", count)
+    })""", arg=count, timeout=60000)
 
 
 def click_drawn(page, at):
@@ -576,7 +576,9 @@ def check_fullscreen_page(directory, shots=False):
             # The state itself, polled: how long a loaded machine takes to draw and handle a click
             # decides nothing, only the 60 s hang guard.
             try:
-                page.wait_for_function(f"() => !!document.fullscreenElement === {str(entered).lower()}", timeout=60000)
+                page.wait_for_function(
+                    "entered => !!document.fullscreenElement === entered", arg=entered, polling=100, timeout=60000,
+                )
             except PlaywrightTimeout as error:
                 raise AssertionError(what) from error
 
@@ -909,6 +911,9 @@ def check_cursor_input(directory):
         page.on("console", lambda m: console.append(m.text))
         page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
         page.add_init_script(HANDED_ALL)
+        page.add_init_script("""addEventListener('pointermove', e => {
+          if (e.isTrusted) window.pointerOnCanvas = e.target.id === 'dbota';
+        }, true)""")
         page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
         wait_loading_cover(page, console)
@@ -917,10 +922,10 @@ def check_cursor_input(directory):
 
         # A click in the window takes the pointer.
         mouse.to(400, 300)
-        after_frames(page)
+        page.wait_for_function("() => window.pointerOnCanvas", polling=100, timeout=60000)
         mouse.click()
         page.wait_for_function(
-            "() => document.pointerLockElement === document.getElementById('dbota')", timeout=60000
+            "() => document.pointerLockElement === document.getElementById('dbota')", polling=100, timeout=60000,
         )
         wait_console(page, console, "cursor locked to the canvas", 60, "the client to see the lock")
         print("cursor input: a real click locks the pointer")
@@ -934,7 +939,7 @@ def check_cursor_input(directory):
             mouse.by(x, y)
             page.wait_for_function(
                 "before => handed.slice(before).some(([type]) => type === 'pointermove')",
-                arg=before, timeout=60000,
+                arg=before, polling=100, timeout=60000,
             )
 
         move_mouse(3, 3)
@@ -945,7 +950,7 @@ def check_cursor_input(directory):
         page.wait_for_function("""([x, y]) => {
           const at = handed.at(-1);
           return at && at[1] - x >= 19 && at[2] - y >= 9;
-        }""", arg=start[1:], timeout=60000)
+        }""", arg=start[1:], polling=100, timeout=60000)
         end = last()
         moved = [end[1] - start[1], end[2] - start[2]]
         failures = []
@@ -973,7 +978,7 @@ def check_cursor_input(directory):
               const at = handed.at(-1);
               return handed.length > before && at[0] === 'pointermove'
                 && Math.abs(at[1] - x) <= 1 && Math.abs(at[2] - y) <= 1;
-            }""", arg=[before_move, *target], timeout=60000)
+            }""", arg=[before_move, *target], polling=100, timeout=60000)
         except PlaywrightTimeout as error:
             raise AssertionError(
                 f"the cursor never reached {target} CSS pixels within 60 s of the mouse's {steps}x{steps} device "
