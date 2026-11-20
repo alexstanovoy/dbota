@@ -1005,6 +1005,11 @@ const APPROVED_LAUNCH_LINES: &[(&str, &str, &str)] = &[
         "a profile assignment, not a process launch",
     ),
     (
+        "tools/browser_check.sh",
+        r#"run_scrubbed cargo run --manifest-path "$bota/Cargo.toml" --locked --release --quiet --target-dir "$server_target" \"#,
+        "scrubs server steering variables from the replay generator's environment",
+    ),
+    (
         "tools/gate.sh",
         "APIS=$1 PROFILE=${DBOTA_WEB_TEST_PROFILE:-release} OUT=$DBOTA_GATE_WEB_PAGE web/build.sh",
         "builds the web page; it does not start a native client",

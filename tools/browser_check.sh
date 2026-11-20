@@ -117,7 +117,7 @@ DBOTA_INDEX_PAGE="$pages/plain" in_private_environment python3 -m unittest disco
 APIS=webgl2 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --speech-check --face-trace" OUT=$pages/speech web/build.sh
 in_private_environment python3 web/test/smoke.py --speech-page "$pages/speech"
 art_replay=$work/ui-art.brp
-cargo run --manifest-path "$bota/Cargo.toml" --locked --release --quiet --target-dir "$server_target" \
+run_scrubbed cargo run --manifest-path "$bota/Cargo.toml" --locked --release --quiet --target-dir "$server_target" \
     -p bota_server --example local_match -- --replay "$art_replay" > "$work/ui-art-replay.log" 2>&1
 APIS=webgl2 DBOTA_WEB_REPLAY=$art_replay OUT=$pages/ui-art \
     DBOTA_WEB_ARGS="--replay built-in --pov 0 --tip item:item_magic_stick" web/build.sh
