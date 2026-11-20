@@ -175,7 +175,12 @@ fn watch(
         .insert_resource(TimeUpdateStrategy::ManualDuration(step));
     let start = finale(client).began_at;
     let since = |client: &Client| {
-        client.world().resource::<Time<Real>>().elapsed().saturating_sub(start).as_secs_f32()
+        client
+            .world()
+            .resource::<Time<Real>>()
+            .elapsed()
+            .saturating_sub(start)
+            .as_secs_f32()
     };
     let mut long = long;
     let mut frames = 0u32;
@@ -439,7 +444,12 @@ fn escape_during_the_end_goes_on_after_its_fade_and_a_click_skips_nothing() {
     client.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
     let start = finale(&client).began_at;
     let since = |client: &Client| {
-        client.world().resource::<Time<Real>>().elapsed().saturating_sub(start).as_secs_f32()
+        client
+            .world()
+            .resource::<Time<Real>>()
+            .elapsed()
+            .saturating_sub(start)
+            .as_secs_f32()
     };
     while client.world().resource::<Finale>().showing() {
         assert!(
@@ -454,7 +464,9 @@ fn escape_during_the_end_goes_on_after_its_fade_and_a_click_skips_nothing() {
         "the end faded out first: Escape at {pressed} s, left at {left} s"
     );
     assert!(left < length, "the end was cut short");
-    client.until("the post-game screen after the fade", |c| post_game_shown(c));
+    client.until("the post-game screen after the fade", |c| {
+        post_game_shown(c)
+    });
 }
 
 /// A connection lost during the end changes nothing of it: it plays to its length, nothing is
@@ -491,7 +503,10 @@ fn a_spectator_is_shown_the_end_as_a_watcher_with_the_winners_stinger() {
     let run = finale(&watcher);
     assert_eq!(run.winner, Team::Dire);
     assert_eq!(run.viewer, Viewer::Watcher);
-    assert_eq!(run.cue, "sound.music.dire_win", "a watcher hears the winner's");
+    assert_eq!(
+        run.cue, "sound.music.dire_win",
+        "a watcher hears the winner's"
+    );
     let length = run.length;
     let seen = watch(&mut watcher, FRAME, None, "DIRE VICTORY");
     assert_shown_whole(&seen, length, FRAME.as_secs_f32());
@@ -547,9 +562,17 @@ fn the_end_sounds_its_stinger_and_the_announcers_line_and_nothing_after_it() {
         .map(|(at, path, channel)| ((*at - decided).as_secs_f32(), path.as_str(), *channel))
         .collect();
     use crate::channels::Channel;
-    let started = |part: &str| after.iter().find(|(_, path, _)| path.contains(part)).copied();
+    let started = |part: &str| {
+        after
+            .iter()
+            .find(|(_, path, _)| path.contains(part))
+            .copied()
+    };
     let (at, _, channel) = started("stingers/radiant_lose").expect("the loser's stinger");
-    assert!(at < 2.0 * FRAME.as_secs_f32(), "the stinger at the decision: {at}");
+    assert!(
+        at < 2.0 * FRAME.as_secs_f32(),
+        "the stinger at the decision: {at}"
+    );
     assert_eq!(channel, Some(Channel::Music));
     let (at, _, channel) = started("announcer_victory_dire").expect("the announcer's line");
     assert!(
@@ -560,12 +583,19 @@ fn the_end_sounds_its_stinger_and_the_announcers_line_and_nothing_after_it() {
     let others: Vec<_> = after
         .iter()
         .filter(|(_, path, _)| {
-            !["stingers/radiant_lose", "announcer_victory_dire", "ancient_destruction"]
-                .iter()
-                .any(|part| path.contains(part))
+            ![
+                "stingers/radiant_lose",
+                "announcer_victory_dire",
+                "ancient_destruction",
+            ]
+            .iter()
+            .any(|part| path.contains(part))
         })
         .collect();
-    assert!(others.is_empty(), "nothing else sounds over the end: {others:?}");
+    assert!(
+        others.is_empty(),
+        "nothing else sounds over the end: {others:?}"
+    );
     client.frames(3);
     let world = client.world_mut();
     let left = world
@@ -615,7 +645,10 @@ fn the_fall_plays_its_destruction_and_leaves_its_ruin_to_the_end() {
             .started(effect);
         assert_eq!(started, 1, "each destruction effect started once");
     }
-    assert!(playing(&client) > 0, "the destruction still plays at the sixth second");
+    assert!(
+        playing(&client) > 0,
+        "the destruction still plays at the sixth second"
+    );
     while finale(&client).elapsed < LONGEST_SECS - 0.1 {
         client.step_frames(1);
         assert_eq!(

@@ -63,7 +63,8 @@ const CLEARANCE: f32 = 200.0;
 /// Dire's once while its blast wave is let go (`dire_ancient_base001_destruction_k`: 5 at 10, for
 /// its two seconds of emission). Read from the install's particles by hand: the client's particle
 /// reader does not take the shake renderer yet.
-const SHAKES: [&[(f32, f32, f32)]; 2] = [&[(5.0, 60.0, 4.0), (5.0, 35.0, 8.0)], &[(5.0, 10.0, 2.0)]];
+const SHAKES: [&[(f32, f32, f32)]; 2] =
+    [&[(5.0, 60.0, 4.0), (5.0, 35.0, 8.0)], &[(5.0, 10.0, 2.0)]];
 
 /// The caption at Dota's 1080 lines (`dota_hud_game_end.vcss`): `#VictoryLabel` is 90 px,
 /// centred in a 1024 by 640 `#WinLabelContainer` raised 120 px above the middle of the screen.
@@ -487,7 +488,12 @@ fn spawn_caption(commands: &mut Commands, fonts: &crate::ui::Fonts, winner: Team
                     Pickable::IGNORE,
                 ));
                 caption
-                    .spawn((CaptionLabel, Node::default(), UiTransform::IDENTITY, Pickable::IGNORE))
+                    .spawn((
+                        CaptionLabel,
+                        Node::default(),
+                        UiTransform::IDENTITY,
+                        Pickable::IGNORE,
+                    ))
                     .with_children(|label| {
                         for (offset, alpha) in glow_copies() {
                             label.spawn((
@@ -606,7 +612,10 @@ fn draw_caption(
     window: Single<&Window, With<bevy::window::PrimaryWindow>>,
     scale: Res<UiScale>,
     mut boxes: Query<(&mut Visibility, &mut Node), With<CaptionBox>>,
-    mut backdrops: Query<(&mut UiTransform, &mut BackgroundGradient), (With<Backdrop>, Without<CaptionLabel>)>,
+    mut backdrops: Query<
+        (&mut UiTransform, &mut BackgroundGradient),
+        (With<Backdrop>, Without<CaptionLabel>),
+    >,
     mut labels: Query<&mut UiTransform, With<CaptionLabel>>,
     mut words: Query<(&mut TextColor, &mut TextFont), (With<Words>, Without<Glow>)>,
     mut glows: Query<(&Glow, &mut TextColor, &mut TextFont, &mut Node), Without<CaptionBox>>,
@@ -708,7 +717,11 @@ fn shake_at(fallen: Team, t: f32) -> Vec3 {
         .map(|&(amplitude, frequency, length)| {
             let phase = std::f32::consts::TAU * frequency * t;
             let strength = amplitude * (1.0 - t / length);
-            Vec3::new(phase.sin(), (phase * 1.3 + 1.0).sin(), (phase * 0.7 + 2.0).sin()) * strength
+            Vec3::new(
+                phase.sin(),
+                (phase * 1.3 + 1.0).sin(),
+                (phase * 0.7 + 2.0).sin(),
+            ) * strength
         })
         .sum()
 }

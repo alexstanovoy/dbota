@@ -881,10 +881,14 @@ fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
             ..default()
         },
     );
-    kit.commands.entity(header).insert(BackgroundColor(theme::RESULT_PANEL));
+    kit.commands
+        .entity(header)
+        .insert(BackgroundColor(theme::RESULT_PANEL));
     kit.bold(header, result.headline.clone(), 56.0, color);
     let detail = kit.text(header, result.detail.clone(), 18.0, theme::INK_2);
-    kit.commands.entity(detail).insert(Name::new("match result detail"));
+    kit.commands
+        .entity(detail)
+        .insert(Name::new("match result detail"));
     let table = kit.panel(
         column,
         Node {

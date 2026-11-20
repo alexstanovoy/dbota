@@ -197,7 +197,10 @@ fn building(
 
 /// The caption's band of the screen: its rows and columns.
 fn band(size: UVec2) -> (std::ops::Range<u32>, std::ops::Range<u32>) {
-    (size.y * 22 / 100..size.y * 50 / 100, size.x * 25 / 100..size.x * 75 / 100)
+    (
+        size.y * 22 / 100..size.y * 50 / 100,
+        size.x * 25 / 100..size.x * 75 / 100,
+    )
 }
 
 /// Whether a pixel reads as the caption's words, and as its glow.
@@ -210,7 +213,10 @@ fn words_and_glow(winner: Team, [r, g, b]: [u8; 3]) -> (bool, bool) {
             g > 150 && g - r > 40 && g - b > 30,
         ),
         // Black words in an orange glow (#FF3300).
-        _ => (r < 40 && g < 40 && b < 40, r > 140 && r - g > 70 && r - b > 90),
+        _ => (
+            r < 40 && g < 40 && b < 40,
+            r > 140 && r - g > 70 && r - b > 90,
+        ),
     }
 }
 
@@ -265,7 +271,11 @@ fn glow_away_from_the_words(frame: &[u8], size: UVec2, winner: Team) -> (usize, 
         }
     }
     let lit = glow.iter().filter(|lit| **lit).count();
-    let away = glow.iter().zip(&near).filter(|(lit, near)| **lit && !**near).count();
+    let away = glow
+        .iter()
+        .zip(&near)
+        .filter(|(lit, near)| **lit && !**near)
+        .count();
     (lit, away)
 }
 
@@ -309,7 +319,11 @@ fn film(scene: &Scene) -> Filmed {
     let target = building(&client, scene.kind, scene.team, scene.stand_at).expect("in sight");
     let name = scene.name;
     if scene.moments.len() == MOMENTS.len() {
-        save(&format!("{name}-00-before"), scene.size, &pixels(&mut client));
+        save(
+            &format!("{name}-00-before"),
+            scene.size,
+            &pixels(&mut client),
+        );
     }
     client.core_mut().act(Intent::Cheat(Cheat::Destroy {
         target: Target::Unit(target),
@@ -336,7 +350,11 @@ fn film(scene: &Scene) -> Filmed {
             filmed.glow = glow_away_from_the_words(&frame, scene.size, scene.winner);
         }
         let index = MOMENTS.iter().position(|m| m == moment).unwrap_or(0);
-        save(&format!("{name}-{index:02}-at-{moment:04.1}s"), scene.size, &frame);
+        save(
+            &format!("{name}-{index:02}-at-{moment:04.1}s"),
+            scene.size,
+            &frame,
+        );
     }
     filmed
 }
@@ -354,7 +372,11 @@ fn assert_captioned(scene: &Scene) {
         "{}: the caption's pixels: {before} before it, {after} after",
         scene.name
     );
-    assert!(lit > 5 * area, "{}: the glow is drawn: {lit} pixels", scene.name);
+    assert!(
+        lit > 5 * area,
+        "{}: the glow is drawn: {lit} pixels",
+        scene.name
+    );
     assert!(
         away * 20 <= lit,
         "{}: the glow follows the letters: {away} of its {lit} pixels lie away from them",
@@ -397,7 +419,11 @@ fn a_1v1_dire_victory_is_drawn_with_its_caption_to_the_radiant_loser_through_the
 #[test]
 fn a_1v1_radiant_victory_is_drawn_with_its_caption_to_its_winner_on_every_screen() {
     for (name, size, moments) in [
-        ("1v1-radiant-victory-seen-by-the-winner", AT_1080, &MOMENTS[..]),
+        (
+            "1v1-radiant-victory-seen-by-the-winner",
+            AT_1080,
+            &MOMENTS[..],
+        ),
         (
             "1v1-radiant-victory-seen-by-the-winner-3840x2160",
             UVec2::new(3840, 2160),

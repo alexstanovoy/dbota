@@ -670,7 +670,8 @@ impl Client {
     ) -> Client {
         let mut args = vec!["--addr", server.address.as_str()];
         args.extend_from_slice(extra);
-        let mut client = Self::build_configured(&args, Self::held_core(server, &args), &[], Some(prepare));
+        let mut client =
+            Self::build_configured(&args, Self::held_core(server, &args), &[], Some(prepare));
         client.pick_hero(hero);
         client.until("the hero on the map", |c| c.core().ears().is_some());
         client

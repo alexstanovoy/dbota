@@ -19,10 +19,16 @@ const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 30);
 /// Enables the same setup cheats as Demo Hero for the selected mode in this test service.
 fn service_with_cheats(mode: &str, save_replays: bool) -> crate::main_menu::tests::Service {
     crate::main_menu::tests::start_service(save_replays, |mut config| {
-        let ruleset = config.find(&format!("id = \"{mode}\"")).expect("the ruleset");
+        let ruleset = config
+            .find(&format!("id = \"{mode}\""))
+            .expect("the ruleset");
         let args = ruleset + config[ruleset..].find("args = [").expect("its arguments");
         // The local fixture for the two-player result needs cheats with two reserved seats.
-        let cheats = if mode == "solo_mid" { "\"--lobby-cheats\", " } else { "\"--cheats\", " };
+        let cheats = if mode == "solo_mid" {
+            "\"--lobby-cheats\", "
+        } else {
+            "\"--cheats\", "
+        };
         config.insert_str(args + "args = [".len(), cheats);
         config
     })
@@ -54,7 +60,14 @@ fn launch_lobby(client: &mut Client, mode: &str) {
             panic!("the full lobby room is visible");
         };
         assert_eq!(lobby.settings.mode, "Full rules");
-        assert_eq!(lobby.teams.iter().map(|team| team.slots.len()).collect::<Vec<_>>(), [5, 5]);
+        assert_eq!(
+            lobby
+                .teams
+                .iter()
+                .map(|team| team.slots.len())
+                .collect::<Vec<_>>(),
+            [5, 5]
+        );
     }
     act(client, Act::ReadyLobby(true));
     client.until("the hero on the map", |c| {
@@ -79,7 +92,9 @@ fn leaving_a_service_match_shows_a_readable_result_reason_without_a_finale() {
     act(&mut client, Act::LeaveGame);
     act(&mut client, Act::Answer(true));
     client.until("the menu shows the reason for the defeat", |c| {
-        c.shown_texts().iter().any(|text| text.contains("a player left"))
+        c.shown_texts()
+            .iter()
+            .any(|text| text.contains("a player left"))
     });
     assert_eq!(menu(&client).page(), Page::Result);
     assert!(client.world().resource::<Finale>().run.is_none());
@@ -92,7 +107,9 @@ fn leaving_a_service_match_shows_a_readable_result_reason_without_a_finale() {
     assert!(text.0.contains("a player left"));
     assert_eq!(color.0, crate::theme::INK_2);
     assert_eq!(
-        world.get::<BackgroundColor>(parent.parent()).map(|background| background.0),
+        world
+            .get::<BackgroundColor>(parent.parent())
+            .map(|background| background.0),
         Some(crate::theme::RESULT_PANEL),
         "the reason has a solid dark background over the menu artwork"
     );
@@ -197,7 +214,9 @@ fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
     act(&mut alice, Act::Find(solo()));
     act(&mut bob, Act::Find(solo()));
     let mut players = [&mut alice, &mut bob];
-    both(&mut players, "the offer", |_, c| menu(c).view().offer.is_some());
+    both(&mut players, "the offer", |_, c| {
+        menu(c).view().offer.is_some()
+    });
     for client in players.iter_mut() {
         let proposal = menu(client).view().offer.expect("an offer").proposal;
         act(client, Act::Accept(proposal));
@@ -215,7 +234,9 @@ fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
     for cheat in [Cheat::StartGame, Cheat::AllVision { on: true }] {
         let tick = players[radiant].tick();
         players[radiant].core_mut().act(Intent::Cheat(cheat));
-        both(&mut players, "both players saw the setup tick", |_, c| c.tick() > tick + 1);
+        both(&mut players, "both players saw the setup tick", |_, c| {
+            c.tick() > tick + 1
+        });
     }
     let tower = |c: &Client| {
         c.view()
@@ -258,17 +279,26 @@ fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
         let crate::main_menu::PageView::Result(result) = menu(c).view().body else {
             panic!("player {seat} has a drawn result page");
         };
-        let mine = result.seats.iter().find(|row| row.mine).expect("my result row");
+        let mine = result
+            .seats
+            .iter()
+            .find(|row| row.mine)
+            .expect("my result row");
         let expected = if seat == radiant { "(+" } else { "(-" };
         assert!(
             mine.rating.contains(expected) && c.shown_texts().contains(&mine.rating),
-            "player {seat} expected a visible {expected} rating change, saw {:?}", mine.rating
+            "player {seat} expected a visible {expected} rating change, saw {:?}",
+            mine.rating
         );
         checked[seat] = true;
         true
     });
     for client in players.iter_mut() {
-        assert_eq!(crate::error_msg::shown(client.world_mut()), None, "no error told");
+        assert_eq!(
+            crate::error_msg::shown(client.world_mut()),
+            None,
+            "no error told"
+        );
         act(client, Act::Find(solo()));
     }
     both(&mut players, "both look for their next match", |_, c| {

@@ -399,7 +399,12 @@ impl Mixer {
         class: VoiceClass,
     ) -> Started {
         self.drop_ended(commands, now);
-        if self.closed || self.only_event.as_deref().is_some_and(|event| event != request.event) {
+        if self.closed
+            || self
+                .only_event
+                .as_deref()
+                .is_some_and(|event| event != request.event)
+        {
             return Started::Refused;
         }
         if class == VoiceClass::Ambience
