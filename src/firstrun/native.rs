@@ -184,7 +184,9 @@ pub(super) fn picked(run: &mut FirstRun, picked: Picked) {
         Err(NoDialog::Missing) => run.screen = Screen::Typing,
         Err(NoDialog::Failed(why)) => {
             run.screen = Screen::Typing;
-            run.trouble(format!("The folder dialog could not open: {why}. Type or paste the Dota 2 folder below."));
+            run.trouble(format!(
+                "The folder dialog could not open: {why}. Type or paste the Dota 2 folder below."
+            ));
         }
     }
 }

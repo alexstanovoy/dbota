@@ -565,14 +565,18 @@ fn main() -> AppExit {
             && let Err(why) =
                 import::note_cache_use(import::managed_cache_root().as_deref(), &args.cache_dir)
         {
-            fail(&format!("The cache could not be opened for use: {why}\nCheck that its folder is writable, or select a writable cache folder and start dbota again."));
+            fail(&format!(
+                "The cache could not be opened for use: {why}\nCheck that its folder is writable, or select a writable cache folder and start dbota again."
+            ));
             return AppExit::from_code(2);
         }
         let held = held.map(|need| firstrun::Held { need, note: None });
         let exit = start(args, held, font_cx);
         if let Some(args) = RESTART.get() {
             let why = desktop::restart(args);
-            fail(&format!("The files were imported but dbota could not reopen: {why}\nOpen dbota again from its installation folder."));
+            fail(&format!(
+                "The files were imported but dbota could not reopen: {why}\nOpen dbota again from its installation folder."
+            ));
             return AppExit::error();
         }
         exit
@@ -620,7 +624,6 @@ fn native_startup() -> Result<Args, AppExit> {
         }
     })
 }
-
 
 /// The run's arguments: the command line's; in a browser, which has none, those a `web-replay`
 /// build was made with (DBOTA_WEB_ARGS) and those a script of the page itself sets in

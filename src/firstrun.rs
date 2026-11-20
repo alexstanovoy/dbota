@@ -117,10 +117,6 @@ enum Screen {
     Working(Work),
     /// Another dbota is making its copy in the same folder: this one starts when it is done, or
     /// is cancelled.
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(dead_code, reason = "a browser's imports take turns by a lock, and say so")
-    )]
     Waiting,
     /// CANCEL was pressed and nothing will be published: the worker is ending, its half copy
     /// removed. The screen leaves this for the ways to a copy, never for a restart.
@@ -161,7 +157,10 @@ enum Told {
     /// The import waits for another's import of the same folder.
     #[cfg_attr(
         target_arch = "wasm32",
-        expect(dead_code, reason = "a browser's imports take turns by a lock, and say so")
+        expect(
+            dead_code,
+            reason = "a browser's imports take turns by a lock, and say so"
+        )
     )]
     Waiting,
     Progress(Work),
@@ -445,7 +444,7 @@ struct Shown {
     /// What the player picked or dbota found, shown as a path the eye can skip.
     path: Option<String>,
     note: Option<Note>,
-    work: Option<Work>,
+    working: bool,
     buttons: Vec<(&'static str, Press)>,
     /// The promise the import keeps.
     privacy: &'static str,
@@ -482,7 +481,6 @@ fn shown(run: &FirstRun) -> Shown {
     let (title, lead) = need_words(run.need);
     let mut state = None;
     let mut path = None;
-    let mut work = None;
     let buttons = match &run.screen {
         Screen::Looking => {
             state = Some((
@@ -518,9 +516,8 @@ fn shown(run: &FirstRun) -> Shown {
             path = Some(format!("{}|", run.typed));
             vec![("USE THIS PATH", Press::Take), ("BACK", Press::Back)]
         }
-        Screen::Working(at) => {
+        Screen::Working(_) => {
             path = run.source.as_ref().map(side::shown_source);
-            work = Some(at.clone());
             vec![("CANCEL", Press::Cancel)]
         }
         Screen::Waiting => {
@@ -569,7 +566,7 @@ fn shown(run: &FirstRun) -> Shown {
         state,
         path,
         note: run.note.clone(),
-        work,
+        working: matches!(run.screen, Screen::Working(_)),
         buttons,
         privacy: side::PRIVACY,
     }
@@ -611,7 +608,68 @@ mod tests {
             need: Need::Import,
             note: None,
         };
-        FirstRun::new(held, &crate::Args::parse_from(["dbota"]))
+        let mut args = crate::Args::parse_from(["dbota"]);
+        args.steam_folder = vec![crate::test_support::scratch_path("no-steam-library")];
+        FirstRun::new(held, &args)
+    }
+
+    #[test]
+    fn progress_updates_the_mounted_controls_without_allocating() {
+        let mut run = run();
+        run.screen = Screen::Working(Work {
+            done: 0,
+            total: 100,
+            item: String::new(),
+            bytes: 0,
+        });
+        let sender = run.tell.clone();
+        let mut world = World::new();
+        world.insert_resource(run);
+        world.insert_resource(Fonts::for_layout_test());
+        let mut schedule = Schedule::default();
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+        schedule.add_systems((listen, look::draw, look::bar).chain());
+        for _ in 0..3 {
+            schedule.run(&mut world);
+        }
+        let cancel_button = |world: &mut World| {
+            world
+                .query::<(Entity, &Press)>()
+                .iter(world)
+                .find_map(|(entity, press)| (*press == Press::Cancel).then_some(entity))
+        };
+        let cancel = cancel_button(&mut world).expect("CANCEL on the initial progress screen");
+        sender.send(Told::Progress(Work {
+            done: 50,
+            total: 100,
+            item: "model.hero".to_owned(),
+            bytes: 2 << 20,
+        }));
+        let allocations = crate::test_support::count_allocations(|| schedule.run(&mut world));
+        assert_eq!(
+            cancel_button(&mut world),
+            Some(cancel),
+            "CANCEL was replaced on progress"
+        );
+        assert!(
+            world
+                .query::<&Text>()
+                .iter(&world)
+                .any(|text| text.0.contains("50 of 100"))
+        );
+        assert!(
+            world
+                .query::<&Text>()
+                .iter(&world)
+                .any(|text| text.0 == "2 MB written  ·  50 left")
+        );
+        assert!(
+            world
+                .query::<&Node>()
+                .iter(&world)
+                .any(|node| node.width == percent(50))
+        );
+        assert_eq!(allocations, 0, "allocations in one progress update");
     }
 
     /// A press of CANCEL that took effect means nothing is published: whatever the worker then

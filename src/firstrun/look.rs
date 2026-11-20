@@ -6,6 +6,8 @@
 //! main action and quieter ones, and the privacy promise last. Text is larger than the menu's: it
 //! is read once, closely, by someone who has just started dbota.
 
+use std::fmt::Write as _;
+
 use bevy::{picking::hover::Hovered, prelude::*, ui_widgets::Button};
 
 use super::{FirstRun, Note, Press, Screen, Shown, Work, shown};
@@ -88,28 +90,26 @@ const BUTTON: Type = Type {
     figures: false,
 };
 
-/// What `draw` last drew: the screen without the work's figures, which `bar` sets in place.
-#[derive(PartialEq)]
-pub(super) struct Drawn {
-    shown: Shown,
-    working: bool,
-}
-
 /// Draws the screen anew when what it shows changes (the work's figures aside).
 pub(super) fn draw(
     mut commands: Commands,
     run: Res<FirstRun>,
     fonts: Res<Fonts>,
     root: Query<Entity, With<Root>>,
-    mut drawn: Local<Option<Drawn>>,
+    mut drawn: Local<Option<Shown>>,
 ) {
-    let mut now = shown(&run);
-    let working = now.work.take().is_some();
-    let next = Drawn {
-        shown: now.clone(),
-        working,
-    };
-    if drawn.as_ref() == Some(&next) {
+    if !run.is_changed() {
+        return;
+    }
+    if matches!(run.screen, Screen::Working(_))
+        && drawn
+            .as_ref()
+            .is_some_and(|shown| shown.working && shown.note == run.note)
+    {
+        return;
+    }
+    let now = shown(&run);
+    if drawn.as_ref() == Some(&now) {
         return;
     }
     info!(
@@ -122,7 +122,6 @@ pub(super) fn draw(
             .as_ref()
             .map_or(String::new(), |n| format!(" | note: {}", n.text()))
     );
-    *drawn = Some(next);
     for entity in &root {
         commands.entity(entity).despawn();
     }
@@ -130,7 +129,8 @@ pub(super) fn draw(
         commands: &mut commands,
         fonts: &fonts,
     };
-    parts.screen(&now, working);
+    parts.screen(&now, now.working);
+    *drawn = Some(now);
 }
 
 /// The screen's state by name, for the log.
@@ -155,14 +155,14 @@ pub(super) fn bar(
     mut texts: Query<(&Live, &mut Text)>,
     mut fills: Query<(&Live, &mut Node), Without<Text>>,
 ) {
+    if !run.is_changed() {
+        return;
+    }
     let Screen::Working(work) = &run.screen else {
         return;
     };
     for (live, mut text) in &mut texts {
-        let said = figures(work, *live);
-        if text.0 != said {
-            text.0 = said;
-        }
+        figures(&mut text.0, work, *live);
     }
     let share = work.done as f32 / work.total.max(1) as f32;
     for (_, mut node) in fills.iter_mut().filter(|(live, _)| **live == Live::Fill) {
@@ -174,22 +174,25 @@ pub(super) fn bar(
 }
 
 /// The words of a figure of the work.
-fn figures(work: &Work, live: Live) -> String {
+fn figures(text: &mut String, work: &Work, live: Live) {
+    text.clear();
     match (live, work.total) {
-        (Live::Count, 0) => String::new(),
-        (Live::Count, total) => format!("{} of {total}", work.done),
-        (Live::Item, 0) => "Reading the files...".to_owned(),
+        (Live::Count, 0) | (Live::Left, 0) | (Live::Fill, _) => {}
+        (Live::Count, total) => {
+            write!(text, "{} of {total}", work.done).expect("formatting into a String")
+        }
+        (Live::Item, 0) => text.push_str("Reading the files..."),
         (Live::Item, _) => {
             let group = work.item.split(['.', '/']).next().unwrap_or("");
-            format!("Reading {group}: {}", work.item)
+            write!(text, "Reading {group}: {}", work.item).expect("formatting into a String");
         }
-        (Live::Left, 0) => String::new(),
-        (Live::Left, total) => format!(
+        (Live::Left, total) => write!(
+            text,
             "{} MB written  ·  {} left",
             work.bytes >> 20,
             total.saturating_sub(work.done)
-        ),
-        (Live::Fill, _) => String::new(),
+        )
+        .expect("formatting into a String"),
     }
 }
 
@@ -361,7 +364,7 @@ impl Parts<'_, '_, '_> {
             },
         );
         self.text(top, "MAKING YOUR PRIVATE COPY", HEADING, theme::GOLD);
-        let count = self.text(top, "", COUNT, theme::INK_2);
+        let count = self.text(top, String::with_capacity(64), COUNT, theme::INK_2);
         self.commands.entity(count).insert(Live::Count);
         let track = self.node(
             block,
@@ -393,7 +396,7 @@ impl Parts<'_, '_, '_> {
                 ..default()
             },
         );
-        let item = self.text(below, "", SMALL, theme::INK_3);
+        let item = self.text(below, String::with_capacity(512), SMALL, theme::INK_3);
         self.commands.entity(item).insert((
             Live::Item,
             Node {
@@ -401,7 +404,7 @@ impl Parts<'_, '_, '_> {
                 ..default()
             },
         ));
-        let left = self.text(below, "", SMALL, theme::INK_4);
+        let left = self.text(below, String::with_capacity(64), SMALL, theme::INK_4);
         self.commands.entity(left).insert((
             Live::Left,
             TextLayout {

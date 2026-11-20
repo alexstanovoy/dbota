@@ -196,7 +196,7 @@ tests = [
         "pacing::",
         "logging::",
         "desktop::",
-        "firstrun::tests::",
+        "firstrun::",
         "postgame::",
         "chat::version_tests::",
         "e2e::chat_log::",
