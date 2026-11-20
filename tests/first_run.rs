@@ -180,7 +180,8 @@ fn an_up_to_date_import_reports_and_preserves_the_users_backup() {
     let stamp = dbota_import::cache_dir::stamp(
         &install.join("game/dota"),
         &dbota_import::import::plan_id(&plan),
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(cache.join("stamp.txt"), stamp).unwrap();
     std::fs::write(cache.join("index.txt"), b"").unwrap();
     let output = common::binary(&cache)
@@ -188,10 +189,17 @@ fn an_up_to_date_import_reports_and_preserves_the_users_backup() {
         .arg(install)
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(String::from_utf8_lossy(&output.stdout).contains("is up to date"));
     let warning = String::from_utf8_lossy(&output.stderr);
-    assert!(warning.contains(".assets.old") && warning.contains("leaving"), "{warning}");
+    assert!(
+        warning.contains(".assets.old") && warning.contains("leaving"),
+        "{warning}"
+    );
     assert_eq!(std::fs::read(private).unwrap(), b"my backup");
 }
 
@@ -493,6 +501,43 @@ fn an_unattended_run_without_assets_ends_with_the_reason() {
     assert!(said.contains("no asset cache at"), "{said}");
     assert!(said.contains("dbota import"), "{said}");
     assert!(!cache.exists());
+}
+
+#[test]
+fn an_invalid_startup_setting_says_how_to_start_again() {
+    let scratch = Scratch::new("invalid-startup-setting");
+    let output = common::binary(&scratch.cache())
+        .args(["--set", "unknown_startup_setting=1"])
+        .output()
+        .expect("dbota starts");
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{said}");
+    assert!(
+        said.contains("unknown_startup_setting")
+            && said.contains("Remove the --set override and start dbota again"),
+        "{said}"
+    );
+}
+
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn a_blocked_import_shows_the_path_and_how_to_retry() {
+    let scratch = Scratch::new("blocked-import");
+    let mut client = first_run_client(&scratch);
+    steam_with_dota(
+        &mut client,
+        &scratch.root.join("Steam"),
+        &scratch.root.join("games"),
+    );
+    let occupied = scratch.root.join(".assets.importing");
+    std::fs::create_dir(&occupied).unwrap();
+    std::fs::write(occupied.join("keep"), b"my backup").unwrap();
+    played(
+        "blocked-import",
+        client,
+        "await:button:import from dota 2;click:import from dota 2;await:text:.assets.importing;await:text:Choose another folder or try the import again;shot:failed-import.png;click:quit dbota",
+    );
+    assert_eq!(std::fs::read(occupied.join("keep")).unwrap(), b"my backup");
 }
 
 /// On a system without a folder dialog (a Linux desktop without zenity or kdialog) the folder is

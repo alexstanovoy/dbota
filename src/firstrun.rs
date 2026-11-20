@@ -368,8 +368,10 @@ impl FirstRun {
             Told::Picked(Ok(None)) => self.screen = Screen::Ready,
             Told::Picked(Err(NoDialog::Missing)) => self.screen = Screen::Typing,
             Told::Picked(Err(NoDialog::Failed(why))) => {
-                self.screen = Screen::Ready;
-                self.note = Some(format!("The folder dialog failed: {why}"));
+                self.screen = Screen::Typing;
+                self.note = Some(format!(
+                    "The folder dialog could not open: {why}. Type or paste the Dota 2 folder below."
+                ));
             }
             Told::Waiting => {
                 if matches!(self.screen, Screen::Working(_)) {
@@ -396,7 +398,7 @@ impl FirstRun {
                     Ok(imported) if imported.stopped => self.ended("Import cancelled."),
                     Err(why) => {
                         warn!("dbota import: {why}");
-                        self.ended(&format!("The import failed: {why}"))
+                        self.ended(&format!("The import failed: {why}. Choose another folder or try the import again after fixing the reported error."))
                     }
                     Ok(imported) if imported.failed.is_empty() => Screen::Restarting,
                     Ok(imported) => Screen::Partial {
@@ -820,13 +822,18 @@ impl ProgressLine {
             }
             Self::Steps => {
                 let group = work.item.split(['.', '/']).next().unwrap_or("");
-                write!(text, "Making your private copy: {} of {}  ·  {group}", work.done, work.total)
-                    .expect("writing to a String");
+                write!(
+                    text,
+                    "Making your private copy: {} of {}  ·  {group}",
+                    work.done, work.total
+                )
+                .expect("writing to a String");
             }
             Self::Item => {
                 text.push_str(&work.item);
                 if work.bytes > 0 {
-                    write!(text, " ({} MB written)", work.bytes >> 20).expect("writing to a String");
+                    write!(text, " ({} MB written)", work.bytes >> 20)
+                        .expect("writing to a String");
                 }
             }
         }
@@ -970,16 +977,24 @@ fn draw_screen(commands: &mut Commands, fonts: &Fonts, shown: &Shown, work: Opti
     }
 }
 
-fn screen_line(commands: &mut Commands, fonts: &Fonts, screen: Entity, text: String, color: Color) -> Entity {
-    commands.spawn((
-        ui::text(text, &fonts.regular, 25.0, color),
-        Node {
-            max_width: px(1080),
-            ..default()
-        },
-        Pickable::IGNORE,
-        ChildOf(screen),
-    )).id()
+fn screen_line(
+    commands: &mut Commands,
+    fonts: &Fonts,
+    screen: Entity,
+    text: String,
+    color: Color,
+) -> Entity {
+    commands
+        .spawn((
+            ui::text(text, &fonts.regular, 25.0, color),
+            Node {
+                max_width: px(1080),
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(screen),
+        ))
+        .id()
 }
 
 /// Rebuilds on a screen change. Progress can change while the pointer is on CANCEL.
@@ -1000,7 +1015,9 @@ fn draw(
         _ => None,
     };
     if let Some(work) = work
-        && drawn.as_ref().is_some_and(|shown| shown.working && shown.note == run.note)
+        && drawn
+            .as_ref()
+            .is_some_and(|shown| shown.working && shown.note == run.note)
     {
         for (line, mut text) in &mut lines {
             line.show(&mut text.0, work);
@@ -1055,7 +1072,9 @@ mod tests {
             schedule.run(&mut world);
         }
         let cancel_button = |world: &mut World| {
-            world.query::<(Entity, &Press)>().iter(world)
+            world
+                .query::<(Entity, &Press)>()
+                .iter(world)
                 .find_map(|(entity, press)| (*press == Press::Cancel).then_some(entity))
         };
         let cancel = cancel_button(&mut world).expect("CANCEL on the initial progress screen");
@@ -1066,10 +1085,29 @@ mod tests {
             bytes: 2 << 20,
         }));
         let allocations = crate::test_support::count_allocations(|| schedule.run(&mut world));
-        assert_eq!(cancel_button(&mut world), Some(cancel), "CANCEL was replaced on progress");
-        assert!(world.query::<&Text>().iter(&world).any(|text| text.0.contains("50 of 100")));
-        assert!(world.query::<&Text>().iter(&world).any(|text| text.0 == "model.hero (2 MB written)"));
-        assert!(world.query::<&Node>().iter(&world).any(|node| node.width == percent(50)));
+        assert_eq!(
+            cancel_button(&mut world),
+            Some(cancel),
+            "CANCEL was replaced on progress"
+        );
+        assert!(
+            world
+                .query::<&Text>()
+                .iter(&world)
+                .any(|text| text.0.contains("50 of 100"))
+        );
+        assert!(
+            world
+                .query::<&Text>()
+                .iter(&world)
+                .any(|text| text.0 == "model.hero (2 MB written)")
+        );
+        assert!(
+            world
+                .query::<&Node>()
+                .iter(&world)
+                .any(|node| node.width == percent(50))
+        );
         assert_eq!(allocations, 0, "allocations in one progress update");
     }
 

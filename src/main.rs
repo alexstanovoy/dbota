@@ -536,7 +536,10 @@ pub fn since_start() -> f32 {
 fn main() -> AppExit {
     STARTED.get_or_init(bevy::platform::time::Instant::now);
     #[cfg(not(target_arch = "wasm32"))]
-    desktop::attach_console();
+    let args = match native_startup() {
+        Ok(args) => args,
+        Err(exit) => return exit,
+    };
     // A browser build with `web-replay` takes its arguments from
     // DBOTA_WEB_ARGS when it was built: a page has no command line.
     #[cfg(all(target_arch = "wasm32", feature = "web-replay"))]
@@ -547,7 +550,7 @@ fn main() -> AppExit {
                 .split_whitespace(),
         ),
     );
-    #[cfg(not(all(target_arch = "wasm32", feature = "web-replay")))]
+    #[cfg(all(target_arch = "wasm32", not(feature = "web-replay")))]
     let args = Args::parse();
     let mut args = args;
     args.read_environment = true;
@@ -582,7 +585,9 @@ fn main() -> AppExit {
         && let Err(why) =
             import::note_cache_use(import::managed_cache_root().as_deref(), &args.cache_dir)
     {
-        fail(&format!("cache use could not be recorded: {why}"));
+        fail(&format!(
+            "The cache could not be opened for use: {why}\nCheck that its folder is writable, or select a writable cache folder and start dbota again."
+        ));
         return AppExit::from_code(2);
     }
     #[cfg(target_arch = "wasm32")]
@@ -603,7 +608,9 @@ fn main() -> AppExit {
     if let Some(path) = &args.config
         && let Err(why) = config::refuse_retired(path)
     {
-        eprintln!("dbota: --config: {why}");
+        fail(&format!(
+            "Settings could not be opened: {why}\nRemove the --config override or select another settings file and start dbota again."
+        ));
         return AppExit::error();
     }
     let store = main_menu::SettingsStore::new(settings_path.clone());
@@ -614,7 +621,9 @@ fn main() -> AppExit {
             .ok_or_else(|| "expected NAME=VALUE".to_string())
             .and_then(|(name, value)| settings.set(name.trim(), value.trim()));
         if let Err(why) = set {
-            eprintln!("dbota: --set {line}: {why}");
+            fail(&format!(
+                "The --set override {line} could not be applied: {why}\nRemove the --set override and start dbota again."
+            ));
             return AppExit::error();
         }
     }
@@ -670,24 +679,38 @@ fn main() -> AppExit {
     if args.bench_gpu {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
-    // After DefaultPlugins, whose panic hook (the console's) this one calls first.
     #[cfg(target_arch = "wasm32")]
     {
         webpage::report_panics();
         app.add_plugins(webpage::plugin);
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    desktop::report_panics();
     let exit = app.run();
     // The window, the GPU and the sound device are let go before dbota starts again.
     drop(app);
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(args) = RESTART.get() {
         let why = desktop::restart(args);
-        fail(&format!("dbota could not start again: {why}"));
+        fail(&format!(
+            "The files were imported but dbota could not reopen: {why}\nOpen dbota again from its installation folder."
+        ));
         return AppExit::error();
     }
     exit
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_startup() -> Result<Args, AppExit> {
+    desktop::attach_console();
+    desktop::report_panics();
+    Args::try_parse().map_err(|why| {
+        if why.use_stderr() {
+            fail(&format!("The launch options could not be read: {why}\nRemove the unsupported options and start dbota again."));
+            AppExit::from_code(u8::try_from(why.exit_code()).unwrap_or(2))
+        } else {
+            let _ = why.print();
+            AppExit::Success
+        }
+    })
 }
 
 /// Why the client cannot go on, told where the player sees it (see `desktop::tell_failure`).
