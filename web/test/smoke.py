@@ -567,7 +567,8 @@ def check_fullscreen_page(directory, shots=False):
         server, base, browser, page, console, problems = opened(p, directory)
         page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
-        wait_loading_cover(page, console)
+        page.locator("#dbota").wait_for(state="visible", timeout=60000)
+
         def shot(name):
             if shots:
                 page.screenshot(path=str(HERE.parent.parent / f"temp/smoke-{name}.png"), timeout=600000)
