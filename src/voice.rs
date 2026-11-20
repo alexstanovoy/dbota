@@ -560,7 +560,15 @@ fn speak(
     lines: Query<(), With<AnnouncerLine>>,
     mut mixer: ResMut<crate::mixer::Mixer>,
     mut seen_ends: Local<u32>,
+    finale: Option<Res<crate::finale::Finale>>,
 ) {
+    if finale.is_some_and(|finale| finale.run.is_some()) {
+        announcer.waiting.clear();
+        if let Some(line) = announcer.speaking.take() {
+            commands.entity(line).try_despawn();
+        }
+        return;
+    }
     let now = time.elapsed_secs();
     // The lines called in a match that has ended are not read in the next.
     if *seen_ends != mixer.ends() {

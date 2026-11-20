@@ -44,10 +44,6 @@ fn fell(client: &mut Client, kind: UnitKind, team: Team) {
         building(c, kind, team).is_some()
     });
     let target = building(client, kind, team).expect("in sight");
-    // As a match's loading screen does, the models are loaded before anything falls.
-    client.until("the models loaded", |c| {
-        c.world().resource::<crate::loading::Loading>().done()
-    });
     client.until("the building drawn", |c| drawn_with_a_model(c, target));
     client
         .core_mut()
@@ -74,11 +70,6 @@ fn frame(client: &mut Client, long: Duration, step: Duration) {
     client
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(step));
-}
-
-/// The moved clock's time.
-fn now(client: &Client) -> f32 {
-    client.world().resource::<Time<Real>>().elapsed_secs()
 }
 
 fn focus(client: &mut Client) -> Vec3 {
@@ -182,24 +173,27 @@ fn watch(
     client
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(step));
-    let start = now(client) - finale(client).elapsed;
+    let start = finale(client).began_at;
+    let since = |client: &Client| {
+        client.world().resource::<Time<Real>>().elapsed().saturating_sub(start).as_secs_f32()
+    };
     let mut long = long;
     let mut frames = 0u32;
-    while now(client) - start < LONGEST_SECS + 3.0 && seen.post_game.is_none() {
+    while since(client) < LONGEST_SECS + 3.0 && seen.post_game.is_none() {
         frames += 1;
         // Now and then the player tries to order its hero: nothing goes out once it is decided.
         if frames.is_multiple_of(10) {
             stop(client);
         }
         let this = match long {
-            Some((at, length)) if now(client) - start >= at => {
+            Some((at, length)) if since(client) >= at => {
                 long = None;
                 length
             }
             _ => step,
         };
         frame(client, this, step);
-        let clock = now(client) - start;
+        let clock = since(client);
         let (at, ground) = camera(client);
         seen.lowest = seen.lowest.min(at.y - ground);
         if seen.arrived.is_none() && focus(client).distance(shot) < 1.0 {
@@ -266,8 +260,9 @@ fn assert_shown_whole(seen: &Watched, length: f32, step: f32) {
 
 #[test]
 fn a_1v1_dire_victory_is_shown_to_the_radiant_loser_to_its_end() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     let orders = client.record_sent_orders();
     stop(&mut client);
@@ -297,8 +292,9 @@ fn a_1v1_dire_victory_is_shown_to_the_radiant_loser_to_its_end() {
 
 #[test]
 fn a_full_map_radiant_victory_is_shown_to_the_radiant_winner_to_its_end() {
-    let server = Server::start(1, &["--map", "0"]);
+    let server = Server::for_hud(1, &["--map", "0"]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     fell(&mut client, UnitKind::Ancient, Team::Dire);
     let run = finale(&client);
@@ -319,8 +315,9 @@ fn a_full_map_radiant_victory_is_shown_to_the_radiant_winner_to_its_end() {
 /// real clock: the caption at its second and the post-game screen at the end's length.
 #[test]
 fn the_end_keeps_its_timing_at_a_low_frame_rate_and_after_a_long_frame() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     fell(&mut client, UnitKind::Tower, Team::Dire);
     let length = finale(&client).length;
@@ -350,8 +347,9 @@ fn the_end_of_a_replay_is_shown_to_its_watcher_with_the_winners_stinger() {
     let replay =
         crate::test_support::scratch_path(&format!("victory-replay-{}.brp", std::process::id()));
     {
-        let server = Server::start(1, &["--replay", replay.to_str().expect("a path")]);
+        let server = Server::for_hud(1, &["--replay", replay.to_str().expect("a path")]);
         let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+        client.ready_with_match_held(&server);
         client.cheat(Cheat::StartGame);
         fell(&mut client, UnitKind::Tower, Team::Radiant);
     }
@@ -376,8 +374,9 @@ fn the_end_of_a_replay_is_shown_to_its_watcher_with_the_winners_stinger() {
 /// flight, no caption, the post-game screen at once.
 #[test]
 fn a_match_the_service_ends_has_no_end_shown() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     server.ask_to_finish();
     client.until("the post-game screen", |c| post_game_shown(c));
@@ -389,8 +388,9 @@ fn a_match_the_service_ends_has_no_end_shown() {
 #[test]
 fn the_end_lifts_the_fog_for_the_seat_in_1v1_and_on_the_full_map() {
     for (map, kind) in [("2", UnitKind::Tower), ("0", UnitKind::Ancient)] {
-        let server = Server::start(1, &["--map", map]);
+        let server = Server::for_hud(1, &["--map", map]);
         let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+        client.ready_with_match_held(&server);
         client.cheat(Cheat::StartGame);
         let fogged = |c: &Client| {
             let grid = c.world().resource::<crate::fog::FogGrid>();
@@ -417,8 +417,9 @@ fn the_end_lifts_the_fog_for_the_seat_in_1v1_and_on_the_full_map() {
 /// fade. A click on the world skips nothing.
 #[test]
 fn escape_during_the_end_goes_on_after_its_fade_and_a_click_skips_nothing() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     fell(&mut client, UnitKind::Tower, Team::Dire);
     client
@@ -434,30 +435,35 @@ fn escape_during_the_end_goes_on_after_its_fade_and_a_click_skips_nothing() {
         "a click skips nothing"
     );
     let length = finale(&client).length;
-    let start = now(&client) - finale(&client).elapsed;
+    let pressed = finale(&client).elapsed;
     client.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
-    let pressed = now(&client) - start;
-    while !post_game_shown(&client) {
+    let start = finale(&client).began_at;
+    let since = |client: &Client| {
+        client.world().resource::<Time<Real>>().elapsed().saturating_sub(start).as_secs_f32()
+    };
+    while client.world().resource::<Finale>().showing() {
         assert!(
-            now(&client) - start < pressed + 1.0,
-            "the post-game screen within the fade of the Escape"
+            since(&client) < pressed + 1.0,
+            "Escape ends the cinematic after its fade"
         );
-        client.step_frames(1);
+        client.frames(1);
     }
-    let left = now(&client) - start;
+    let left = since(&client);
     assert!(
         left >= pressed + crate::finale::FADE_SECS - FRAME.as_secs_f32(),
         "the end faded out first: Escape at {pressed} s, left at {left} s"
     );
     assert!(left < length, "the end was cut short");
+    client.until("the post-game screen after the fade", |c| post_game_shown(c));
 }
 
 /// A connection lost during the end changes nothing of it: it plays to its length, nothing is
 /// told over it, and the post-game screen comes by itself.
 #[test]
 fn the_end_plays_to_its_length_when_the_connection_is_lost_during_it() {
-    let mut server = Server::start(1, &[]);
+    let mut server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     fell(&mut client, UnitKind::Tower, Team::Dire);
     server.crash();
@@ -471,10 +477,12 @@ fn the_end_plays_to_its_length_when_the_connection_is_lost_during_it() {
 #[test]
 fn a_spectator_is_shown_the_end_as_a_watcher_with_the_winners_stinger() {
     // In real time: a watched lockstep match would wait for nobody.
-    let server = Server::start(1, &["--spectators", "open", "--mode", "realtime"]);
+    let server = Server::for_hud(1, &["--spectators", "open", "--mode", "realtime"]);
     let mut player = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
-    let mut watcher = Client::run(&["--addr", &server.address, "--spectate", "--mute"]);
+    player.ready_with_match_held(&server);
+    let mut watcher = Client::run_on(&server, &["--spectate", "--mute"], &[]);
     watcher.until("the match seen", |c| c.core().view().is_some());
+    watcher.ready_with_match_held(&server);
     player.cheat(Cheat::StartGame);
     fell(&mut player, UnitKind::Tower, Team::Radiant);
     watcher.until("the end reached the watcher", |c| {
@@ -489,8 +497,8 @@ fn a_spectator_is_shown_the_end_as_a_watcher_with_the_winners_stinger() {
     assert_shown_whole(&seen, length, FRAME.as_secs_f32());
 }
 
-/// One sound that started: when (seconds of the moved clock), its file, its channel if tuned.
-type Heard = Vec<(f32, String, Option<crate::channels::Channel>)>;
+/// One sound that started: when on the moved clock, its file, its channel if tuned.
+type Heard = Vec<(Duration, String, Option<crate::channels::Channel>)>;
 
 /// Records every sound that starts from now on.
 fn hear(client: &mut Client) -> std::sync::Arc<std::sync::Mutex<Heard>> {
@@ -508,7 +516,7 @@ fn hear(client: &mut Client) -> std::sync::Arc<std::sync::Mutex<Heard>> {
                 .get_path(player.0.id())
                 .map_or_else(String::new, |path| path.to_string());
             into.lock().expect("unpoisoned").push((
-                time.elapsed_secs(),
+                time.elapsed(),
                 path,
                 tuned.map(|tuned| tuned.channel),
             ));
@@ -523,19 +531,20 @@ fn hear(client: &mut Client) -> std::sync::Arc<std::sync::Mutex<Heard>> {
 /// once the end is over nothing of it keeps sounding.
 #[test]
 fn the_end_sounds_its_stinger_and_the_announcers_line_and_nothing_after_it() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     let heard = hear(&mut client);
     fell(&mut client, UnitKind::Tower, Team::Radiant);
-    let decided = now(&client) - finale(&client).elapsed;
+    let decided = finale(&client).began_at;
     let seen = watch(&mut client, FRAME, None, "DIRE VICTORY");
     assert!(seen.post_game.is_some(), "the end was left");
     let heard = heard.lock().expect("unpoisoned").clone();
     let after: Vec<_> = heard
         .iter()
-        .filter(|(at, ..)| *at >= decided - FRAME.as_secs_f32())
-        .map(|(at, path, channel)| (at - decided, path.as_str(), *channel))
+        .filter(|(at, ..)| *at >= decided)
+        .map(|(at, path, channel)| ((*at - decided).as_secs_f32(), path.as_str(), *channel))
         .collect();
     use crate::channels::Channel;
     let started = |part: &str| after.iter().find(|(_, path, _)| path.contains(part)).copied();
@@ -571,8 +580,9 @@ fn the_end_sounds_its_stinger_and_the_announcers_line_and_nothing_after_it() {
 /// left of the Ancient stays in sight to the end: nothing goes out of existence in view.
 #[test]
 fn the_fall_plays_its_destruction_and_leaves_its_ruin_to_the_end() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::StartGame);
     fell(&mut client, UnitKind::Tower, Team::Dire);
     client

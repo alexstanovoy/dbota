@@ -670,7 +670,7 @@ impl Client {
     ) -> Client {
         let mut args = vec!["--addr", server.address.as_str()];
         args.extend_from_slice(extra);
-        let mut client = Self::build_configured(&args, None, &[], Some(prepare));
+        let mut client = Self::build_configured(&args, Self::held_core(server, &args), &[], Some(prepare));
         client.pick_hero(hero);
         client.until("the hero on the map", |c| c.core().ears().is_some());
         client
@@ -692,13 +692,16 @@ impl Client {
     pub fn run_on(server: &Server, extra: &[&str], files: &[(&str, &str)]) -> Client {
         let mut args = vec!["--addr", server.address.as_str()];
         args.extend_from_slice(extra);
-        let core = server.held_loading.then(|| {
+        Self::build(&args, Self::held_core(server, &args), files)
+    }
+
+    fn held_core(server: &Server, args: &[&str]) -> Option<Core> {
+        server.held_loading.then(|| {
             FixtureLink::connect(&crate::Args::parse_from(
                 std::iter::once("dbota").chain(args.iter().copied()),
             ))
             .expect("the held-loading fixture connects")
-        });
-        Self::build(&args, core, files)
+        })
     }
 
     /// Let the HUD load and settle while holding both the live server and the displayed snapshot.

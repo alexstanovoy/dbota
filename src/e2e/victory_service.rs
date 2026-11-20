@@ -162,12 +162,16 @@ fn a_service_match_ends_on_its_result_page_by_itself_with_the_game_left_and_the_
 }
 
 /// Runs a frame of each client, on the frame clock both are given, until `done` holds for both.
-fn both(clients: &mut [&mut Client; 2], what: &str, mut done: impl FnMut(&mut Client) -> bool) {
+fn both(
+    clients: &mut [&mut Client; 2],
+    what: &str,
+    mut done: impl FnMut(usize, &mut Client) -> bool,
+) {
     let mut frames = 0u32;
     loop {
         let mut all = true;
-        for client in clients.iter_mut() {
-            all &= done(client);
+        for (seat, client) in clients.iter_mut().enumerate() {
+            all &= done(seat, client);
         }
         if all {
             return;
@@ -193,12 +197,12 @@ fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
     act(&mut alice, Act::Find(solo()));
     act(&mut bob, Act::Find(solo()));
     let mut players = [&mut alice, &mut bob];
-    both(&mut players, "the offer", |c| menu(c).view().offer.is_some());
+    both(&mut players, "the offer", |_, c| menu(c).view().offer.is_some());
     for client in players.iter_mut() {
         let proposal = menu(client).view().offer.expect("an offer").proposal;
         act(client, Act::Accept(proposal));
     }
-    both(&mut players, "both heroes on the map", |c| {
+    both(&mut players, "both heroes on the map", |_, c| {
         let core = c.core_mut();
         if core.view().is_none() && core.my_slot.is_some() && !core.ready {
             core.act(Intent::PickHero(HeroId::SHADOW_FIEND.0));
@@ -207,8 +211,12 @@ fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
         core.ears().is_some()
     });
     let radiant = usize::from(players[0].core().my_team() != Some(Team::Radiant));
-    players[radiant].cheat(Cheat::StartGame);
-    players[radiant].cheat(Cheat::AllVision { on: true });
+    // In lockstep both players must keep sending acknowledgements during setup.
+    for cheat in [Cheat::StartGame, Cheat::AllVision { on: true }] {
+        let tick = players[radiant].tick();
+        players[radiant].core_mut().act(Intent::Cheat(cheat));
+        both(&mut players, "both players saw the setup tick", |_, c| c.tick() > tick + 1);
+    }
     let tower = |c: &Client| {
         c.view()
             .units
@@ -216,7 +224,7 @@ fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
             .find(|u| u.kind == UnitKind::Tower && u.team == Team::Dire)
             .map(|u| u.id)
     };
-    both(&mut players, "a Dire tower in sight", |c| {
+    both(&mut players, "a Dire tower in sight", |_, c| {
         c.core().my_team() != Some(Team::Radiant) || tower(c).is_some()
     });
     let target = tower(players[radiant]).expect("in sight");
@@ -225,7 +233,7 @@ fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
         .act(Intent::Cheat(Cheat::Destroy {
             target: Target::Unit(target),
         }));
-    both(&mut players, "the end shown to both", |c| {
+    both(&mut players, "the end shown to both", |_, c| {
         c.world().resource::<Finale>().run.is_some()
     });
     for client in players.iter_mut() {
@@ -233,8 +241,11 @@ fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
             .world_mut()
             .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
     }
-    let mut changes = Vec::new();
-    both(&mut players, "the result pages", |c| {
+    let mut checked = [false; 2];
+    both(&mut players, "the result pages", |seat, c| {
+        if checked[seat] {
+            return true;
+        }
         if menu(c).page() != Page::Result {
             assert!(
                 c.world().resource::<Finale>().run.is_some() || menu(c).page() == Page::Game,
@@ -242,33 +253,26 @@ fn both_players_of_a_rated_match_see_the_end_and_land_on_their_rating_change() {
             );
             return false;
         }
-        if changes.len() < 2 {
-            // The first frame drawn on the page.
-            c.step_frames(1);
-            let rating = c
-                .shown_texts()
-                .into_iter()
-                .find(|text| text.starts_with("Rating "));
-            changes.push((c.core().my_team(), rating));
-        }
+        // The first frame drawn on this player's page.
+        c.step_frames(1);
+        let crate::main_menu::PageView::Result(result) = menu(c).view().body else {
+            panic!("player {seat} has a drawn result page");
+        };
+        let mine = result.seats.iter().find(|row| row.mine).expect("my result row");
+        let expected = if seat == radiant { "(+" } else { "(-" };
+        assert!(
+            mine.rating.contains(expected) && c.shown_texts().contains(&mine.rating),
+            "player {seat} expected a visible {expected} rating change, saw {:?}", mine.rating
+        );
+        checked[seat] = true;
         true
     });
-    for (team, rating) in &changes {
-        let rating = rating
-            .as_deref()
-            .unwrap_or_else(|| panic!("{team:?}: no rating change on the page's first frame"));
-        let expected = if *team == Some(Team::Radiant) {
-            "Rating +"
-        } else {
-            "Rating -"
-        };
-        assert!(rating.starts_with(expected), "{team:?}: {rating}");
-    }
     for client in players.iter_mut() {
         assert_eq!(crate::error_msg::shown(client.world_mut()), None, "no error told");
         act(client, Act::Find(solo()));
     }
-    both(&mut players, "both look for their next match", |c| {
-        menu(c).view().searches.len() == 1
+    both(&mut players, "both look for their next match", |_, c| {
+        let view = menu(c).view();
+        view.searches.len() == 1 || view.offer.is_some()
     });
 }

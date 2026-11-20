@@ -421,6 +421,7 @@ fn open_blob(blob: &super::core::Blob) -> std::io::Result<Session> {
 #[allow(clippy::too_many_arguments)]
 fn guard(
     post: NonSend<crate::postgame::PostGame>,
+    finale: Res<crate::finale::Finale>,
     core: Option<NonSendMut<MenuCore>>,
     mut session: NonSendMut<Session>,
     mut fired: ResMut<crate::keys::Fired>,
@@ -484,6 +485,7 @@ fn guard(
     let leave = disconnect
         || (shown
             && !post.visible()
+            && !finale.showing()
             && fired.pressed(escape)
             && done
             && !screen.open

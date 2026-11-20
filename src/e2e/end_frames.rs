@@ -169,28 +169,13 @@ fn rendered_seat(server: &Server, size: UVec2) -> Client {
         2160 => prepare_2160,
         _ => prepare_1080,
     };
-    let mut client = Client::run_rendered(
-        &[
-            "--addr",
-            server.address.as_str(),
-            "--mute",
-            "--window",
-            &window,
-            "--no-vsync",
-        ],
+    let mut client = Client::join_rendered(
+        server,
+        HeroId::SHADOW_FIEND,
+        &["--mute", "--window", &window, "--no-vsync"],
         prepare,
     );
-    client.until("the hero picked", |c| {
-        let core = c.core_mut();
-        if core.view().is_none() && core.my_slot.is_some() && !core.ready {
-            core.act(Intent::PickHero(HeroId::SHADOW_FIEND.0));
-            core.act(Intent::ToggleReady);
-        }
-        core.ears().is_some()
-    });
-    client.until("the loaded scene", |c| {
-        c.world().resource::<crate::loading::Loading>().done()
-    });
+    client.ready_with_match_held(server);
     client
 }
 
@@ -308,7 +293,7 @@ struct Filmed {
 /// Plays to the deciding blow (the client's hero fells `kind` of `team`) and takes the frames of
 /// the end at the scene's moments.
 fn film(scene: &Scene) -> Filmed {
-    let server = Server::start(1, &["--map", scene.map]);
+    let server = Server::for_hud(1, &["--map", scene.map]);
     let mut client = rendered_seat(&server, scene.size);
     client.cheat(Cheat::StartGame);
     // Invulnerable, the hero stands where a player who wins or loses there would.

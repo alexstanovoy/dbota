@@ -100,7 +100,7 @@ pub struct Run {
     pub cue: String,
     /// Seconds since the decision, on the real clock.
     pub elapsed: f32,
-    began_at: std::time::Duration,
+    pub(crate) began_at: std::time::Duration,
     /// How long it lasts: the collapse and the hold.
     pub length: f32,
     /// When it is left: at its length, or sooner when the player goes on.
