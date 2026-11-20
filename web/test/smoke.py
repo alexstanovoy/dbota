@@ -1914,8 +1914,9 @@ def drive_replays_page(work, port, evidence):
         after_frames(page)
         page.keyboard.press("Enter")
         wait_browser_state(
-            page, lambda: all(file != name for file, _ in page.evaluate(OPFS_REPLAYS)),
-            "removal of the kept replay after DELETE", 120,
+            page,
+            lambda: not saved_replay(page, match_id) and all(file != name for file, _ in page.evaluate(OPFS_REPLAYS)),
+            "removal of the kept replay and its index row after DELETE", 120,
         )
         assert not problems, problems
         print("delete: the replay is gone from OPFS")
