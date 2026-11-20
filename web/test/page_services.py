@@ -61,13 +61,14 @@ def run_service_page(page_server, endpoint, shots):
     url = f"http://127.0.0.1:{page_server.server_port}/?cache=http"
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(args=[*BROWSER_ARGS, "--ignore-certificate-errors"])
-        page = browser.new_page()
+        page = browser.new_page(viewport={"width": 1920, "height": 1080})
         console = []
         page.on("console", lambda message: console.append(message.text))
         page.route_web_socket(re.compile(r"^wss://bota\.lubush\.space/"), lambda connection: connection.close())
         page.goto(url)
         wait_console(page, console, r"service wss://bota\.lubush\.space did not pass its check:", 90,
                      "the new browser client to check the public service")
+        capture_service_card(page, failed=True, shots=shots, filename="default-browser")
         page.close()
         for path, result in [("", "passed its check"), ("/wrong", "did not pass its check: CannotConnect")]:
             address = endpoint + path
@@ -83,7 +84,7 @@ def run_service_page(page_server, endpoint, shots):
         browser.close()
 
 
-def capture_service_card(page, failed, shots):
+def capture_service_card(page, failed, shots, filename=None):
     # The failed check paints a red headline. A passed check paints a sign-in button that
     # reaches the right of the card. The narrow CHECK AGAIN button does not reach there.
     clip = ({"x": 738, "y": 345, "width": 290, "height": 58} if failed else
@@ -113,5 +114,5 @@ def capture_service_card(page, failed, shots):
         assert time.monotonic() < deadline, f"service status pixels: {count}, failure expected: {failed}"
     if shots:
         shots.mkdir(parents=True, exist_ok=True)
-        name = "wrong-path" if failed else "sign-in"
+        name = filename or ("wrong-path-browser" if failed else "sign-in-browser")
         page.screenshot(path=shots / f"{name}.png")
