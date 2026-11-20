@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 use dbota_import::import::{Flow, Item, Plan, Sink, run};
 use dbota_import::source::InstallSource;
+use dbota_import::voice::expr::Matcher;
 use dbota_import::voice::{self, pack_path};
 use heatel::find_game_dir;
 
@@ -52,6 +53,16 @@ fn counts(files: &Files, hero: &str) -> (BTreeMap<String, u32>, usize) {
     let bytes = &files.0[&pack_path(hero)];
     let voice = voice::open(hero, bytes).expect("the pack opens");
     (voice.rules.pruned.clone(), voice.rules.lines())
+}
+
+/// The values a fact takes in the simulator's catalogue, when it is one it lists (an item's or a
+/// rival's), as the importer asks the same catalogue; nothing for any other fact.
+fn catalogue(key: &str) -> Vec<&'static str> {
+    match key {
+        "itemname" => bota_core::ITEMS.iter().map(|item| item.key).collect(),
+        "targetclassname" => bota_core::HEROES.iter().map(|hero| hero.key).collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// The prune counts of Pudge and Shadow Fiend. The concepts not raised are counted by the
@@ -119,14 +130,21 @@ fn every_line_of_a_heros_rules_is_kept_or_pruned_under_one_reason() {
 /// The rest of the prune counts and what is kept, as Dota 7.41f's rules give them: the
 /// cosmetics' lines (`customresponse`), the events the client has no fact of, and the rivals and
 /// items the game lacks.
+///
+/// The first kinds follow from the install's rule files alone and are pinned exactly, with the
+/// number of lines that survive them (kept plus absent). Which of those survivors are absent
+/// is the simulator's catalogue's to say (`bota_core::ITEMS`, `HEROES`: a line moves to kept the
+/// day its item exists), so it is asked of the catalogue here instead of pinned: every absent
+/// reason names the value the rule asks for and the catalogue must hold nothing that matches it,
+/// and every kept rule's item or rival the catalogue must hold. A line kept or dropped wrongly
+/// fails whatever the catalogue's size.
 #[test]
 #[ignore = "needs a local Dota 2 install"]
 fn the_heros_lines_kept_and_pruned_are_the_installs() {
     let (files, _) = packs(&["pudge", "nevermore"]);
-    for (hero, kept_lines, facts) in [
+    for (hero, facts, surviving) in [
         (
             "pudge",
-            159,
             &[
                 ("fact not supplied: abilityname", 26),
                 ("fact not supplied: customresponse", 1443),
@@ -135,13 +153,11 @@ fn the_heros_lines_kept_and_pruned_are_the_installs() {
                 ("fact not supplied: reincarnating", 2),
                 ("fact not supplied: special_spawn", 27),
                 ("fact not supplied: tease", 2),
-                ("value absent from the game: itemname", 10),
-                ("value absent from the game: targetclassname", 19),
             ][..],
+            159 + 10 + 19,
         ),
         (
             "nevermore",
-            166,
             &[
                 ("fact not supplied: customresponse", 205),
                 ("fact not supplied: expensive_item", 4),
@@ -149,19 +165,56 @@ fn the_heros_lines_kept_and_pruned_are_the_installs() {
                 ("fact not supplied: shadowraze", 9),
                 ("fact not supplied: special_spawn", 24),
                 ("fact not supplied: tease", 2),
-                ("value absent from the game: itemname", 9),
-                ("value absent from the game: targetclassname", 11),
             ][..],
+            166 + 9 + 11,
         ),
     ] {
         let (pruned, kept) = counts(&files, hero);
-        let rest: Vec<(&str, u32)> = pruned
+        const ABSENT: &str = "value absent from the game: ";
+        let installs: Vec<(&str, u32)> = pruned
             .iter()
-            .filter(|(why, _)| !why.starts_with("concept not raised: "))
+            .filter(|(why, _)| !why.starts_with("concept not raised: ") && !why.starts_with(ABSENT))
             .map(|(why, n)| (why.as_str(), *n))
             .collect();
-        assert_eq!(rest, facts, "{hero}");
-        assert_eq!(kept, kept_lines, "{hero}");
+        assert_eq!(installs, facts, "{hero}");
+        let mut absent = 0;
+        for (why, lines) in pruned
+            .iter()
+            .filter_map(|(why, n)| Some((why.strip_prefix(ABSENT)?, n)))
+        {
+            let (key, expr) = why
+                .split_once(" = ")
+                .expect("an absent value names what was asked");
+            let matcher = Matcher::parse(expr);
+            let present: Vec<&str> = catalogue(key)
+                .into_iter()
+                .filter(|value| matcher.matches(Some(value)))
+                .collect();
+            assert!(
+                present.is_empty(),
+                "{hero}: {lines} lines are dropped for a {key} ({expr}) the game lacks, but it has {present:?}"
+            );
+            absent += lines;
+        }
+        let voice = voice::open(hero, &files.0[&pack_path(hero)]).expect("the pack opens");
+        for rule in &voice.rules.rules {
+            for &index in &rule.criteria {
+                let criterion = &voice.rules.criteria[index];
+                let values = catalogue(&criterion.key.to_ascii_lowercase());
+                if !values.is_empty() {
+                    assert!(
+                        values
+                            .iter()
+                            .any(|value| criterion.matcher.matches(Some(value))),
+                        "{hero}: {} is kept, but the game has no {} for {:?}",
+                        rule.name,
+                        criterion.key,
+                        criterion.expr
+                    );
+                }
+            }
+        }
+        assert_eq!(kept as u32 + absent, surviving, "{hero}: {pruned:#?}");
     }
     let voice = voice::open("pudge", &files.0[&pack_path("pudge")]).expect("Pudge's pack");
     let moves = voice

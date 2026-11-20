@@ -42,8 +42,9 @@ pub(crate) enum Prune {
     /// the client draws heroes in their default items only; others are of events the client has
     /// no fact of (Pudge's `hookedtarget`, a taunt's `taunt_type`).
     FactNotSupplied(String),
-    /// Its rule requires a value the game never has (a rival hero, an item the game lacks).
-    AbsentValue(String),
+    /// Its rule requires a value the game never has (a rival hero, an item the game lacks): the
+    /// fact and what the rule asks of it, so that the pruned counts say which values are missing.
+    AbsentValue { key: String, expr: String },
     /// It is not a line said (`SCENE`, `PRINT`, `RESPONSE`), or names nothing.
     NotSpeech,
     /// Its voice event is not in the hero's scripts, or its sound does not read.
@@ -57,7 +58,9 @@ impl Prune {
             Prune::UnknownCriterion => "unknown criterion".to_owned(),
             Prune::ConceptNotRaised(c) => format!("concept not raised: {c}"),
             Prune::FactNotSupplied(key) => format!("fact not supplied: {key}"),
-            Prune::AbsentValue(key) => format!("value absent from the game: {key}"),
+            Prune::AbsentValue { key, expr } => {
+                format!("value absent from the game: {key} = {expr}")
+            }
             Prune::NotSpeech => "not speech".to_owned(),
             Prune::NoSound => "no sound".to_owned(),
         }
@@ -98,7 +101,10 @@ fn unmatchable(concept: Concept, criterion: &Criterion, class: &str) -> Option<P
     }
     Some(match fact {
         Fact::Concept => Prune::ConceptNotRaised(expr.to_owned()),
-        _ => Prune::AbsentValue(key.to_ascii_lowercase()),
+        _ => Prune::AbsentValue {
+            key: key.to_ascii_lowercase(),
+            expr: expr.to_owned(),
+        },
     })
 }
 
@@ -731,7 +737,10 @@ mod tests {
                 ("concept not raised: TLK_DOTA_SELECT".to_owned(), 5),
                 ("fact not supplied: customresponse".to_owned(), 4),
                 ("fact not supplied: hookedtarget".to_owned(), 6),
-                ("value absent from the game: targetclassname".to_owned(), 7),
+                (
+                    "value absent from the game: targetclassname = npc_dota_hero_meepo".to_owned(),
+                    7
+                ),
             ]
         );
         assert_eq!(pruned.total, 36);
