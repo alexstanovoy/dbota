@@ -67,8 +67,20 @@ fn the_glyph_and_the_scan_stand_in_the_two_wells_of_the_plate_against_the_minima
     let unit = dota(&client);
     let minimap = named_rect(&mut client, "hud minimap");
     let plate = named_rect(&mut client, "hud glyph plate");
-    let glyph = named_rect(&mut client, "hud glyph");
-    let scan = named_rect(&mut client, "hud scan");
+    let glyph = named(&mut client, "hud glyph");
+    let scan = named(&mut client, "hud scan");
+    let glyph_bounds = rect(&client, glyph);
+    let scan_bounds = rect(&client, scan);
+    let world = client.world();
+    let interactive = [
+        world.get::<crate::glyph::GlyphButton>(glyph).is_some(),
+        world.get::<crate::scan::ScanButton>(scan).is_some(),
+    ];
+    assert_eq!(
+        interactive,
+        [true, true],
+        "layout measures the interactive buttons, at {glyph_bounds:?} and {scan_bounds:?}"
+    );
     near(
         "the plate's left edge at the minimap's right",
         plate.min.x,
@@ -85,7 +97,7 @@ fn the_glyph_and_the_scan_stand_in_the_two_wells_of_the_plate_against_the_minima
         plate.max.y,
         minimap.max.y,
     );
-    for (name, button, foot) in [("glyph", glyph, 6.0), ("scan", scan, 50.0)] {
+    for (name, button, foot) in [("glyph", glyph_bounds, 6.0), ("scan", scan_bounds, 50.0)] {
         near(
             &format!("the {name} button's width"),
             button.width(),
@@ -113,7 +125,7 @@ fn the_glyph_and_the_scan_stand_in_the_two_wells_of_the_plate_against_the_minima
 #[test]
 fn the_glyph_has_the_games_popup_with_its_wait() {
     let (_server, mut client) = scene();
-    let glyph = named(&mut client, "hud glyph player");
+    let glyph = named(&mut client, "hud glyph");
     client.hover_ui(glyph, Duration::from_secs(30));
     // The popup's lines are spans of its body, which the texts shown do not list.
     let said = |c: &mut Client, word: &str| {
@@ -279,6 +291,7 @@ fn the_empty_glyph_shows_its_wait_without_a_charge_badge() {
             .is_some_and(|seen| seen.get())
     });
     assert_eq!(glyph_charges(&client), Some(0));
+    assert_countdown(&mut client);
     assert_eq!(glyph_badge(&mut client), None, "zero hides the charge disc");
 }
 
@@ -309,12 +322,15 @@ fn both_charge_badges_use_the_reference_label_geometry_and_font() {
                 .is_some_and(|seen| seen.get()),
             "{badge} is drawn"
         );
-        let font = world
+        let label = world
             .get::<Children>(entity)
-            .expect("charge label")
+            .expect("badge children")
             .iter()
-            .find_map(|child| world.get::<TextFont>(child))
-            .expect("charge font");
+            .find(|child| world.get::<Text>(*child).is_some())
+            .expect("charge label");
+        let font = world.get::<TextFont>(label).expect("charge font");
+        let ink = world.get::<TextColor>(label).expect("charge label colour");
+        assert_eq!(ink.0, Color::srgb_u8(176, 188, 194));
         assert_eq!(
             font.font_size,
             bevy::text::FontSize::Px(18.0 * crate::ui::DOTA)
@@ -419,7 +435,7 @@ fn the_glyph_button_counts_from_empty_to_full_and_back_after_both_uses() {
 }
 
 #[test]
-fn the_spectator_halves_show_each_sides_sweep_and_popup() {
+fn the_all_teams_halves_show_their_sweeps_and_popups_without_count_labels() {
     use bota_proto::Order;
 
     let mut game = super::fog_pov::Spectated::pair("2");
@@ -462,22 +478,50 @@ fn the_spectator_halves_show_each_sides_sweep_and_popup() {
             opposing.charges, None,
             "{side:?} only receives its own count"
         );
+        assert_eq!(
+            opposing.ready_after, None,
+            "{side:?} only receives its own wait"
+        );
     }
     super::hud_layout::on_screen(&mut game.client);
+    assert_team_tooltips_without_face_labels(&mut game.client);
+    assert!(team_cover(&mut game.client, "hud glyph radiant") > 0.0);
+    assert_eq!(team_cover(&mut game.client, "hud glyph dire"), 0.0);
+    assert!(team_cover(&mut game.client, "hud scan radiant") > 0.0);
+    assert_eq!(team_cover(&mut game.client, "hud scan dire"), 0.0);
+    assert_eq!(glyph_badge(&mut game.client), None);
+    assert_eq!(badge_number(&mut game.client, "hud scan charges"), None);
+    for (side, expected) in [(Team::Radiant, None), (Team::Dire, Some("1"))] {
+        game.next_side(side);
+        game.wait("the watched side's Glyph badge", |_, client| {
+            glyph_badge(client).as_deref() == expected
+        });
+    }
+}
+
+fn assert_team_tooltips_without_face_labels(client: &mut Client) {
     for ability in ["glyph", "scan"] {
-        for (side, team) in [
+        for (side, team_key) in [
             ("radiant", "DOTA_Tooltip_Glyph_Radiant"),
             ("dire", "DOTA_Tooltip_Glyph_Dire"),
         ] {
-            let face = named(&mut game.client, &format!("hud {ability} {side}"));
-            let team = game
-                .client
+            let face = named(client, &format!("hud {ability} {side}"));
+            let world = client.world_mut();
+            let mut descendants = world.query::<&Children>();
+            assert!(
+                descendants
+                    .query(world)
+                    .iter_descendants(face)
+                    .all(|part| world.get::<Text>(part).is_none()),
+                "the {side} {ability} half has no count or cooldown label"
+            );
+            let team = client
                 .world()
                 .resource::<crate::dota_text::Texts>()
-                .label(team, &[])
+                .label(team_key, &[])
                 .expect("the installed team label");
-            game.client.hover_ui(face, Duration::from_secs(10));
-            game.client.within(
+            client.hover_ui(face, Duration::from_secs(10));
+            client.within(
                 Duration::from_secs(10),
                 "the hovered team's tooltip",
                 |client| {
@@ -488,17 +532,6 @@ fn the_spectator_halves_show_each_sides_sweep_and_popup() {
             );
         }
     }
-    assert!(team_cover(&mut game.client, "hud glyph radiant") > 0.0);
-    assert_eq!(team_cover(&mut game.client, "hud glyph dire"), 0.0);
-    assert!(team_cover(&mut game.client, "hud scan radiant") > 0.0);
-    assert_eq!(team_cover(&mut game.client, "hud scan dire"), 0.0);
-    assert_eq!(glyph_badge(&mut game.client), None);
-    for (side, expected) in [(Team::Radiant, None), (Team::Dire, Some("1"))] {
-        game.next_side(side);
-        game.wait("the watched side's Glyph badge", |_, client| {
-            glyph_badge(client).as_deref() == expected
-        });
-    }
 }
 
 /// A click on the Glyph's button uses a charge, as its key does.
@@ -508,7 +541,7 @@ fn a_click_on_the_glyph_button_uses_a_charge() {
     client.cheat(bota_proto::Cheat::Refresh);
     client.until("a charge held", |c| glyph_charges(c).is_some_and(|n| n > 0));
     let held = glyph_charges(&client).expect("told");
-    let glyph = named(&mut client, "hud glyph player");
+    let glyph = named(&mut client, "hud glyph");
     client.hover_ui(glyph, Duration::from_secs(30));
     client.click(MouseButton::Left);
     client.until("a charge spent", |c| glyph_charges(c) == Some(held - 1));
@@ -561,10 +594,10 @@ fn recorded_glyph() -> super::fog_pov::ReplayFile {
     game.save()
 }
 
-/// A watcher of everything, and a replay seen from a seat, are told the Glyph of the side shown and
-/// the button shows it, with its charges, as the Scan's does.
+/// A replay has charge data in either view. The team view has a badge and the all-teams view
+/// draws the two halves.
 #[test]
-fn a_replay_shows_the_glyph_of_the_side_it_is_seen_from_or_of_both_sides() {
+fn a_replay_draws_the_glyph_charge_badge_only_from_a_team_perspective() {
     let file = recorded_glyph();
     for pov in [None, Some(0)] {
         let mut client = super::fog_pov::replay_observed(&file, pov, &[], |_| {});
@@ -574,7 +607,7 @@ fn a_replay_shows_the_glyph_of_the_side_it_is_seen_from_or_of_both_sides() {
             held.is_some_and(|n| n > 0),
             "{pov:?}: the stream tells charges: {held:?}"
         );
-        let glyph = named(&mut client, "hud glyph player");
+        let glyph = named(&mut client, "hud glyph");
         let world = client.world();
         assert!(
             world
@@ -663,7 +696,7 @@ fn the_glyph_shows_the_recharge_of_the_charge_still_to_come() {
 }
 
 #[test]
-fn a_late_watcher_sees_the_glyph_charge_without_a_recharge_sweep() {
+fn a_late_all_teams_watcher_sees_the_glyph_half_without_a_badge_or_recharge_sweep() {
     let server = Server::for_hud(1, &["--spectators", "open"]);
     let mut player = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     player.ready_with_match_held(&server);

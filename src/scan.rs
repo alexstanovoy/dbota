@@ -86,7 +86,7 @@ fn spawn(
     // On the plate, in the upper of its two wells (`#RadarButton`).
     let frame = commands
         .spawn((
-            Name::new("hud scan"),
+            Name::new("hud scan well"),
             Node {
                 position_type: PositionType::Absolute,
                 left: dota(crate::glyph::PLATE_LEFT),
@@ -101,7 +101,7 @@ fn spawn(
     let button = commands
         .spawn((
             ScanButton,
-            Name::new("hud scan player"),
+            Name::new("hud scan"),
             Button,
             Hovered::default(),
             bevy::picking::hover::DirectlyHovered::default(),

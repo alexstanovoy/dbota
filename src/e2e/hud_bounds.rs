@@ -51,7 +51,7 @@ const ESSENTIAL_PARTS: [&str; 5] = [
     "hud panel",
     "hud level",
     "hud minimap",
-    "hud glyph",
+    "hud glyph well",
     "hud portrait",
 ];
 
@@ -603,8 +603,8 @@ fn assert_wells_apart(parts: &[Drawn]) {
             .position(|part| part.label == name)
             .expect(name)
     };
-    let glyph = locate("hud glyph");
-    let scan = locate("hud scan");
+    let glyph = locate("hud glyph well");
+    let scan = locate("hud scan well");
     for (left, glyph_part) in parts
         .iter()
         .enumerate()

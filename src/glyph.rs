@@ -1,6 +1,6 @@
 //! The Glyph of Fortification sits in the lower well beside the minimap.
 //! A player sees a charge badge and cooldown. Spectators of both sides see each
-//! side’s cooldown sweep in its own half.
+//! side’s cooldown sweep in its own half without a charge badge.
 //! A click or the Glyph key activates it.
 
 use std::f32::consts::TAU;
@@ -74,7 +74,7 @@ fn spawn(
     // plate's left and foot).
     let frame = commands
         .spawn((
-            Name::new("hud glyph"),
+            Name::new("hud glyph well"),
             Node {
                 position_type: PositionType::Absolute,
                 left: dota(PLATE_LEFT),
@@ -87,7 +87,7 @@ fn spawn(
     let button = commands
         .spawn((
             GlyphButton,
-            Name::new("hud glyph player"),
+            Name::new("hud glyph"),
             Button,
             Hovered::default(),
             bevy::picking::hover::DirectlyHovered::default(),
