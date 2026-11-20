@@ -305,6 +305,11 @@ impl InstanceRef<'_> {
     pub fn flight_id(&self) -> Option<bota_proto::EntityId> {
         self.flight.map(|flight| flight.id)
     }
+
+    pub fn ending_points(&self) -> Option<(Vec2, Vec2)> {
+        let flight = self.flight?;
+        self.ending().then_some((flight.trail_origin?, flight.at))
+    }
 }
 
 fn allows_ending(

@@ -1647,6 +1647,88 @@ fn rewinding_a_completed_hook_leaves_no_return_trail_in_the_paused_view() {
 }
 
 #[test]
+fn a_fading_hook_trail_disappears_when_only_its_tip_remains_in_sight() {
+    #[derive(Resource)]
+    struct HandVisible(bool);
+
+    let file = record_throws(false, 1, MID);
+    let mut client = replay_client(&file, 0, MID);
+    let effect = client
+        .world()
+        .resource::<crate::particles::Library>()
+        .effect("hero.pudge.hook")
+        .expect("the hook")
+        .clone();
+    let endings = |client: &Client| {
+        client
+            .world()
+            .resource::<crate::particles::Playing>()
+            .endings_this_frame(&effect)
+    };
+    client.within(SOON, "the return trail begins fading", |client| {
+        endings(client) > 0
+    });
+    if let Source::Replay(player) = &mut client.core_mut().source {
+        player.paused = true;
+    }
+    let (hand, tip) = client
+        .world()
+        .resource::<crate::particles::Playing>()
+        .instances_of(&effect)
+        .find_map(|instance| instance.ending_points())
+        .expect("the fading trail's witnessed endpoints");
+    let n = client.world().resource::<crate::fog::FogGrid>().n;
+    let index = |at: Vec2| {
+        let cell = (at / rules::GRID_CELL_SIZE as f32).as_uvec2();
+        assert!(
+            cell.max_element() < n as u32,
+            "endpoint {at:?} is on the map"
+        );
+        cell.y as usize * n + cell.x as usize
+    };
+    let (hand_cell, tip_cell) = (index(hand), index(tip));
+    assert_ne!(
+        hand_cell, tip_cell,
+        "the hand and tip must have independent sight"
+    );
+
+    // Supply the changing sight immediately before submission. The replay, hook, and fading
+    // particles are real. The two cells are controlled so the async fog job cannot race the fade.
+    client.app.insert_resource(HandVisible(true)).add_systems(
+        PostUpdate,
+        (move |mut fog: ResMut<crate::fog::FogGrid>, hand: Res<HandVisible>| {
+            fog.cells[tip_cell] = true;
+            fog.cells[hand_cell] = hand.0;
+        })
+        .before(crate::particles::gather_frame),
+    );
+    client.step_frames(1);
+    assert!(
+        endings(&client) > 0,
+        "the trail draws with both ends in sight"
+    );
+    client.world_mut().resource_mut::<HandVisible>().0 = false;
+    client.step_frames(1);
+    let fog = client.world().resource::<crate::fog::FogGrid>();
+    assert!(fog.lit(tip.x, tip.y), "the tip must stay in sight");
+    assert!(
+        !fog.lit(hand.x, hand.y),
+        "the witnessed hand must enter fog"
+    );
+    assert_eq!(
+        endings(&client),
+        0,
+        "a fading trail drew while only its tip was visible"
+    );
+    client.world_mut().resource_mut::<HandVisible>().0 = true;
+    client.step_frames(1);
+    assert!(
+        endings(&client) > 0,
+        "the same fade still draws when both ends are in sight"
+    );
+}
+
+#[test]
 fn an_opponent_who_sees_the_throw_sees_the_head_leave_the_hand_live_and_in_replay() {
     let (file, live) = record_throws_with(
         false,
