@@ -62,7 +62,7 @@ allocations reach the page, which says what happened and what to do.
 ## Build and run
 
 ```sh
-rustup target add wasm32-unknown-unknown; cargo install wasm-bindgen-cli --version <Cargo.lock's>
+rustup target add wasm32-unknown-unknown; cargo install --locked wasm-bindgen-cli --version <Cargo.lock's>   # `web/build.sh --check` names it
 WASM_OPT=0 DBOTA_WEB_REPLAY=$PWD/match.brp web/build.sh        # PROFILE=release for a quicker build
 python3 -m http.server --bind 127.0.0.1 --directory web/out 8080   # the page alone, to look at it
 ```

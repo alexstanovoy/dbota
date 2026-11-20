@@ -5,12 +5,21 @@
 #
 #   tools/browser_check.sh
 #
+# Start it directly, never inside another tools/headless.sh compositor: its last check starts a compositor of its own with
+# an X server (Xwayland) for a real mouse, which a nested one cannot give (the script stops at once when it finds itself
+# nested). It needs up to 24 GB of memory: the replay and scene checks draw in software in several browsers, and a
+# process limit of 16 GB kills them mid-check.
+#
 # Needs the asset cache of this build (DBOTA_ASSETS, made by `dbota import`), a Dota 2 install for the import test, the
 # bota and radovid checkouts beside this one (DBOTA_GATE_BOTA, DBOTA_GATE_RADOVID name others), and the native release
 # build of dbota (the replay with chat lines is recorded by a headless client). Playwright and its browsers are fetched once
 # into DBOTA_GATE_PWLIB (default ~/.cache/dbota-gate/pwlib). Any check that cannot run fails; nothing is skipped.
 # Output goes to GATE_LOGS/browser (default temp/gate/browser).
 set -euo pipefail
+if [ -n "${DBOTA_HEADLESS:-}" ]; then
+    echo "browser_check: inside a tools/headless.sh compositor; start it directly: its last check needs a compositor of its own with an X server" >&2
+    exit 2
+fi
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 # shellcheck source=tools/client_env.sh
 . "$here/tools/client_env.sh"
@@ -22,6 +31,8 @@ work=${GATE_LOGS:-$here/temp/gate}/browser
 mkdir -p "$work"
 pwlib=${DBOTA_GATE_PWLIB:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-gate/pwlib}
 export PYTHONPATH=$pwlib PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+# The page builds come late, after the servers and a recorded match: fail first when wasm-bindgen cannot build them.
+in_private_environment web/build.sh --check
 in_private_environment python3 -m unittest discover -s web/test -p test_optimize.py
 if ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import playwright' "$pwlib" 2> /dev/null; then
     python3 -m pip install --quiet --target "$pwlib" playwright

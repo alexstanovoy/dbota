@@ -19,6 +19,8 @@ class BuildOutputTests(unittest.TestCase):
             if source.is_file():
                 shutil.copyfile(source, self.root / "web" / source.name)
         shutil.copyfile(REPOSITORY / "THIRD-PARTY-NOTICES.md", self.root / "THIRD-PARTY-NOTICES.md")
+        shutil.copyfile(REPOSITORY / "Cargo.lock", self.root / "Cargo.lock")
+        self.pinned = self.lockfile_version()
         (self.root / "assets/fonts").mkdir(parents=True)
         self.font = self.root / "assets/fonts/keep.ttf"
         self.font.write_bytes(b"source font must survive")
@@ -29,10 +31,21 @@ class BuildOutputTests(unittest.TestCase):
         self.server = self.root / "bota"
         self.server.mkdir()
         self.stamps = self.root / "stamp.log"
-        for command in ("cargo", "wasm-bindgen", "rustc"):
-            tool = self.tools / command
-            tool.write_text("#!/bin/sh\nexit 0\n")
-            tool.chmod(0o755)
+        for command in ("cargo", "rustc"):
+            self.fake_tool(self.tools, command)
+        self.fake_tool(self.tools, "wasm-bindgen", f"wasm-bindgen {self.pinned}")
+
+    @staticmethod
+    def fake_tool(folder, command, says=""):
+        folder.mkdir(parents=True, exist_ok=True)
+        tool = folder / command
+        tool.write_text(f"#!/bin/sh\necho '{says}'\nexit 0\n" if says else "#!/bin/sh\nexit 0\n")
+        tool.chmod(0o755)
+
+    @staticmethod
+    def lockfile_version():
+        lines = REPOSITORY.joinpath("Cargo.lock").read_text().splitlines()
+        return lines[lines.index('name = "wasm-bindgen"') + 1].split('"')[1]
 
     def run_build(self, script, **settings):
         environment = {
@@ -99,6 +112,51 @@ class BuildOutputTests(unittest.TestCase):
                 result = build()
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual([line.split()[0] for line in self.stamps.read_text().splitlines()], stamps)
+
+    def build_with(self, path, **environment):
+        return subprocess.run(
+            ["bash", "web/build.sh"], cwd=self.root, capture_output=True, text=True,
+            env={"PATH": path, "OUT": "out", "PROFILE": "release", "WASM_OPT": "0", **environment},
+            timeout=15,
+        )
+
+    def test_a_wasm_bindgen_of_another_version_names_the_install_that_fixes_it(self):
+        self.fake_tool(self.tools, "wasm-bindgen", "wasm-bindgen 0.2.1")
+        result = self.build("out")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"wasm-bindgen {self.pinned} is required (found 0.2.1); "
+            f"install it with: cargo install --locked wasm-bindgen-cli --version {self.pinned}",
+            result.stderr,
+        )
+        self.assertFalse((self.root / "out/dbota.js").exists())
+
+    def test_a_missing_wasm_bindgen_names_the_install_that_fixes_it(self):
+        (self.tools / "wasm-bindgen").unlink()
+        result = self.build_with(f"{self.tools}:/usr/bin:/bin", HOME=str(self.root / "home"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"wasm-bindgen {self.pinned} is required (found none); "
+            f"install it with: cargo install --locked wasm-bindgen-cli --version {self.pinned}",
+            result.stderr,
+        )
+
+    def test_a_private_home_still_finds_the_wasm_bindgen_of_the_cargo_home(self):
+        (self.tools / "wasm-bindgen").unlink()
+        cargo_home = self.root / "cargo"
+        self.fake_tool(cargo_home / "bin", "wasm-bindgen", f"wasm-bindgen {self.pinned}")
+        result = self.build_with(
+            f"{self.tools}:/usr/bin:/bin", HOME=str(self.root / "private-home"), CARGO_HOME=str(cargo_home)
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_check_only_stops_after_the_tool_check(self):
+        result = subprocess.run(
+            ["bash", "web/build.sh", "--check"], cwd=self.root, capture_output=True, text=True,
+            env={**os.environ, "PATH": f"{self.tools}:{os.environ['PATH']}"}, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / "web/out").exists())
 
     def test_hostile_destinations_preserve_source_fonts(self):
         (self.root / "alias").symlink_to(self.root, target_is_directory=True)
