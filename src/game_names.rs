@@ -447,6 +447,7 @@ pub const FALLBACK: &[(&str, &str)] = &[
     ("modifier_eimermole_miners_slam_slow", "Miner's Slam"),
     ("modifier_warpine_raider_seed_shot_slow", "Snowball Shot"),
     ("modifier_ogre_seal_flop_slow", "Seal Flop"),
+    ("modifier_smoke_of_deceit", "Disguise"),
 ];
 
 pub fn fallback(key: &str) -> Option<&'static str> {

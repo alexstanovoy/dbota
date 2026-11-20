@@ -568,3 +568,5 @@ effect 131 icon.ability.odobenus_frostmage_snowball_shot
 modifier 131 modifier_warpine_raider_seed_shot_slow
 effect 132 icon.ability.ogre_seal_flop
 modifier 132 modifier_ogre_seal_flop_slow
+effect 133 icon.item.smoke_of_deceit
+modifier 133 modifier_smoke_of_deceit
