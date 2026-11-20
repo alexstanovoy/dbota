@@ -356,6 +356,42 @@ def failed_replacement(p, page_dir, install):
         run.close()
 
 
+def cancelled_publication(p, page_dir, install):
+    """Cancel after the worker has written the copy and before it can commit the pointer."""
+    run = Run(p, page_dir)
+
+    def hold(route):
+        route.fulfill(body="""const open = FileSystemFileHandle.prototype.createWritable;
+        FileSystemFileHandle.prototype.createWritable = async function (...args) {
+          if (this.name === 'current.txt') {
+            const stopped = new Promise(resolve => {
+              self.addEventListener('message', function stop(event) {
+                if (event.data.op !== 'stop') return;
+                self.removeEventListener('message', stop);
+                setTimeout(resolve, 0);
+              });
+            });
+            postMessage({type: 'progress', item: 'publication held', done: 1, total: 1, bytes: 0});
+            await stopped;
+          }
+          return open.apply(this, args);
+        };\n""" + route.fetch().text(), content_type="text/javascript")
+
+    try:
+        run.page.route("**/import_worker.js", hold)
+        run.page.add_init_script("delete window.showDirectoryPicker;" + scripts_init([
+            "click:choose the dota 2 folder;await:text:publication held;click:cancel;await:text:Import cancelled",
+        ]))
+        run.choose(install)
+        run.page.goto(run.base)
+        run.step("await:text:Import cancelled")
+        storage = run.storage()
+        assert not storage["current"] and not any(name.startswith("copy-") for name in storage["names"]), storage
+        print("cancel before publication left no copy")
+    finally:
+        run.close()
+
+
 PICKER = """(() => {
   // The browser's directory picker, answered with a folder of the page's own private storage: the
   // tiny install, or a folder without Dota.
@@ -598,6 +634,7 @@ def main():
                     run.close()
                 failed_write(p, args.page, install)
                 failed_replacement(p, args.page, install)
+                cancelled_publication(p, args.page, install)
                 directory_picker(p, args.page)
                 unsupported(p, args.page)
                 storage_hangs(p, args.page)
