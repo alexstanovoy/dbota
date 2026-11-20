@@ -177,6 +177,7 @@ fn map_loader(world: &World, stream: crate::mapfile::MapStream) -> crate::mapfil
         root: manifest.root.clone(),
         detail: manifest.path("ground.grass").map(str::to_string),
         props: settings.quality.props,
+        budget: world.resource::<crate::cachefs::Settler>().budget(),
         stream,
     }
 }
@@ -693,6 +694,7 @@ pub(crate) fn bake_transform(mut mesh: Mesh, global: &GlobalTransform) -> Mesh {
 pub(crate) struct LayerMeans {
     pub(crate) root: std::path::PathBuf,
     pub(crate) known: std::collections::HashMap<String, [f32; 3]>,
+    pub(crate) budget: crate::cachefs::DecodeBudget,
 }
 
 impl LayerMeans {
@@ -708,9 +710,13 @@ impl LayerMeans {
             .trim_end_matches(".vtex");
         let root = &self.root;
         *self.known.entry(name.to_string()).or_insert_with(|| {
-            crate::cachefs::read_small(root, &format!("textures/ground/{name}.png"))
-                .and_then(|bytes| mean_color(&bytes))
-                .unwrap_or([0.5; 3])
+            read_ground_png(
+                root,
+                &format!("textures/ground/{name}.png"),
+                &self.budget,
+                mean_color,
+            )
+            .unwrap_or([0.5; 3])
         })
     }
 
@@ -731,33 +737,25 @@ impl LayerMeans {
     /// file in the cache.
     pub(crate) fn detail(&mut self, file: Option<&str>) -> f32 {
         let mean = file
-            .and_then(|p| crate::cachefs::read_small(&self.root, p))
-            .and_then(|bytes| mean_color(&bytes))
+            .and_then(|p| read_ground_png(&self.root, p, &self.budget, mean_color))
             .unwrap_or([0.5; 3]);
         ((mean[0] + mean[1] + mean[2]) / 3.0).max(0.05)
     }
 }
 
-/// A ground texture's PNG decoded, read straight from the cache rather than through its asset
-/// reader: so it is held to the same caps first (the decoder allocates what a header says).
-pub(crate) fn ground_png(bytes: &[u8]) -> Option<Image> {
-    if !matches!(crate::texture_file::decoded_size(bytes), Some(Ok(_))) {
-        return None;
-    }
-    Image::from_buffer(
-        bytes,
-        bevy::image::ImageType::Extension("png"),
-        bevy::image::CompressedImageFormats::NONE,
-        true,
-        ImageSampler::Default,
-        RenderAssetUsages::MAIN_WORLD,
-    )
-    .ok()
+/// Reads a layer through the same decoded allowance as the visible terrain material.
+pub(crate) fn read_ground_png<T>(
+    root: &std::path::Path,
+    path: &str,
+    budget: &crate::cachefs::DecodeBudget,
+    project: impl FnOnce(&Image) -> Option<T>,
+) -> Option<T> {
+    let bytes = crate::cachefs::read_small(root, path)?;
+    budget.terrain_png(std::path::Path::new(path), &bytes, project)
 }
 
 /// The mean linear RGB of a PNG, sampled sparsely.
-fn mean_color(bytes: &[u8]) -> Option<[f32; 3]> {
-    let image = ground_png(bytes)?;
+fn mean_color(image: &Image) -> Option<[f32; 3]> {
     let (w, h) = (image.width(), image.height());
     let mut sum = [0.0f32; 3];
     let mut n = 0.0;
@@ -1323,9 +1321,8 @@ mod tests {
         );
     }
 
-    /// A PNG of one grey row, `width` texels long: stored (not deflated), so the test needs no
-    /// encoder.
-    fn grey_row_png(width: u32, grey: u8) -> Vec<u8> {
+    /// A grey PNG with one stored deflate block per row.
+    fn grey_png(width: u32, height: u32, grey: u8) -> Vec<u8> {
         fn crc32(bytes: &[u8]) -> u32 {
             let mut crc = !0u32;
             for &b in bytes {
@@ -1347,24 +1344,43 @@ mod tests {
         let mut row = vec![0u8];
         row.extend(std::iter::repeat_n(grey, width as usize));
         let (mut a, mut b) = (1u32, 0u32);
-        for &byte in &row {
-            a = (a + u32::from(byte)) % 65_521;
-            b = (b + a) % 65_521;
+        let mut zlib = vec![0x78, 0x01];
+        for y in 0..height {
+            zlib.push(u8::from(y + 1 == height));
+            let len = row.len() as u16;
+            zlib.extend(len.to_le_bytes());
+            zlib.extend((!len).to_le_bytes());
+            zlib.extend(&row);
+            for &byte in &row {
+                a = (a + u32::from(byte)) % 65_521;
+                b = (b + a) % 65_521;
+            }
         }
-        let mut zlib = vec![0x78, 0x01, 1];
-        let len = row.len() as u16;
-        zlib.extend(len.to_le_bytes());
-        zlib.extend((!len).to_le_bytes());
-        zlib.extend(&row);
         zlib.extend(((b << 16) | a).to_be_bytes());
         let mut ihdr = width.to_be_bytes().to_vec();
-        ihdr.extend(1u32.to_be_bytes());
+        ihdr.extend(height.to_be_bytes());
         ihdr.extend([8, 0, 0, 0, 0]);
         let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
         chunk(&mut png, b"IHDR", &ihdr);
         chunk(&mut png, b"IDAT", &zlib);
         chunk(&mut png, b"IEND", &[]);
         png
+    }
+
+    #[test]
+    fn a_terrain_bake_rejects_a_png_over_the_per_image_bound() {
+        let size = grey_png(4096, 1025, 255);
+        let budget = crate::cachefs::DecodeBudget::default();
+        assert!(
+            budget
+                .terrain_png(
+                    std::path::Path::new("textures/ground/large.png"),
+                    &size,
+                    |_| Some(())
+                )
+                .is_none(),
+            "the bake is subject to the 16 MiB PNG cap"
+        );
     }
 
     /// The ground textures are read straight from the cache, past the asset server's reader: a
@@ -1375,11 +1391,12 @@ mod tests {
         let root = std::env::temp_dir().join(format!("dbota-ground-{}", std::process::id()));
         let ground = root.join("textures/ground");
         std::fs::create_dir_all(&ground).unwrap();
-        std::fs::write(ground.join("plain.png"), grey_row_png(64, 255)).unwrap();
-        std::fs::write(ground.join("wide.png"), grey_row_png(16_385, 255)).unwrap();
+        std::fs::write(ground.join("plain.png"), grey_png(64, 1, 255)).unwrap();
+        std::fs::write(ground.join("wide.png"), grey_png(16_385, 1, 255)).unwrap();
         let mut means = LayerMeans {
             root: root.clone(),
             known: Default::default(),
+            budget: Default::default(),
         };
 
         let plain = means.of("materials/plain.vtex");

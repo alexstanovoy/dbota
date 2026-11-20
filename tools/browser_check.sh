@@ -3,7 +3,7 @@
 # web/test/smoke.py in one Playwright run (headless Chromium, Firefox for the boot check), and the first run's
 # (web/test/first_run.py: the import of a Dota 2 install in the client).
 #
-#   tools/browser_check.sh
+#   tools/browser_check.sh [--terrain-only]
 #
 # Start it directly, never inside another tools/headless.sh compositor: its last check starts a compositor of its own with
 # an X server (Xwayland) for a real mouse, which a nested one cannot give (the script stops at once when it finds itself
@@ -27,28 +27,45 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 # shellcheck source=tools/client_env.sh
 . "$here/tools/client_env.sh"
 cd "$here"
+terrain_only=0
+if [ "${1:-}" = --terrain-only ]; then
+    terrain_only=1
+    shift
+fi
+[ "$#" -eq 0 ] || { echo "usage: tools/browser_check.sh [--terrain-only]" >&2; exit 2; }
 bota=${DBOTA_GATE_BOTA:-$here/../bota}
 radovid=${DBOTA_GATE_RADOVID:-$here/../radovid}
 : "${DBOTA_ASSETS:?DBOTA_ASSETS: the asset cache of this build}"
 work=${GATE_LOGS:-$here/temp/gate}/browser
+if [ "$terrain_only" = 1 ]; then
+    work=$here/temp/terrain-browser
+fi
 mkdir -p "$work"
 pwlib=${DBOTA_GATE_PWLIB:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-gate/pwlib}
 export PYTHONPATH=$pwlib PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 # The page builds come late, after the servers and a recorded match: fail first when wasm-bindgen cannot build them.
 in_private_environment web/build.sh --check
-in_private_environment python3 -m unittest discover -s web/test -p test_optimize.py
 if ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import playwright' "$pwlib" 2> /dev/null; then
     python3 -m pip install --quiet --target "$pwlib" playwright
 fi
-python3 -m playwright install chromium firefox > "$work/playwright-install.log" 2>&1 \
+engines=(chromium)
+if [ "$terrain_only" = 0 ]; then
+    engines+=(firefox)
+    in_private_environment python3 -m unittest discover -s web/test -p test_optimize.py
+fi
+python3 -m playwright install "${engines[@]}" > "$work/playwright-install.log" 2>&1 \
     || { tail -n 20 "$work/playwright-install.log"; echo "browser_check: the browsers cannot be installed" >&2; exit 1; }
-in_private_environment python3 -m unittest discover -s web/test -p test_replay_actions.py -v
+if [ "$terrain_only" = 0 ]; then
+    in_private_environment python3 -m unittest discover -s web/test -p test_replay_actions.py -v
+fi
 
 # The servers: bota's (a match with a replay) and radovid's (the replays page).
 server_target=$here/target/browser-servers/bota
 radovid_target=$here/target/browser-servers/radovid
 (cd -- "$bota" && cargo build --locked --release --quiet --manifest-path Cargo.toml -p bota_server --target-dir "$server_target")
-(cd -- "$radovid" && cargo build --locked --release --quiet --manifest-path Cargo.toml -p radovid --target-dir "$radovid_target")
+if [ "$terrain_only" = 0 ]; then
+    (cd -- "$radovid" && cargo build --locked --release --quiet --manifest-path Cargo.toml -p radovid --target-dir "$radovid_target")
+fi
 server=$server_target/release/bota_server
 radovid_bin=$radovid_target/release/radovid
 
@@ -78,10 +95,19 @@ wait "$srv" || true
 export PROFILE=${DBOTA_WEB_TEST_PROFILE:-release}
 export WASM_OPT=${WASM_OPT:-0}
 pages=$here/temp/gate-pages
-rm -rf "$pages"
+if [ "$terrain_only" = 1 ]; then
+    pages=$work/pages
+else
+    rm -rf "$pages"
+fi
 mkdir -p "$pages"
+PROFILE=web DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --seek 4600 --distance 3500" OUT=$pages/web web/build.sh
+if [ "$terrain_only" = 1 ]; then
+    in_private_environment python3 web/test/smoke.py --terrain-page "$pages/web"
+    exit
+fi
 if [ -n "${DBOTA_GATE_WEB_PAGE:-}" ]; then
-    mkdir "$pages/plain"
+    mkdir -p "$pages/plain"
     # Owned build outputs require nlink=1; reflinks preserve that and work across filesystems.
     cp -a --reflink=auto -- "$DBOTA_GATE_WEB_PAGE/." "$pages/plain/"
 else
@@ -98,7 +124,6 @@ APIS=webgl2 DBOTA_WEB_REPLAY=$art_replay OUT=$pages/ui-art \
 in_private_environment python3 web/test/smoke.py --ui-art-page "$pages/ui-art"
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/replay web/build.sh
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video" APIS=webgpu OUT=$pages/video web/build.sh
-PROFILE=web DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/web web/build.sh
 
 "$here/tools/headless.sh" python3 web/test/idle.py "$pages/plain"
 in_private_environment python3 web/test/first_run.py --page "$pages/plain" --replay-page "$pages/replay" --reference-cache "$DBOTA_ASSETS"
@@ -106,8 +131,8 @@ echo "browser_check: KNOWN-INCOMPLETE: --replays-page checks the Demo Hero match
 in_private_environment python3 web/test/smoke.py \
     --launch-page "$pages/plain" --sound-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
     --fonts-page "$pages/plain" \
-    --replay-page "$pages/replay" --scene-page "$pages/web" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
-    --fullscreen-page "$pages/video" \
+    --replay-page "$pages/replay" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
+    --terrain-page "$pages/web" --fullscreen-page "$pages/video" \
     --replays-page "$pages/plain" --server "$server" --radovid "$radovid_bin"
 # The real mouse: a headful Chromium on an X server (Xwayland) in a private compositor, moved through XTEST.
 DBOTA_HEADLESS_XWAYLAND=1 "$here/tools/headless.sh" python3 web/test/smoke.py --cursor-input-page "$pages/replay"

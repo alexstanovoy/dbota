@@ -208,37 +208,72 @@ def check_replay_page(directory):
     server.shutdown()
 
 
-def check_scene_page(directory):
-    """A replay reaches the drawn forest and heroes on both graphics APIs."""
+def check_scene_page(directory, apis=("webgpu", "webgl2"), *, terrain=False, shots=None, refused_shot=None):
+    """Play a full-map replay and check the rendered scene on each selected graphics API."""
     with sync_playwright() as p:
-        for api in ("webgpu", "webgl2"):
+        for api in apis:
             server, base, browser, page, console, problems = opened(p, directory)
             page.on("console", lambda message: problems.append(message.text) if message.type == "error" and RENDERER_ERROR.search(message.text) else None)
             try:
+                if refused_shot:
+                    file = "icons/abilities/nevermore_shadowraze1.png"
+                    header = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR" + b"\0\0\x10\0" * 2 + bytes([8, 6, 0, 0, 0])
+                    page.route(base + "cache/" + file, lambda route: route.fulfill(
+                        status=200, content_type="image/png", body=header
+                    ))
+                if terrain:
+                    page.set_viewport_size({"width": 1920, "height": 1080})
+                    # These probes use absolute pointer positions. The cursor check exercises locking.
+                    page.add_init_script("HTMLCanvasElement.prototype.requestPointerLock = () => Promise.resolve()")
                 page.add_init_script("""globalThis.dbota_scene_drawn = false;
+                  globalThis.dbota_scene_failure = null;
                   const log = console.log.bind(console);
                   console.log = (...args) => {
-                    if (args.some(a => typeof a === 'string' && a.includes('scene: the game drawn whole')))
-                      globalThis.dbota_scene_drawn = true;
+                    for (const message of args) {
+                      if (typeof message !== 'string') continue;
+                      if (message.includes('scene: the game drawn whole')) globalThis.dbota_scene_drawn = true;
+                      if (message.includes('the replay cannot be read')) globalThis.dbota_scene_failure = message;
+                    }
                     log(...args);
                   };""")
                 query = "?cache=http" + ("&gpu=webgl2" if api == "webgl2" else "")
                 page.goto(base + query)
+                if terrain:
+                    page.mouse.move(960, 540)
                 page.wait_for_function(
-                    "() => globalThis.dbota_scene_drawn || document.querySelector('#failed:not([hidden])')",
+                    "() => globalThis.dbota_scene_drawn || globalThis.dbota_scene_failure || document.querySelector('#failed:not([hidden])')",
                     polling=100, timeout=600000,
                 )
                 assert page.evaluate("globalThis.dbota_scene_drawn"), (
-                    api, page.text_content("#failTitle"), page.text_content("#failDetail")
+                    api, page.evaluate("globalThis.dbota_scene_failure"),
+                    page.text_content("#failTitle"), page.text_content("#failDetail")
                 )
                 assert any(f"dbota: drawing with {api}" in c for c in console), f"the {api} client was selected"
                 assert page.locator("#dbota").is_visible(), "the game's canvas is visible"
                 assert page.locator("#dbota").evaluate("c => c.width > 0 && c.height > 0"), "the canvas has pixels"
-                page.wait_for_timeout(2000)
+                if terrain:
+                    wait_loading_cover(page, console)
+                    # The status label still appears on served replays and can cover the minimap.
+                    page.locator("#booting").evaluate("label => label.style.pointerEvents = 'none'")
+                    if refused_shot:
+                        wait_console(page, console, r"WARN.*" + re.escape(file) + r".*per-image budget", 60,
+                                     "the oversized ability icon warning")
+                        move_terrain_camera(page, 2950, 3390)
+                        page.screenshot(path=refused_shot, timeout=600000)
+                    else:
+                        terrain_pixels(page, shots, api)
+                        refused = [
+                            message for message in console if "image budget" in message and "exceeded" in message
+                        ]
+                        assert not refused, refused
+                else:
+                    page.wait_for_timeout(2000)
                 assert not [line for line in console if "ERROR" in line and RENDERER_ERROR.search(line)], console
                 assert not problems, problems
                 print(f"scene: {api} draws the forest and heroes")
             finally:
+                if shots:
+                    (shots / f"{api}-console.log").write_text("\n".join(console + problems), encoding="utf-8")
                 browser.close()
                 server.shutdown()
                 server.server_close()
@@ -270,6 +305,101 @@ def wait_browser_state(page, observe, what, timeout):
     except PlaywrightError:
         pass
     raise AssertionError(f"timed out waiting for {what}")
+
+
+# At 1920x1080, the minimap is 308 interface pixels, scaled by 1080/1200.
+# Clicking it puts the game camera directly on a point of the 18432-unit map.
+# The last field is the allowed blue lead over red. The river bank's slate is blue-grey.
+TERRAIN_PROBES = (
+    ("radiant_base", 2950, 3390, .45, .42, 16),
+    ("mid_river_bank", 8850, 9350, .63, .31, 64),
+    ("bottom_lane", 12600, 2780, .45, .42, 16),
+    ("dire_base", 14700, 14500, .46, .22, 16),
+    ("jungle_camp", 7762, 5860, .45, .42, 16),
+)
+
+
+def move_terrain_camera(page, x, y):
+    side = 308 * 0.9
+    mouse_x, mouse_y = x * side / 18432, 1080 - y * side / 18432
+    assert page.evaluate("([x, y]) => document.elementFromPoint(x, y)?.id === 'dbota'", [mouse_x, mouse_y])
+    page.mouse.move(mouse_x, mouse_y)
+    page.mouse.down()
+    try:
+        page.evaluate("""() => {
+          globalThis.dbota_probe_frames = 0;
+          function next() {
+            if (++globalThis.dbota_probe_frames < 3) requestAnimationFrame(next);
+          }
+          requestAnimationFrame(next);
+        }""")
+        page.wait_for_function("() => globalThis.dbota_probe_frames >= 3", timeout=60000)
+    finally:
+        page.mouse.up()
+    return mouse_x, mouse_y
+
+
+def terrain_pixels(page, shots, api):
+    """Sample the composited GPU frame, in patches of ground clear of the HUD."""
+    results = {}
+    for name, x, y, left, top, blue_lead in TERRAIN_PROBES:
+        mouse_x, mouse_y = move_terrain_camera(page, x, y)
+        path = shots / f"{api}-{name}.png" if shots else None
+        data = page.screenshot(path=path, timeout=600000)
+        covered, ratio, detail = page.evaluate("""async ({png, left, top, mouseX, mouseY, blueLead}) => {
+          const bytes = Uint8Array.from(atob(png), character => character.charCodeAt(0));
+          const bitmap = await createImageBitmap(new Blob([bytes], {type: "image/png"}));
+          const width = bitmap.width, height = bitmap.height;
+          const canvas = new OffscreenCanvas(width, height);
+          const context = canvas.getContext('2d', {willReadFrequently: true});
+          context.drawImage(bitmap, 0, 0);
+
+          // The minimap draws a white viewport outline around the camera's focus.
+          const marker = context.getImageData(mouseX - 8, mouseY - 36, 17, 72);
+          const edges = [false, false];
+          for (let y = 0; y < marker.height; y++) {
+            let white = 0;
+            for (let x = 0; x < marker.width; x++) {
+              const i = (y * marker.width + x) * 4;
+              if (Math.min(marker.data[i], marker.data[i + 1], marker.data[i + 2]) >= 210) white++;
+            }
+            if (white >= 15) edges[Number(y >= 36)] = true;
+          }
+          const covered = edges.every(Boolean);
+          const patch = context.getImageData(width * left, height * top, width * .10, height * .16);
+          let ground = 0;
+          for (let i = 0; i < patch.data.length; i += 4) {
+            const [r, g, b] = patch.data.subarray(i, i + 3);
+            if (g > 22 && r > 18 && b < r + blueLead) ground++;
+          }
+          // Median tile microcontrast rejects a flat fallback and discounts props
+          // and wide gradients. A second difference samples the texture grain.
+          function luma(x, y) {
+            const i = (y * patch.width + x) * 4;
+            return patch.data[i] + 2 * patch.data[i + 1] + patch.data[i + 2];
+          }
+          const tiles = [];
+          for (let y = 0; y < patch.height - 16; y += 16) {
+            for (let x = 0; x < patch.width - 16; x += 16) {
+              let detail = 0;
+              for (let row = y; row < y + 16; row++) {
+                for (let column = x + 2; column < x + 14; column++) {
+                  detail += Math.abs(2 * luma(column, row) - luma(column - 2, row) - luma(column + 2, row));
+                }
+              }
+              tiles.push(detail);
+            }
+          }
+          tiles.sort((a, b) => a - b);
+          return [covered, ground / (patch.width * patch.height), tiles[Math.floor(tiles.length / 2)] / (16 * 12 * 4)];
+        }""", {"png": base64.b64encode(data).decode("ascii"), "left": left, "top": top,
+                "mouseX": mouse_x, "mouseY": mouse_y, "blueLead": blue_lead})
+        assert covered, f"{api}: the minimap viewport did not reach {name}"
+        results[name] = (round(ratio, 3), round(detail, 3))
+    assert all(ratio >= .70 and detail > 1.25 for ratio, detail in results.values()), (
+        api, "expected textured stone, earth or grass at each landmark (coverage, detail)", results
+    )
+    print(f"terrain: {api} coverage and detail at all landmarks: {results}")
 
 
 def check_fullscreen_page(directory, shots=False):
@@ -1561,6 +1691,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--replay-page", type=pathlib.Path, help="a build with a packed replay built in")
     ap.add_argument("--scene-page", type=pathlib.Path, help="a replay build: forest and heroes drawn on both graphics APIs")
+    ap.add_argument("--terrain-page", type=pathlib.Path, help="full-map replay build without a seat POV")
+    ap.add_argument("--terrain-api", choices=["webgpu", "webgl2"], action="append")
+    ap.add_argument("--terrain-shots", type=pathlib.Path)
+    ap.add_argument("--terrain-refused-shot", type=pathlib.Path, help="capture a match with an oversized ability icon")
     ap.add_argument("--fullscreen-page", type=pathlib.Path, help="a replay build opened on the Video settings")
     ap.add_argument("--server", help="a bota_server built with the websocket feature, for --replays-page")
     ap.add_argument("--fonts-page", type=pathlib.Path, help="any build: the page holds its interface fonts")
@@ -1598,6 +1732,13 @@ def main():
         check_replay_page(args.replay_page)
     if args.scene_page:
         check_scene_page(args.scene_page)
+    if args.terrain_page:
+        if args.terrain_shots:
+            args.terrain_shots.mkdir(parents=True, exist_ok=True)
+        check_scene_page(
+            args.terrain_page, args.terrain_api or ("webgpu", "webgl2"), terrain=True,
+            shots=args.terrain_shots, refused_shot=args.terrain_refused_shot
+        )
     if args.fullscreen_page:
         check_fullscreen_page(args.fullscreen_page, args.shots)
     if args.cursor_page:

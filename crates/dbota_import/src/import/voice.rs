@@ -824,6 +824,7 @@ mod tests {
             sink: &mut Discard,
             report: &mut report,
             written: &mut written,
+            pngs: &mut crate::png::Inventory::default(),
             pending: &mut pending,
         };
         let mut sounds = Sounds::default();
@@ -1049,6 +1050,7 @@ mod tests {
             sink: &mut Discard,
             report: &mut report,
             written: &mut written,
+            pngs: &mut crate::png::Inventory::default(),
             pending: &mut pending,
         };
         let made = pack_events(&mut hero, found, &mut Sounds::default(), &mut out).expect("made");
@@ -1100,6 +1102,7 @@ mod tests {
             sink: &mut Discard,
             report: &mut report,
             written: &mut written,
+            pngs: &mut crate::png::Inventory::default(),
             pending: &mut pending,
         };
         let error = Sounds::default()

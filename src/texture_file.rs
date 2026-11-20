@@ -13,7 +13,7 @@
 pub const HEAD_BYTES: usize = KTX2_INDEX + 24 * MAX_LEVELS;
 const KTX2_INDEX: usize = 80;
 const MAX_LEVELS: usize = 32;
-const PNG_MAGIC: [u8; 8] = *b"\x89PNG\r\n\x1a\n";
+use dbota_import::png::MAGIC as PNG_MAGIC;
 const KTX2_MAGIC: [u8; 12] = [
     0xAB, b'K', b'T', b'X', b' ', b'2', b'0', 0xBB, b'\r', b'\n', 0x1A, b'\n',
 ];
@@ -48,18 +48,7 @@ pub fn decoded_size(head: &[u8]) -> Option<Result<usize, String>> {
 /// The decoded size of a file loaded as PNG, refusing other formats even when
 /// they have a recognizable texture header.
 pub fn png_size(head: &[u8]) -> Result<usize, String> {
-    if !head.starts_with(&PNG_MAGIC) {
-        return Err("no texture header for a PNG".into());
-    }
-    let ihdr = head
-        .get(8..26)
-        .filter(|ihdr| ihdr[4..8] == *b"IHDR")
-        .ok_or("a PNG without its header")?;
-    let side = |at: usize| u32::from_be_bytes([ihdr[at], ihdr[at + 1], ihdr[at + 2], ihdr[at + 3]]);
-    let (width, height) = sides(side(8), side(12))?;
-    // RGBA, of 16-bit channels where the file has them.
-    let texel = if ihdr[16] == 16 { 8 } else { 4 };
-    capped(width * height * texel)
+    dbota_import::png::decoded_bytes(head).and_then(capped)
 }
 
 fn ktx2_size(head: &[u8]) -> Result<usize, String> {

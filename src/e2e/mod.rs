@@ -127,6 +127,8 @@ mod strategy;
 mod talent_glow;
 mod talent_texts;
 mod talent_window;
+#[cfg(not(target_arch = "wasm32"))]
+mod terrain_pixels;
 mod tip_band;
 mod toasts;
 mod tower_cadence;

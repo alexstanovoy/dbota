@@ -52,7 +52,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 52;
+pub const IMPORT_REV: u32 = 56;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -742,8 +742,7 @@ pub struct Report {
     /// Assets converted with an explicit fallback, with why. These remain usable.
     pub warnings: BTreeSet<(String, String)>,
     pub stopped: bool,
-    /// Why the import was cut short by the install, when it was: it asked for more than the
-    /// importer reads. Nothing of such an import is a cache.
+    /// Why the install exceeded an import limit. Nothing of such an import is a cache.
     pub cut: Option<String>,
     /// Bytes read from the install.
     pub read: u64,
@@ -828,6 +827,7 @@ pub struct Importer<S> {
     pending: VecDeque<Pending>,
     pending_done: usize,
     written: u64,
+    pngs: crate::png::Inventory,
     report: Report,
 }
 
@@ -877,6 +877,7 @@ impl<S: Source> Importer<S> {
             pending: VecDeque::new(),
             pending_done: 0,
             written: 0,
+            pngs: crate::png::Inventory::default(),
             report: Report::default(),
         })
     }
@@ -909,6 +910,7 @@ impl<S: Source> Importer<S> {
             sink,
             report: &mut self.report,
             written: &mut self.written,
+            pngs: &mut self.pngs,
             pending: &mut self.pending,
         };
         if let Some(job) = out.pending.pop_front() {
@@ -945,6 +947,8 @@ impl<S: Source> Importer<S> {
                 "the install asks for more than the {} bytes an import reads",
                 self.src.limit
             ));
+        }
+        if self.report.cut.is_some() {
             self.next = self.plan.items.len();
             self.pending.clear();
         }
@@ -1127,12 +1131,13 @@ struct Out<'a> {
     sink: &'a mut dyn Sink,
     report: &'a mut Report,
     written: &'a mut u64,
+    pngs: &'a mut crate::png::Inventory,
     pending: &'a mut VecDeque<Pending>,
 }
 
 impl Out<'_> {
     fn put(&mut self, path: &str, data: &[u8]) -> Result<()> {
-        self.check(path, data.len())?;
+        self.check(path, data)?;
         self.sink.write(path, data)?;
         self.wrote(path, data.len());
         Ok(())
@@ -1140,19 +1145,31 @@ impl Out<'_> {
 
     /// [`Out::put`] of data the importer made and no longer needs: the sink may keep it.
     fn put_owned(&mut self, path: &str, data: Vec<u8>) -> Result<()> {
+        self.check(path, &data)?;
         let len = data.len();
-        self.check(path, len)?;
         self.sink.write_owned(path, data)?;
         self.wrote(path, len);
         Ok(())
     }
 
-    fn check(&self, path: &str, len: usize) -> Result<()> {
+    fn check(&mut self, path: &str, data: &[u8]) -> Result<()> {
         if !safe_path(path) {
             return Err(malformed("import", format!("unsafe output path {path:?}")));
         }
-        if self.written.saturating_add(len as u64) > WRITE_LIMIT {
+        if self.written.saturating_add(data.len() as u64) > WRITE_LIMIT {
             return Err(malformed("import", "the output would exceed its limit"));
+        }
+        if let Some(why) = &self.report.cut {
+            return Err(malformed("import", why.clone()));
+        }
+        if crate::png::is_png_path(path) {
+            let result = crate::png::decoded_bytes(data)
+                .map_err(|why| format!("{path}: {why}"))
+                .and_then(|bytes| self.pngs.record(path, bytes));
+            if let Err(why) = result {
+                self.report.cut = Some(why.clone());
+                return Err(malformed("import", why));
+            }
         }
         Ok(())
     }
@@ -2425,6 +2442,55 @@ mod particle_model_tests {
         }
     }
 
+    fn import_png_outputs(side: u32, count: usize, folder: &str) -> Report {
+        let mut source = heatel::SliceSource::default();
+        let mut package = 0x55aa_1234u32.to_le_bytes().to_vec();
+        package.extend(1u32.to_le_bytes());
+        package.extend(1u32.to_le_bytes());
+        package.push(0);
+        source.insert(DIR_VPK.to_owned(), package);
+        let mut importer = Importer::new(source, Plan::parse("", "").unwrap()).unwrap();
+        let mut header = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        header.extend(side.to_be_bytes());
+        header.extend(side.to_be_bytes());
+        header.extend([8, 6, 0, 0, 0]);
+        for index in 0..count {
+            importer.pending.push_back(Pending {
+                logical: "test image".to_owned(),
+                path: format!("{folder}/{index}.png"),
+                what: Later::Bytes(header.clone()),
+            });
+        }
+        while importer.step(&mut Discard) {}
+        importer.finish()
+    }
+
+    #[test]
+    fn an_import_that_produces_an_oversized_png_is_cut_short() {
+        let report = import_png_outputs(4096, 2, "textures/ground");
+        let why = report
+            .cut
+            .expect("a PNG over the per-image bound rejects the import");
+        assert!(
+            why.contains("world") && why.contains("67108864") && why.contains("16777216"),
+            "{why}"
+        );
+        assert!(report.files.is_empty());
+    }
+
+    #[test]
+    fn an_import_that_overfills_the_interface_pool_is_cut_short() {
+        let report = import_png_outputs(2048, 15, "icons");
+        let why = report
+            .cut
+            .expect("an install exceeding the interface bound rejects the import");
+        assert!(
+            why.contains("interface") && why.contains("218103808") && why.contains("201326592"),
+            "{why}"
+        );
+        assert_eq!(report.files.len(), 12);
+    }
+
     #[test]
     #[ignore = "needs a local Dota 2 install"]
     fn particle_model_import_runs_on_the_in_app_workers_two_mib_stack() {
@@ -2487,6 +2553,7 @@ mod particle_model_tests {
                 sink: &mut sink,
                 report: &mut report,
                 written: &mut written,
+                pngs: &mut crate::png::Inventory::default(),
                 pending: &mut pending,
             };
             let models = particle_models(
@@ -2571,6 +2638,7 @@ mod particle_model_tests {
             sink: &mut sink,
             report: &mut report,
             written: &mut written,
+            pngs: &mut crate::png::Inventory::default(),
             pending: &mut pending,
         };
         let models = particle_models(

@@ -20,7 +20,7 @@ use bevy::{
 use bota_proto::{Cheat, HeroId, UnitKind};
 use std::{f32::consts::TAU, sync::Arc, time::Duration};
 
-const SIZE: UVec2 = UVec2::new(1600, 900);
+pub(super) const SIZE: UVec2 = UVec2::new(1600, 900);
 /// The least change of a colour channel that counts as a changed pixel.
 const PIXEL_CONTRAST: u8 = 8;
 /// A ring's drawn band must be at least this many pixels thick (a range indicator's stroke is
@@ -58,7 +58,7 @@ struct Capture {
     pixels: Option<Vec<u8>>,
 }
 
-fn prepare(app: &mut App) {
+pub(super) fn prepare(app: &mut App) {
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
     app.init_resource::<Capture>()
         .add_systems(PostStartup, surface);
@@ -93,7 +93,7 @@ fn received(event: On<ReadbackComplete>, mut result: ResMut<Capture>, mut comman
     result.pending = None;
     commands.entity(event.entity).despawn();
 }
-fn pixels(client: &mut Client) -> Vec<u8> {
+pub(super) fn pixels(client: &mut Client) -> Vec<u8> {
     let handle = client.world().resource::<Surface>().0.clone();
     let entity = client
         .world_mut()
@@ -126,7 +126,7 @@ fn evidence_directory() -> std::path::PathBuf {
     std::fs::create_dir_all(&directory).expect("the pixel evidence directory");
     directory
 }
-fn save(name: &str, bytes: &[u8]) {
+pub(super) fn save(name: &str, bytes: &[u8]) {
     let image = Image::new_fill(
         bevy::render::render_resource::Extent3d {
             width: SIZE.x,

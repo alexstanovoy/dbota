@@ -85,6 +85,7 @@ pub struct GroundLayers {
 /// image with its mipmaps; `None` when the cache lacks any.
 pub(crate) fn pack_detail(
     root: &std::path::Path,
+    budget: &crate::cachefs::DecodeBudget,
     dirt: &str,
     stones: &[String; 2],
 ) -> Option<Image> {
@@ -94,8 +95,12 @@ pub(crate) fn pack_detail(
             .next()
             .unwrap_or(vtex)
             .trim_end_matches(".vtex");
-        let bytes = crate::cachefs::read_small(root, &format!("textures/ground/{name}.png"))?;
-        brightness(&bytes)
+        crate::map::read_ground_png(
+            root,
+            &format!("textures/ground/{name}.png"),
+            budget,
+            brightness,
+        )
     };
     let (dirt, first, second) = (read(dirt)?, read(&stones[0])?, read(&stones[1])?);
     let n = DETAIL_SIZE as usize;
@@ -163,8 +168,7 @@ fn halve(level: &[[u8; 4]], side: usize) -> Vec<[u8; 4]> {
 
 /// A PNG's linear brightness over [`DETAIL_SIZE`] squared texels, each
 /// against the mean and halved: 0.5 is the texture's mean.
-fn brightness(bytes: &[u8]) -> Option<Vec<f32>> {
-    let image = crate::map::ground_png(bytes)?;
+fn brightness(image: &Image) -> Option<Vec<f32>> {
     let (w, h) = (image.width(), image.height());
     if w < DETAIL_SIZE || h < DETAIL_SIZE {
         return None;

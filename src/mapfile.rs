@@ -54,6 +54,7 @@ pub struct MapLoader {
     pub detail: Option<String>,
     /// Whether props are kept.
     pub props: bool,
+    pub budget: crate::cachefs::DecodeBudget,
     /// Where finished chunks go.
     pub stream: MapStream,
 }
@@ -192,6 +193,7 @@ impl MapLoader {
         let mut means = LayerMeans {
             root: self.root.clone(),
             known: Default::default(),
+            budget: self.budget.clone(),
         };
         let detail_mean = means.detail(self.detail.as_deref());
         let detail = self.detail.as_ref().map(|path| {
@@ -235,7 +237,9 @@ impl MapLoader {
         let water = water.unwrap_or_default();
         let paths = paths
             .choose(&mut kinds)
-            .and_then(|(dirt, stones)| crate::layers::pack_detail(&self.root, &dirt, &stones))
+            .and_then(|(dirt, stones)| {
+                crate::layers::pack_detail(&self.root, &self.budget, &dirt, &stones)
+            })
             .map(|image| cx.add_labeled_asset("ground_paths".to_string(), image));
         Materials {
             kinds,

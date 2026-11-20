@@ -19,12 +19,12 @@
 //! map is prepared, and every texture of the cache sat decoded in memory at
 //! once.
 //!
-//! PNGs are the interface's retained art; their decoded-byte and path allowance
-//! lasts for the reader's lifetime, even after upload or a failed load. Models
-//! and the world use KTX2 textures and the separate in-flight allowance.
+//! PNG residency shares the importer's world and interface envelopes. A path holds its
+//! largest admitted size while Bevy owns it. The terrain baker uses the world pool's
+//! scratch allowance for one decode at a time.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
@@ -42,6 +42,7 @@ use bevy::{
 
 use crate::texture_file::{HEAD_BYTES, decoded_size};
 use crate::{cache_path, gltf_file};
+use dbota_import::png::{self, Class, MAX_IMAGE_BYTES, MAX_PATHS_PER_CLASS};
 
 /// Decoded texture bytes let through at once, besides the one under way:
 /// less in a browser, whose memory never shrinks back.
@@ -53,11 +54,82 @@ const DECODE_BUDGET: usize = if cfg!(target_arch = "wasm32") {
 /// Frames without a texture arriving after which the budget lets every
 /// texture through: a load that never reports back must not stall the rest.
 const STALL_FRAMES: u32 = 120;
-/// PNG bytes admitted for retained interface art, separately from transient
-/// decoding. The same bound applies on desktop and web.
-pub const RESIDENT_BUDGET: usize = 48 << 20;
-/// Tiny images must not turn the byte allowance into unbounded path metadata.
-const MAX_RESIDENT_IMAGES: usize = 4096;
+fn png_class(path: &Path) -> Class {
+    Class::of(path.to_str().expect("cache paths are validated UTF-8"))
+}
+
+fn pool_name(class: Class) -> &'static str {
+    match class {
+        Class::Interface => "resident interface image budget",
+        Class::World => "resident world image budget",
+    }
+}
+
+#[derive(Debug)]
+struct ImageLimit {
+    path: PathBuf,
+    bytes: usize,
+    limit_name: &'static str,
+    used: usize,
+    limit: usize,
+    unit: &'static str,
+}
+
+impl std::fmt::Display for ImageLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: {} exceeded (image: {} bytes, {} > {} {})",
+            self.path.display(),
+            self.limit_name,
+            self.bytes,
+            self.used,
+            self.limit,
+            self.unit
+        )
+    }
+}
+
+impl std::error::Error for ImageLimit {}
+
+impl ImageLimit {
+    fn new(
+        path: &Path,
+        bytes: usize,
+        limit_name: &'static str,
+        used: usize,
+        limit: usize,
+        unit: &'static str,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            bytes,
+            limit_name,
+            used,
+            limit,
+            unit,
+        }
+    }
+
+    fn per_image(path: &Path, bytes: usize) -> Option<Self> {
+        (bytes > MAX_IMAGE_BYTES).then(|| {
+            Self::new(
+                path,
+                bytes,
+                "per-image budget",
+                bytes,
+                MAX_IMAGE_BYTES,
+                "decoded bytes",
+            )
+        })
+    }
+}
+
+impl From<ImageLimit> for AssetReaderError {
+    fn from(limit: ImageLimit) -> Self {
+        std::io::Error::other(limit).into()
+    }
+}
 
 /// The textures read and not yet handed to the GPU, by cache path, with
 /// their decoded size, and the reads waiting for room.
@@ -75,14 +147,23 @@ struct InFlight {
 #[derive(Default)]
 struct ResidentImages {
     bytes: usize,
-    images: HashMap<PathBuf, usize>,
+    generation: u64,
+    images: HashMap<PathBuf, ResidentImage>,
+}
+
+#[derive(Clone, Copy)]
+struct ResidentImage {
+    bytes: usize,
+    generation: u64,
 }
 
 /// Decode allowances shared by the reader and the systems that settle uploads.
 #[derive(Clone, Default)]
 pub struct DecodeBudget {
     in_flight: Arc<Mutex<InFlight>>,
-    resident: Arc<Mutex<ResidentImages>>,
+    resident: Arc<Mutex<[ResidentImages; 2]>>,
+    terrain_decode: Arc<Mutex<()>>,
+    bake_refusals: Arc<Mutex<Vec<ImageLimit>>>,
 }
 
 /// The app's hold on the decode budget, through which its frames settle it.
@@ -97,6 +178,10 @@ pub struct Settler(DecodeBudget);
 impl Settler {
     pub fn new(budget: DecodeBudget) -> Settler {
         Settler(budget)
+    }
+
+    pub fn budget(&self) -> DecodeBudget {
+        self.0.clone()
     }
 }
 
@@ -115,29 +200,150 @@ impl Drop for Settler {
 }
 
 impl DecodeBudget {
-    fn retain(&self, path: &Path, bytes: usize) -> Result<(), String> {
-        let mut resident = self
+    fn retain(&self, path: &Path, bytes: usize) -> Result<(), AssetReaderError> {
+        if let Some(limit) = ImageLimit::per_image(path, bytes) {
+            return Err(limit.into());
+        }
+        let class = png_class(path);
+        let mut pools = self
             .resident
             .lock()
-            .map_err(|_| "resident interface image budget is unavailable".to_string())?;
-        let previous = resident.images.get(path).copied();
-        // A failed reload leaves the old image alive; the reader has no replacement
-        // confirmation, so smaller headers cannot release its reservation.
-        let bytes = bytes.max(previous.unwrap_or(0));
-        let total = resident.bytes - previous.unwrap_or(0) + bytes;
-        if total > RESIDENT_BUDGET {
-            return Err(format!(
-                "resident interface image budget exceeded ({total} > {RESIDENT_BUDGET} decoded bytes)"
-            ));
+            .map_err(|_| std::io::Error::other("resident image budget is unavailable"))?;
+        let resident = &mut pools[class as usize];
+        let previous = resident.images.get(path).map(|entry| entry.bytes);
+        // A failed shrinking reload can leave the previous GPU image alive.
+        let reserved = bytes.max(previous.unwrap_or(0));
+        let total = resident.bytes - previous.unwrap_or(0) + reserved;
+        if total > class.playback_bytes() {
+            return Err(ImageLimit::new(
+                path,
+                bytes,
+                pool_name(class),
+                total,
+                class.playback_bytes(),
+                "decoded bytes",
+            )
+            .into());
         }
-        if previous.is_none() && resident.images.len() >= MAX_RESIDENT_IMAGES {
-            return Err(format!(
-                "resident interface image budget exceeded ({MAX_RESIDENT_IMAGES} paths)"
-            ));
+        if previous.is_none() && resident.images.len() >= MAX_PATHS_PER_CLASS {
+            return Err(ImageLimit::new(
+                path,
+                bytes,
+                pool_name(class),
+                resident.images.len() + 1,
+                MAX_PATHS_PER_CLASS,
+                "paths",
+            )
+            .into());
         }
         resident.bytes = total;
-        resident.images.insert(path.to_path_buf(), bytes);
+        resident.generation = resident.generation.wrapping_add(1);
+        resident.images.insert(
+            path.to_path_buf(),
+            ResidentImage {
+                bytes: reserved,
+                generation: resident.generation,
+            },
+        );
         Ok(())
+    }
+
+    fn prune_resident(&self, mut live: impl FnMut(&Path) -> bool) {
+        // AssetServer takes its own locks. Snapshot before calling it, then release only
+        // reservations that a concurrent reload has not renewed since the snapshot.
+        let Ok(pools) = self.resident.lock() else {
+            return;
+        };
+        let candidates: Vec<_> = pools
+            .iter()
+            .flat_map(|pool| {
+                pool.images
+                    .iter()
+                    .map(|(path, entry)| (path.clone(), entry.generation))
+            })
+            .collect();
+        drop(pools);
+        let unused: Vec<_> = candidates
+            .into_iter()
+            .filter(|(path, _)| !live(path))
+            .collect();
+        let Ok(mut pools) = self.resident.lock() else {
+            return;
+        };
+        for (path, generation) in unused {
+            let pool = &mut pools[png_class(&path) as usize];
+            if let Some(entry) = pool.images.get(&path)
+                && entry.generation == generation
+            {
+                pool.bytes -= entry.bytes;
+                pool.images.remove(&path);
+            }
+        }
+    }
+
+    fn reserve_terrain(
+        &self,
+        path: &Path,
+        bytes: usize,
+    ) -> Result<TerrainReservation<'_>, ImageLimit> {
+        if let Some(limit) = ImageLimit::per_image(path, bytes) {
+            return Err(limit);
+        }
+        let class = Class::World;
+        let mut pools = self
+            .resident
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let pool = &mut pools[class as usize];
+        let total = pool.bytes + bytes;
+        if total > class.playback_bytes() {
+            return Err(ImageLimit::new(
+                path,
+                bytes,
+                pool_name(class),
+                total,
+                class.playback_bytes(),
+                "decoded bytes",
+            ));
+        }
+        pool.bytes = total;
+        Ok(TerrainReservation {
+            budget: self,
+            bytes,
+        })
+    }
+
+    /// Keeps the decode charged for the projection's lifetime. The baker only keeps the
+    /// result of the projection, so its largest overlapping decode is one image.
+    pub fn terrain_png<T>(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        project: impl FnOnce(&Image) -> Option<T>,
+    ) -> Option<T> {
+        let size = png::decoded_bytes(bytes).ok()?;
+        let _serial = self.terrain_decode.lock().ok()?;
+        let _charge = match self.reserve_terrain(path, size) {
+            Ok(charge) => charge,
+            Err(limit) => {
+                if let Ok(mut failures) = self.bake_refusals.lock()
+                    && failures.len() < dbota_import::index::MAX_FILES
+                {
+                    failures.push(limit);
+                }
+                return None;
+            }
+        };
+        let image = Image::from_buffer(
+            bytes,
+            bevy::image::ImageType::Extension("png"),
+            bevy::image::CompressedImageFormats::NONE,
+            true,
+            bevy::image::ImageSampler::Default,
+            bevy::asset::RenderAssetUsages::MAIN_WORLD,
+        )
+        .ok()?;
+        project(&image)
     }
 
     /// Resolves once a texture of `bytes` decoded fits, and counts it. One
@@ -197,6 +403,22 @@ impl DecodeBudget {
             flight.idle = 0;
             Self::wake(&mut flight);
         }
+    }
+}
+
+struct TerrainReservation<'a> {
+    budget: &'a DecodeBudget,
+    bytes: usize,
+}
+
+impl Drop for TerrainReservation<'_> {
+    fn drop(&mut self) {
+        let mut pools = self
+            .budget
+            .resident
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        pools[Class::World as usize].bytes -= self.bytes;
     }
 }
 
@@ -271,9 +493,174 @@ fn note_block_textures(
 /// when the frame ends, and is let go at the start of the next.
 pub fn plugin(app: &mut App) {
     app.init_resource::<DueTextures>()
+        .init_resource::<ImageRefusals>()
         .add_systems(PreStartup, note_block_textures)
-        .add_systems(PostUpdate, arrived.after(bevy::asset::AssetEventSystems))
+        .add_systems(
+            PostUpdate,
+            (arrived, report_refusals)
+                .chain()
+                .after(bevy::asset::AssetEventSystems),
+        )
         .add_systems(First, settle);
+}
+
+#[derive(Resource, Default)]
+struct ImageRefusals {
+    paths: HashSet<PathBuf>,
+    drawn: HashSet<AssetId<Image>>,
+    total: usize,
+    label: Option<Entity>,
+    dismissed: bool,
+}
+
+impl ImageRefusals {
+    fn record(&mut self, limit: &ImageLimit) {
+        if self.paths.contains(&limit.path) {
+            return;
+        }
+        self.total = self.total.saturating_add(1);
+        if self.paths.len() < dbota_import::index::MAX_FILES {
+            self.paths.insert(limit.path.clone());
+            warn!(count = self.total, "{limit}");
+        } else if self.total == dbota_import::index::MAX_FILES + 1 {
+            warn!("image refusal log is full; additional refusals still draw their fallback");
+        }
+    }
+
+    fn notice(&self) -> String {
+        match self.total {
+            1 => "1 image could not be loaded".to_owned(),
+            count => format!("{count} images could not be loaded"),
+        }
+    }
+}
+
+fn report_refusals(
+    mut commands: Commands,
+    mut failed: MessageReader<bevy::asset::AssetLoadFailedEvent<Image>>,
+    mut images: ResMut<Assets<Image>>,
+    server: Res<AssetServer>,
+    settler: Res<Settler>,
+    mut refusals: ResMut<ImageRefusals>,
+    fonts: Option<Res<crate::ui::Fonts>>,
+) {
+    use bevy::asset::AssetLoadError;
+
+    let previous = refusals.total;
+    for event in failed.read() {
+        let AssetLoadError::AssetReaderError(AssetReaderError::Io(error)) = &event.error else {
+            continue;
+        };
+        let Some(limit) = error
+            .get_ref()
+            .and_then(|error| error.downcast_ref::<ImageLimit>())
+        else {
+            continue;
+        };
+        // A reload keeps the previous image while a failed first read has no drawable image.
+        if !refusals.drawn.contains(&event.id)
+            && !images.contains(event.id)
+            && server.is_managed(event.id)
+        {
+            let fallback = match png_class(&limit.path) {
+                Class::World => Image::default(),
+                Class::Interface => missing_image(),
+            };
+            let _ = images.insert(event.id, fallback);
+        }
+        refusals.record(limit);
+    }
+    let direct = settler
+        .0
+        .bake_refusals
+        .lock()
+        .map(|mut failures| std::mem::take(&mut *failures))
+        .unwrap_or_default();
+    for limit in direct {
+        refusals.record(&limit);
+    }
+    if refusals.total == previous || refusals.dismissed {
+        return;
+    }
+    let message = Text::new(refusals.notice());
+    if let Some(label) = refusals.label {
+        commands.entity(label).insert(message);
+    } else {
+        refusals.label = Some(spawn_image_notice(&mut commands, fonts.as_deref(), message));
+    }
+}
+
+fn spawn_image_notice(
+    commands: &mut Commands,
+    fonts: Option<&crate::ui::Fonts>,
+    message: Text,
+) -> Entity {
+    let font = TextFont {
+        font: fonts
+            .map(|fonts| fonts.regular.clone().into())
+            .unwrap_or_default(),
+        ..TextFont::default().with_font_size(15.0)
+    };
+    let row = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(65),
+                right: px(16),
+                padding: UiRect::all(px(7)),
+                column_gap: px(10),
+                ..default()
+            },
+            BackgroundColor(crate::theme::FIELD_OFF.0),
+            GlobalZIndex(500),
+        ))
+        .id();
+    let label = commands
+        .spawn((message, font.clone(), TextColor(Color::WHITE), ChildOf(row)))
+        .id();
+    commands
+        .spawn((
+            bevy::ui_widgets::Button,
+            Text::new("×"),
+            font,
+            TextColor(Color::WHITE),
+            ChildOf(row),
+        ))
+        .observe(
+            move |_: On<bevy::ui_widgets::Activate>,
+                  mut commands: Commands,
+                  mut refusals: ResMut<ImageRefusals>| {
+                refusals.dismissed = true;
+                refusals.label = None;
+                commands.entity(row).despawn();
+            },
+        );
+    label
+}
+
+fn missing_image() -> Image {
+    use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+
+    let mut image = Image::new_fill(
+        Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[
+            224, 45, 167, 255, 52, 37, 51, 255, 52, 37, 51, 255, 224, 45, 167, 255,
+        ],
+        TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        ..ImageSamplerDescriptor::nearest()
+    });
+    image
 }
 
 /// The textures that arrived this frame, to let go at the start of the next.
@@ -286,13 +673,29 @@ fn arrived(
     server: Res<AssetServer>,
     settler: Res<Settler>,
     mut due: ResMut<DueTextures>,
+    mut refusals: ResMut<ImageRefusals>,
 ) {
     let budget = &settler.0;
+    let mut dropped = false;
     for event in added.read() {
-        if let AssetEvent::Added { id } = event
-            && let Some(path) = server.get_path(*id)
-        {
-            due.0.push(path.path().to_path_buf());
+        dropped |= matches!(event, AssetEvent::Unused { .. });
+        match event {
+            AssetEvent::Added { id } => {
+                if let Some(path) = server.get_path(*id) {
+                    due.0.push(path.path().to_path_buf());
+                    if path.source().as_str() == Some(crate::CACHE_SOURCE)
+                        && cache_path::image_format(path.path())
+                            == Some(cache_path::ImageFormat::Png)
+                    {
+                        // GPU-only images leave Assets<Image> without a Removed event.
+                        refusals.drawn.insert(*id);
+                    }
+                }
+            }
+            AssetEvent::Removed { id } | AssetEvent::Unused { id } => {
+                refusals.drawn.remove(id);
+            }
+            _ => {}
         }
     }
     for event in failed.read() {
@@ -305,7 +708,15 @@ fn arrived(
         let asset = bevy::asset::AssetPath::from(path.clone()).with_source(crate::CACHE_SOURCE);
         if server.get_path_ids(asset).is_empty() {
             budget.settle(&path);
+            dropped = true;
         }
+    }
+    if dropped {
+        budget.prune_resident(|path| {
+            let asset =
+                bevy::asset::AssetPath::from(path.to_path_buf()).with_source(crate::CACHE_SOURCE);
+            server.get_path_id(asset).is_some()
+        });
     }
 }
 
@@ -385,9 +796,10 @@ impl CacheReader {
     /// Waits until a texture file fits the decode budget, and refuses one
     /// whose header no decoder may be trusted with.
     async fn admit(&self, path: &Path, head: &[u8]) -> Result<(), AssetReaderError> {
-        let png = cache_path::image_format(path) == Some(cache_path::ImageFormat::Png);
+        let png = cache_path::image_format(path) == Some(cache_path::ImageFormat::Png)
+            || head.starts_with(&png::MAGIC);
         let size = if png {
-            Some(crate::texture_file::png_size(head))
+            Some(png::decoded_bytes(head))
         } else {
             decoded_size(head)
         };
@@ -399,10 +811,14 @@ impl CacheReader {
             AssetReaderError::Io(std::io::Error::other(why).into())
         };
         let bytes = size.map_err(failed)?;
-        if png {
-            self.budget.retain(path, bytes).map_err(failed)?;
+        if png && let Some(limit) = ImageLimit::per_image(path, bytes) {
+            return Err(limit.into());
         }
-        self.budget.take(path, bytes).await
+        self.budget.take(path, bytes).await?;
+        if png {
+            self.budget.retain(path, bytes)?;
+        }
+        Ok(())
     }
 }
 
@@ -670,7 +1086,7 @@ mod tests {
         let reader = CacheReader::new(root.clone(), budget.clone(), BlockTextures::default());
         let png = interface_png(2048);
         assert_eq!(decoded_size(&png), Some(Ok(16 << 20)));
-        for index in 0..3 {
+        for index in 0..(Class::Interface.playback_bytes() / (16 << 20)) {
             let name = format!("{index}.png");
             std::fs::write(root.join(&name), &png).unwrap();
             assert!(bevy::tasks::block_on(reader.read(Path::new(&name))).is_ok());
@@ -690,7 +1106,7 @@ mod tests {
         let budget = DecodeBudget::default();
         let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
         let png = interface_png(2048);
-        for index in 0..3 {
+        for index in 0..(Class::Interface.playback_bytes() / (16 << 20)) {
             let name = format!("{index}.png");
             assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &png)).is_ok());
             budget.settle(Path::new(&name));
@@ -717,7 +1133,7 @@ mod tests {
             let budget = DecodeBudget::default();
             let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
             let png = interface_png(2048);
-            for index in 0..3 {
+            for index in 0..(Class::Interface.playback_bytes() / (16 << 20)) {
                 let name = format!("{index}.{loaded_extension}");
                 assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &png)).is_ok());
                 budget.settle(Path::new(&name));
@@ -787,6 +1203,170 @@ mod tests {
     }
 
     #[test]
+    fn the_complete_import_fits_the_image_budgets_independent_of_load_order() {
+        let root = PathBuf::from(std::env::var_os("DBOTA_ASSETS").expect("an imported cache"));
+        let index = dbota_import::index::CacheIndex::read(&root).expect("the imported index");
+        let mut inventory = png::Inventory::default();
+        let mut images = imported_pngs(&root, &index).peekable();
+        assert!(
+            images.peek().is_some(),
+            "the imported index contains PNG images"
+        );
+        for (path, bytes) in images {
+            inventory
+                .record(path.to_str().unwrap(), bytes)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        }
+    }
+
+    fn image_app(root: &Path) -> App {
+        use bevy::asset::AssetApp;
+        use bevy::image::{CompressedImageFormats, ImageLoader, ImagePlugin};
+
+        let mut app = App::new();
+        let source = crate::cache_source(&mut app, root);
+        app.register_asset_source(crate::CACHE_SOURCE, source)
+            .add_plugins((
+                MinimalPlugins,
+                AssetPlugin::default(),
+                ImagePlugin::default(),
+            ))
+            .register_asset_loader(ImageLoader::new(CompressedImageFormats::NONE));
+        app
+    }
+
+    #[test]
+    fn dropping_the_last_image_handle_refunds_its_reservation() {
+        let file = crate::test_support::scratch_path("released_image.png");
+        Image::default()
+            .try_into_dynamic()
+            .unwrap()
+            .save(&file)
+            .unwrap();
+        let mut app = image_app(file.parent().unwrap());
+        let server = app.world().resource::<AssetServer>().clone();
+        let budget = app.world().resource::<Settler>().0.clone();
+        let handle = server.load::<Image>(crate::manifest::cache_path("released_image.png"));
+        let id = handle.id();
+        update_until(&mut app, || server.is_loaded(id));
+        let held = handle.clone();
+        drop(handle);
+        app.update();
+        assert!(
+            server.is_loaded(id),
+            "the other handle still owns the image"
+        );
+        assert_eq!(budget.resident.lock().unwrap()[0].bytes, 4);
+        drop(held);
+        update_until(&mut app, || !server.is_managed(id));
+        app.update();
+        assert_eq!(
+            budget.resident.lock().unwrap()[0].bytes,
+            0,
+            "the pool refunds the dropped image"
+        );
+    }
+
+    #[test]
+    fn an_oversized_png_draws_the_missing_image_and_warns_once_for_its_path() {
+        let file = crate::test_support::scratch_path("oversized_cache_image.png");
+        std::fs::write(&file, interface_png(4096)).expect("oversized PNG header");
+        let name = file.file_name().unwrap().to_str().unwrap();
+        let mut app = image_app(file.parent().unwrap());
+        let path = crate::manifest::cache_path(name);
+        let server = app.world().resource::<AssetServer>().clone();
+        let handle = server.load::<Image>(path.clone());
+        wait_for_image_failure(&mut app, &handle);
+        let refusals = app.world().resource::<ImageRefusals>();
+        assert_eq!(refusals.paths.len(), 1);
+        let label = refusals.label.expect("an on-screen warning");
+        let text = app.world().get::<Text>(label).expect("warning text");
+        assert_eq!(text.0, "1 image could not be loaded");
+        let assets = app.world().resource::<Assets<Image>>();
+        let placeholder = assets
+            .get(&handle)
+            .expect("the failed handle has a drawable image");
+        assert_eq!(placeholder.data, missing_image().data);
+        server.reload(path);
+        wait_for_image_failure(&mut app, &handle);
+        assert_eq!(app.world().resource::<ImageRefusals>().paths.len(), 1);
+        let root = app.world().get::<ChildOf>(label).unwrap().parent();
+        let close = app.world().get::<Children>(root).unwrap()[1];
+        app.world_mut()
+            .trigger(bevy::ui_widgets::Activate { entity: close });
+        app.update();
+        assert!(
+            app.world().get::<Text>(label).is_none(),
+            "dismissal removes the notice"
+        );
+        server.reload(crate::manifest::cache_path(name));
+        wait_for_image_failure(&mut app, &handle);
+        assert!(
+            app.world().resource::<ImageRefusals>().label.is_none(),
+            "dismissal survives repeat refusals"
+        );
+    }
+
+    #[test]
+    fn oversized_world_art_gets_its_fallback_after_warning_tracking_fills() {
+        let root = crate::test_support::scratch_path("world_fallback");
+        let path = "textures/ground/oversized.png";
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, interface_png(4096)).unwrap();
+        let mut app = image_app(&root);
+        app.world_mut()
+            .resource_mut::<ImageRefusals>()
+            .paths
+            .extend(
+                (0..dbota_import::index::MAX_FILES)
+                    .map(|index| PathBuf::from(format!("{index}.png"))),
+            );
+        let server = app.world().resource::<AssetServer>().clone();
+        let handle = server.load::<Image>(crate::manifest::cache_path(path));
+        wait_for_image_failure(&mut app, &handle);
+        let assets = app.world().resource::<Assets<Image>>();
+        let fallback = assets
+            .get(&handle)
+            .expect("the next refused world image still draws");
+        assert_eq!(
+            fallback.data,
+            Image::default().data,
+            "white preserves the baked colours"
+        );
+    }
+
+    fn update_until(app: &mut App, mut ready: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !ready() {
+            assert!(std::time::Instant::now() < deadline, "asset did not settle");
+            app.update();
+            std::thread::yield_now();
+        }
+    }
+
+    fn wait_for_image_failure(app: &mut App, handle: &Handle<Image>) {
+        let limit = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut failed = bevy::ecs::message::MessageCursor::<
+            bevy::asset::AssetLoadFailedEvent<Image>,
+        >::default();
+        loop {
+            app.update();
+            let events = app
+                .world()
+                .resource::<Messages<bevy::asset::AssetLoadFailedEvent<Image>>>();
+            if failed.read(events).any(|event| event.id == handle.id()) {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < limit,
+                "the image load failed to settle"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
     fn resident_interface_images_are_limited_when_their_header_is_unreadable() {
         let reader = CacheReader::new(
             PathBuf::new(),
@@ -819,8 +1399,8 @@ mod tests {
     fn resident_interface_images_are_limited_when_a_retained_path_grows() {
         let budget = DecodeBudget::default();
         let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
-        let png = interface_png(2048);
-        for index in 0..3 {
+        let png = interface_png(1024);
+        for index in 0..(Class::Interface.playback_bytes() / (4 << 20)) {
             let name = format!("{index}.png");
             assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &png)).is_ok());
             budget.settle(Path::new(&name));
@@ -828,7 +1408,7 @@ mod tests {
         let retained = Path::new("0.png");
         assert!(bevy::tasks::block_on(reader.admit(retained, &png)).is_ok());
         budget.settle(retained);
-        let why = bevy::tasks::block_on(reader.admit(retained, &interface_png(2304)))
+        let why = bevy::tasks::block_on(reader.admit(retained, &interface_png(1152)))
             .expect_err("a larger replacement must reserve its extra decoded bytes")
             .to_string();
         assert!(why.contains("resident interface image budget"), "{why}");
@@ -838,8 +1418,8 @@ mod tests {
     fn resident_interface_images_do_not_refund_a_failed_shrinking_reload() {
         let budget = DecodeBudget::default();
         let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
-        let large = interface_png(2048);
-        for index in 0..3 {
+        let large = interface_png(1024);
+        for index in 0..(Class::Interface.playback_bytes() / (4 << 20)) {
             let name = format!("{index}.png");
             assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &large)).is_ok());
             budget.settle(Path::new(&name));
@@ -861,7 +1441,7 @@ mod tests {
         let budget = DecodeBudget::default();
         let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
         let png = interface_png(1);
-        for index in 0..4096 {
+        for index in 0..MAX_PATHS_PER_CLASS {
             let name = format!("{index}.png");
             assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &png)).is_ok());
             budget.settle(Path::new(&name));
@@ -876,10 +1456,14 @@ mod tests {
     fn resident_interface_images_are_limited_after_decode_stall_recovery() {
         let budget = DecodeBudget::default();
         let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
-        let png = interface_png(2048);
-        for index in 0..3 {
+        let png = interface_png(1024);
+        let count = Class::Interface.playback_bytes() / (4 << 20);
+        for index in 0..count {
             let name = format!("{index}.png");
             assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &png)).is_ok());
+            if index + 1 < count {
+                budget.settle(Path::new(&name));
+            }
         }
         for _ in 0..STALL_FRAMES {
             budget.tick();
@@ -1198,4 +1782,31 @@ mod browser {
         let text = request.response_text().ok()??;
         Some(text.chars().map(|c| (c as u32 & 0xff) as u8).collect())
     }
+}
+
+#[cfg(test)]
+fn imported_pngs<'a>(
+    root: &'a Path,
+    index: &'a dbota_import::index::CacheIndex,
+) -> impl Iterator<Item = (&'a Path, usize)> {
+    use std::io::Read;
+
+    index.files().iter().filter_map(|file| {
+        let path = Path::new(&file.path);
+        if cache_path::image_format(path) != Some(cache_path::ImageFormat::Png) {
+            return None;
+        }
+        let mut header = [0; 26];
+        std::fs::File::open(root.join(path))
+            .and_then(|mut file| file.read_exact(&mut header))
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let size = crate::texture_file::png_size(&header)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        Some((path, size))
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn image_budget_refusals(world: &World) -> usize {
+    world.resource::<ImageRefusals>().paths.len()
 }

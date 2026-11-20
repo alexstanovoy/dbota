@@ -96,6 +96,21 @@ paths = ["web/**"]
 tests = [{ unittest = "web/test", modules = ["test_build_output", "test_optimize"] }]
 
 [[group]]
+name = "terrain_rendering"
+about = "full-map terrain pixels on native and browser renderers with imported art"
+paths = ["src/e2e/terrain_pixels.rs"]
+also_paths = [
+    "src/main.rs", "src/cachefs.rs", "src/cache_path.rs", "src/texture_file.rs",
+    "src/loading.rs", "src/loading/**", "src/preload.rs",
+    "src/map.rs", "src/mapfile.rs", "src/map_props.rs", "src/terrain.rs", "src/layers.rs",
+    "src/fog.rs", "src/fog/**", "src/camera.rs", "src/manifest.rs", "src/import.rs",
+    "src/e2e/ground_effect_pixels.rs", "src/e2e/harness.rs", "src/hud.rs", "src/portrait.rs",
+    "web/main.js", "web/build.sh", "web/test/smoke.py", "tools/browser_check.sh",
+]
+before = [["tools/browser_check.sh", "--terrain-only"]]
+tests = [{ package = "dbota", target = "bin:dbota", filters = ["e2e::terrain_pixels::"] }]
+
+[[group]]
 name = "tooling"
 about = "the test groups' own machinery (Python unittest)"
 paths = ["tools/test_groups.py", "tools/test_groups.toml", "tools/known_baselines.txt", "tools/test_test_groups.py", "tools/feature_forks.py", "tools/test_feature_forks.py", "tools/test/**", "tools/test_runner.py", "tools/test.sh"]

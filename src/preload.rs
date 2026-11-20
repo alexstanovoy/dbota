@@ -7,7 +7,8 @@
 
 use bevy::prelude::*;
 
-pub use crate::cachefs::RESIDENT_BUDGET;
+/// Match loading warms the gameplay subset, leaving space for art used in later screens.
+pub const RESIDENT_BUDGET: usize = 48 << 20;
 use crate::manifest::Manifest;
 
 /// The handles that keep the images resident.

@@ -279,6 +279,11 @@ fn the_demo_map_loads_behind_one_screen_with_its_own_forest() {
 /// bytes, which a browser (whose memory never shrinks back) needs.
 #[test]
 fn the_interface_images_held_resident_stay_within_their_budget() {
+    assert_eq!(
+        crate::preload::RESIDENT_BUDGET,
+        48 << 20,
+        "the per-match limit is independent of cache residency"
+    );
     let client = Client::run(&[]);
     let manifest = client.world().resource::<crate::manifest::Manifest>();
     let paths = crate::preload::paths(manifest);
