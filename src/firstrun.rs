@@ -19,6 +19,7 @@
 //! the same process (exec); on Windows a new one.
 
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
@@ -98,6 +99,13 @@ struct Work {
     total: usize,
     item: String,
     bytes: u64,
+}
+
+impl Work {
+    fn bar_width(&self) -> Val {
+        let share = self.done as f32 / self.total.max(1) as f32;
+        percent(share.clamp(0.0, 1.0) * 100.0)
+    }
 }
 
 /// What a worker thread tells the screen.
@@ -530,11 +538,10 @@ fn expand(path: &str) -> PathBuf {
 
 /// Takes in what the workers said since the last frame.
 fn listen(mut run: ResMut<FirstRun>) {
-    let told: Vec<Told> = match run.told.lock() {
-        Ok(told) => told.try_iter().collect(),
-        Err(_) => Vec::new(),
-    };
-    for told in told {
+    for _ in 0..128 {
+        let Some(told) = run.told.lock().ok().and_then(|told| told.try_recv().ok()) else {
+            break;
+        };
         run.heard(told);
     }
 }
@@ -670,12 +677,12 @@ fn partial_words(files: usize, failed: usize) -> String {
 }
 
 /// What the screen shows: its title, its lines, a note of what went wrong, and its buttons.
+#[derive(PartialEq)]
 struct Shown {
     title: String,
     lines: Vec<String>,
     note: Option<String>,
-    /// The share of the work done, for the bar.
-    bar: Option<f32>,
+    working: bool,
     buttons: Vec<(&'static str, Press)>,
 }
 
@@ -732,7 +739,6 @@ fn shown(run: &FirstRun) -> Shown {
         Need::Import => vec![WHAT.to_owned(), lead, PRIVACY.to_owned()],
         Need::Reimport | Need::Requested => vec![lead, PRIVACY.to_owned()],
     };
-    let mut bar = None;
     let buttons = match &run.screen {
         Screen::Looking => {
             lines.push("Looking for Dota 2 in this computer's Steam libraries...".to_owned());
@@ -760,21 +766,7 @@ fn shown(run: &FirstRun) -> Shown {
             lines.push(format!("{}|", run.typed));
             vec![("USE THIS PATH", Press::Take), ("BACK", Press::Back)]
         }
-        Screen::Working(work) => {
-            let what = "Making your private copy";
-            let group = work.item.split(['.', '/']).next().unwrap_or("");
-            lines.push(match work.total {
-                0 => format!("{what}: reading the files..."),
-                total => format!("{what}: {} of {total}  ·  {group}", work.done),
-            });
-            lines.push(if work.bytes > 0 {
-                format!("{} ({} MB written)", work.item, work.bytes >> 20)
-            } else {
-                work.item.clone()
-            });
-            bar = Some(work.done as f32 / work.total.max(1) as f32);
-            vec![("CANCEL", Press::Cancel)]
-        }
+        Screen::Working(_) => vec![("CANCEL", Press::Cancel)],
         Screen::Waiting => {
             lines.push(
                 "Another dbota is making its copy in the same folder. This one starts when \
@@ -804,7 +796,7 @@ fn shown(run: &FirstRun) -> Shown {
         title,
         lines,
         note: run.note.clone(),
-        bar,
+        working: matches!(run.screen, Screen::Working(_)),
         buttons,
     }
 }
@@ -812,6 +804,37 @@ fn shown(run: &FirstRun) -> Shown {
 /// The screen.
 #[derive(Component)]
 struct Root;
+
+#[derive(Component, Clone, Copy)]
+enum ProgressLine {
+    Steps,
+    Item,
+}
+
+impl ProgressLine {
+    fn show(self, text: &mut String, work: &Work) {
+        text.clear();
+        match self {
+            Self::Steps if work.total == 0 => {
+                text.push_str("Making your private copy: reading the files...");
+            }
+            Self::Steps => {
+                let group = work.item.split(['.', '/']).next().unwrap_or("");
+                write!(text, "Making your private copy: {} of {}  ·  {group}", work.done, work.total)
+                    .expect("writing to a String");
+            }
+            Self::Item => {
+                text.push_str(&work.item);
+                if work.bytes > 0 {
+                    write!(text, " ({} MB written)", work.bytes >> 20).expect("writing to a String");
+                }
+            }
+        }
+    }
+}
+
+#[derive(Component)]
+struct ProgressFill;
 
 /// A button of the screen, named after its label for scripts (`click:quit dbota` for QUIT, which
 /// the menu's own `quit` must not be taken for).
@@ -853,7 +876,7 @@ fn button(commands: &mut Commands, fonts: &Fonts, parent: Entity, label: &str, p
 const NOTE: Color = Color::srgb(1.0, 0.62, 0.45);
 
 /// The bar of the work done.
-fn progress_bar(commands: &mut Commands, parent: Entity, share: f32) {
+fn progress_bar(commands: &mut Commands, parent: Entity, width: Val) {
     let track = commands
         .spawn((
             Node {
@@ -872,8 +895,9 @@ fn progress_bar(commands: &mut Commands, parent: Entity, share: f32) {
         ))
         .id();
     commands.spawn((
+        ProgressFill,
         Node {
-            width: percent(share.clamp(0.0, 1.0) * 100.0),
+            width,
             height: percent(100),
             ..default()
         },
@@ -884,7 +908,7 @@ fn progress_bar(commands: &mut Commands, parent: Entity, share: f32) {
 }
 
 /// Draws the screen: over everything there is.
-fn draw_screen(commands: &mut Commands, fonts: &Fonts, shown: &Shown) {
+fn draw_screen(commands: &mut Commands, fonts: &Fonts, shown: &Shown, work: Option<&Work>) {
     let screen = commands
         .spawn((
             Root,
@@ -913,29 +937,21 @@ fn draw_screen(commands: &mut Commands, fonts: &Fonts, shown: &Shown) {
         ChildOf(screen),
     ));
     for line in &shown.lines {
-        commands.spawn((
-            ui::text(line.clone(), &fonts.regular, 25.0, ui::INK),
-            Node {
-                max_width: px(1080),
-                ..default()
-            },
-            Pickable::IGNORE,
-            ChildOf(screen),
-        ));
+        screen_line(commands, fonts, screen, line.clone(), ui::INK);
+    }
+    if let Some(work) = work {
+        for line in [ProgressLine::Steps, ProgressLine::Item] {
+            let mut text = String::with_capacity(256);
+            line.show(&mut text, work);
+            let entity = screen_line(commands, fonts, screen, text, ui::INK);
+            commands.entity(entity).insert(line);
+        }
     }
     if let Some(note) = &shown.note {
-        commands.spawn((
-            ui::text(note.clone(), &fonts.regular, 25.0, NOTE),
-            Node {
-                max_width: px(1080),
-                ..default()
-            },
-            Pickable::IGNORE,
-            ChildOf(screen),
-        ));
+        screen_line(commands, fonts, screen, note.clone(), NOTE);
     }
-    if let Some(share) = shown.bar {
-        progress_bar(commands, screen, share);
+    if let Some(work) = work {
+        progress_bar(commands, screen, work.bar_width());
     }
     let row = commands
         .spawn((
@@ -954,29 +970,58 @@ fn draw_screen(commands: &mut Commands, fonts: &Fonts, shown: &Shown) {
     }
 }
 
-/// Draws the screen anew when what it shows changes.
+fn screen_line(commands: &mut Commands, fonts: &Fonts, screen: Entity, text: String, color: Color) -> Entity {
+    commands.spawn((
+        ui::text(text, &fonts.regular, 25.0, color),
+        Node {
+            max_width: px(1080),
+            ..default()
+        },
+        Pickable::IGNORE,
+        ChildOf(screen),
+    )).id()
+}
+
+/// Rebuilds on a screen change. Progress can change while the pointer is on CANCEL.
 fn draw(
     mut commands: Commands,
     run: Res<FirstRun>,
     fonts: Res<Fonts>,
     root: Query<Entity, With<Root>>,
-    mut drawn: Local<Option<(String, Vec<String>, Option<String>, Vec<&'static str>)>>,
+    mut lines: Query<(&ProgressLine, &mut Text)>,
+    mut fills: Query<&mut Node, With<ProgressFill>>,
+    mut drawn: Local<Option<Shown>>,
 ) {
-    let shown = shown(&run);
-    let now = (
-        shown.title.clone(),
-        shown.lines.clone(),
-        shown.note.clone(),
-        shown.buttons.iter().map(|(label, _)| *label).collect(),
-    );
-    if drawn.as_ref() == Some(&now) {
+    if !run.is_changed() {
         return;
     }
-    *drawn = Some(now);
+    let work = match &run.screen {
+        Screen::Working(work) => Some(work),
+        _ => None,
+    };
+    if let Some(work) = work
+        && drawn.as_ref().is_some_and(|shown| shown.working && shown.note == run.note)
+    {
+        for (line, mut text) in &mut lines {
+            line.show(&mut text.0, work);
+        }
+        let width = work.bar_width();
+        for mut fill in &mut fills {
+            if fill.width != width {
+                fill.width = width;
+            }
+        }
+        return;
+    }
+    let shown = shown(&run);
+    if drawn.as_ref() == Some(&shown) {
+        return;
+    }
     for entity in &root {
         commands.entity(entity).despawn();
     }
-    draw_screen(&mut commands, &fonts, &shown);
+    draw_screen(&mut commands, &fonts, &shown, work);
+    *drawn = Some(shown);
 }
 
 #[cfg(test)]
@@ -985,7 +1030,47 @@ mod tests {
     use clap::Parser;
 
     fn run() -> FirstRun {
-        FirstRun::new(Need::Import, &crate::Args::parse_from(["dbota"]))
+        let mut args = crate::Args::parse_from(["dbota"]);
+        args.steam_folder = vec![crate::test_support::scratch_path("no-steam-library")];
+        FirstRun::new(Need::Import, &args)
+    }
+
+    #[test]
+    fn progress_updates_the_mounted_controls_without_allocating() {
+        let mut run = run();
+        run.screen = Screen::Working(Work {
+            done: 0,
+            total: 100,
+            item: String::new(),
+            bytes: 0,
+        });
+        let sender = run.tell.clone();
+        let mut world = World::new();
+        world.insert_resource(run);
+        world.insert_resource(Fonts::for_layout_test());
+        let mut schedule = Schedule::default();
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+        schedule.add_systems((listen, draw).chain());
+        for _ in 0..3 {
+            schedule.run(&mut world);
+        }
+        let cancel_button = |world: &mut World| {
+            world.query::<(Entity, &Press)>().iter(world)
+                .find_map(|(entity, press)| (*press == Press::Cancel).then_some(entity))
+        };
+        let cancel = cancel_button(&mut world).expect("CANCEL on the initial progress screen");
+        sender.send(Told::Progress(Work {
+            done: 50,
+            total: 100,
+            item: "model.hero".to_owned(),
+            bytes: 2 << 20,
+        }));
+        let allocations = crate::test_support::count_allocations(|| schedule.run(&mut world));
+        assert_eq!(cancel_button(&mut world), Some(cancel), "CANCEL was replaced on progress");
+        assert!(world.query::<&Text>().iter(&world).any(|text| text.0.contains("50 of 100")));
+        assert!(world.query::<&Text>().iter(&world).any(|text| text.0 == "model.hero (2 MB written)"));
+        assert!(world.query::<&Node>().iter(&world).any(|node| node.width == percent(50)));
+        assert_eq!(allocations, 0, "allocations in one progress update");
     }
 
     /// A press of CANCEL that took effect means nothing is published: whatever the worker then

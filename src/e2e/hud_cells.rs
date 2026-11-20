@@ -1,8 +1,6 @@
 //! The cells of the in-match HUD as a player meets them before they hold anything: the top bar's
 //! ten places, the inventory's cells, and the ability row as wide as the hero's abilities need.
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
 use std::time::Duration;
 
 use bevy::prelude::*;
@@ -319,45 +317,6 @@ fn the_pointer_over_a_top_bar_level_badge_is_over_the_portrait() {
     );
 }
 
-struct CountingAllocator;
-
-thread_local! {
-    static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
-}
-
-#[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator;
-
-fn count_allocation() {
-    let _ = ALLOCATIONS.try_with(|count| {
-        if let Some(n) = count.get() {
-            count.set(Some(n + 1));
-        }
-    });
-}
-
-// SAFETY: each operation forwards the caller's arguments unchanged to System.
-unsafe impl GlobalAlloc for CountingAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        count_allocation();
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        count_allocation();
-        unsafe { System.alloc_zeroed(layout) }
-    }
-
-    unsafe fn realloc(&self, address: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-        count_allocation();
-        unsafe { System.realloc(address, layout, size) }
-    }
-
-    unsafe fn dealloc(&self, address: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(address, layout) }
-    }
-}
-
 /// Counts allocations in the HUD readout, Glyph and Scan update schedules with an active Scan
 /// and a stationary replay snapshot. Elapsed time makes the FPS readout change.
 #[test]
@@ -478,11 +437,7 @@ fn measure_hud_update(world: &mut World, previous_rate: &str, next_rate: &str) {
     world
         .resource_mut::<Time<Real>>()
         .advance_by(Duration::from_secs(1));
-    ALLOCATIONS.with(|count| count.set(Some(0)));
-    schedule.run(world);
-    let allocations = ALLOCATIONS
-        .with(|count| count.replace(None))
-        .expect("counting enabled");
+    let allocations = crate::test_support::count_allocations(|| schedule.run(world));
     assert_eq!(world.get::<Text>(readout).expect("rate").0, next_rate);
     assert_eq!(
         allocations, 0,

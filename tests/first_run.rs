@@ -166,6 +166,35 @@ fn assert_cache_made(cache: &Path) {
     );
 }
 
+#[test]
+fn an_up_to_date_import_reports_and_preserves_the_users_backup() {
+    let scratch = Scratch::new("user-backup");
+    let install = dota_in(&scratch.root);
+    let cache = scratch.cache();
+    let backup = scratch.root.join(".assets.old");
+    std::fs::create_dir(&cache).unwrap();
+    std::fs::create_dir(&backup).unwrap();
+    let private = backup.join("personal.txt");
+    std::fs::write(&private, b"my backup").unwrap();
+    let plan = dbota_import::import::plan().unwrap();
+    let stamp = dbota_import::cache_dir::stamp(
+        &install.join("game/dota"),
+        &dbota_import::import::plan_id(&plan),
+    ).unwrap();
+    std::fs::write(cache.join("stamp.txt"), stamp).unwrap();
+    std::fs::write(cache.join("index.txt"), b"").unwrap();
+    let output = common::binary(&cache)
+        .args(["import", "--dota-path"])
+        .arg(install)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("is up to date"));
+    let warning = String::from_utf8_lossy(&output.stderr);
+    assert!(warning.contains(".assets.old") && warning.contains("leaving"), "{warning}");
+    assert_eq!(std::fs::read(private).unwrap(), b"my backup");
+}
+
 /// A first run finds Dota 2 in the second library of the player's Steam by itself, says where,
 /// imports it at a click, and goes on to the sign-in screen; the settings' RE-IMPORT GAME FILES
 /// brings the import screen back, and BACK TO DBOTA leaves it for the menu.

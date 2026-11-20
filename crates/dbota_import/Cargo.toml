@@ -20,6 +20,9 @@ serde_json.workspace = true
 # Font validation uses the text engine's parser before accepting an imported face.
 skrifa.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+winapi-util.workspace = true
+
 [dev-dependencies]
 texture2ddecoder = "0.1.2"
 bevy_image = { workspace = true, features = ["ktx2", "zstd_rust"] }

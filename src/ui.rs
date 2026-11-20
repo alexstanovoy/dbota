@@ -60,6 +60,20 @@ struct Faces {
 }
 
 impl Fonts {
+    #[cfg(test)]
+    pub(crate) fn for_layout_test() -> Self {
+        Self {
+            bold: Handle::default(),
+            regular: Handle::default(),
+            faces: Faces {
+                display: Handle::default(),
+                bold: Handle::default(),
+                semibold: Handle::default(),
+                regular: Handle::default(),
+            },
+        }
+    }
+
     /// The font of a menu face.
     pub fn face(&self, face: Face) -> &Handle<Font> {
         let faces = &self.faces;
