@@ -445,6 +445,21 @@ modifier 98 modifier_ghost_state
 
 # Every unit's hidden channel at a Twin Gate.
 ability 87 twin_gate_portal_warp
+ability 88 mud_golem_hurl_boulder
+text ability 88 mud_golem_hurl_big_boulder
+ability 90 radigull_eggstremism
+ability 91 odobenus_footman_odobenus_blight
+text ability 91 odobenus_blight
+ability 92 eimermole_miners_aura
+ability 93 eimermole_miners_slam
+ability 94 ogre_seal_flop
+ability 95 ogre_seal_pup_disapproval_aura
+ability 97 kobold_disarm
+text ability 97 kobold_disarm
+ability 98 odobenus_frostmage_snowball_shot
+text ability 98 warpine_raider_seed_shot
+ability 99 black_dragon_fireball
+text ability 99 black_dragon_fireball
 # A Twin Gate a warp is channelled through wears the warp's icon.
 effect 99 icon.ability.twin_gate_portal_warp
 modifier 99 modifier_twin_gate_fx
@@ -541,3 +556,15 @@ effect 125 icon.item.crellas_crozier
 modifier 125 modifier_item_crellas_crozier_movespeed_debuff
 effect 126 icon.item.crellas_crozier
 modifier 126 modifier_item_crellas_crozier_movespeed_buff
+effect 127 icon.ability.odobenus_footman_odobenus_blight
+modifier 127 modifier_odobenus_blight_debuff
+effect 128 icon.ability.eimermole_miners_aura
+modifier 128 modifier_eimermole_miners
+effect 129 icon.ability.ogre_seal_pup_disapproval_aura
+modifier 129 modifier_ogre_seal_pup_disapproval
+effect 130 icon.ability.eimermole_miners_slam
+modifier 130 modifier_eimermole_miners_slam_slow
+effect 131 icon.ability.odobenus_frostmage_snowball_shot
+modifier 131 modifier_warpine_raider_seed_shot_slow
+effect 132 icon.ability.ogre_seal_flop
+modifier 132 modifier_ogre_seal_flop_slow

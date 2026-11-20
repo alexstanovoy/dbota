@@ -1085,8 +1085,28 @@ pub fn hero_effect(hero: bota_proto::HeroId, what: &str, manifest: &Manifest) ->
     Some(format!("{}.{what}", model.strip_suffix(".model")?))
 }
 
+/// The neutral creeps Dota 7.42 added, whose models and clips are in the new patch's packages and
+/// not yet in the client's art: they have no look of their own and are not drawn (never a guessed
+/// model), until the art moves to 7.42 and a test below fails to say so.
+pub const PENDING_742_ART: [&str; 13] = [
+    "npc_dota_neutral_radigull",
+    "npc_dota_neutral_odobenus_footman",
+    "npc_dota_neutral_odobenus_frostmage",
+    "npc_dota_neutral_eimermole",
+    "npc_dota_neutral_eimermole_foreman",
+    "npc_dota_neutral_ogre_seal",
+    "npc_dota_neutral_ogre_seal_pup",
+    "npc_dota_neutral_kobold_tunneler_gold",
+    "npc_dota_neutral_gnoll_assassin_gold",
+    "npc_dota_neutral_alpha_wolf_gold",
+    "npc_dota_neutral_mud_golem_gold",
+    "npc_dota_neutral_enraged_wildkin_gold",
+    "npc_dota_neutral_polar_furbolg_champion_gold",
+];
+
 /// Every model a match can need: each hero's and each lane unit's of both
-/// sides. One missing from the cache is not drawn, and said so.
+/// sides. One missing from the cache is not drawn, and said so; the creeps of
+/// [`PENDING_742_ART`] are named pending, not missing.
 fn required_models(manifest: &Manifest) -> Vec<String> {
     let mut names: Vec<String> = (0..bota_core::HEROES.len() as u16)
         .map(|id| {
@@ -1112,7 +1132,11 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
         .filter_map(|row| row.npc)
         .chain(["npc_dota_observer_wards", "npc_dota_sentry_wards"])
         .chain(LANE_UNITS.iter().flatten().flatten().copied());
-    for unit in NEUTRALS.iter().map(|n| n.unit).chain(objectives) {
+    let neutrals = NEUTRALS
+        .iter()
+        .map(|n| n.unit)
+        .filter(|unit| !PENDING_742_ART.contains(unit));
+    for unit in neutrals.chain(objectives) {
         match manifest.unit_art(unit) {
             Some(art) => names.extend(art.model.clone()),
             None => names.push(format!("{unit} (no unit line)")),
@@ -1931,6 +1955,35 @@ pub(crate) mod tests {
 
         let spawned = app.world_mut().query::<&Unit>().iter(app.world()).count();
         assert_eq!(spawned, SPAWNS_PER_FRAME + bota_proto::limits::MAX_SEATS);
+    }
+
+    /// The creeps Dota 7.42 added have no art in the manifest yet: each is listed as pending, and
+    /// the test fails when one gains its unit line, so that it leaves the list and is drawn.
+    #[test]
+    fn the_creeps_of_dota_7_42_stay_pending_until_their_art_is_in_the_manifest() {
+        let manifest = Manifest::load(std::path::Path::new("/nonexistent"));
+        for unit in PENDING_742_ART {
+            assert!(
+                bota_core::NEUTRALS
+                    .iter()
+                    .any(|neutral| neutral.unit == unit && !neutral.offered),
+                "{unit} must stay unoffered while its art is pending"
+            );
+            assert!(
+                manifest.unit_art(unit).is_none(),
+                "{unit} has its art now: drop it from PENDING_742_ART"
+            );
+        }
+        for neutral in bota_core::NEUTRALS
+            .iter()
+            .filter(|neutral| !PENDING_742_ART.contains(&neutral.unit))
+        {
+            assert!(
+                manifest.unit_art(neutral.unit).is_some(),
+                "{} has no art and is not listed as pending",
+                neutral.unit
+            );
+        }
     }
 
     /// Every hero and lane unit has a model line in the manifest: what the

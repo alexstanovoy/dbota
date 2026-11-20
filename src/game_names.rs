@@ -438,6 +438,12 @@ pub const FALLBACK: &[(&str, &str)] = &[
         "modifier_item_crellas_crozier_movespeed_buff",
         "Stolen Speed",
     ),
+    ("modifier_odobenus_blight_debuff", "Blight"),
+    ("modifier_eimermole_miners", "Miner's Aura"),
+    ("modifier_ogre_seal_pup_disapproval", "Seal of Disapproval"),
+    ("modifier_eimermole_miners_slam_slow", "Miner's Slam"),
+    ("modifier_warpine_raider_seed_shot_slow", "Snowball Shot"),
+    ("modifier_ogre_seal_flop_slow", "Seal Flop"),
 ];
 
 pub fn fallback(key: &str) -> Option<&'static str> {

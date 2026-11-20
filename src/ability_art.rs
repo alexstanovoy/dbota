@@ -130,33 +130,16 @@ fn neutral_art(ability: NeutralAbility) -> AbilityArt {
     }
 }
 
-/// The clip a neutral plays for an ability: `cast1` to `cast6` are Dota's
-/// ACT_DOTA_CAST_ABILITY_1 to 6, the activity the ability's
-/// `AbilityCastAnimation` names (1 where it names none). A model without
-/// the activity (the Fell Spirit has none for Vex) has no such clip and
-/// keeps its pose through the cast, as in Dota.
+/// An explicit numbered cast activity takes precedence over the model defaults.
 const fn neutral_cast_clip(ability: NeutralAbility) -> &'static str {
     use NeutralAbility as N;
+    if let Some(slot) = ability.entry().cast_animation_slot {
+        const CLIPS: [&str; 7] = [
+            "cast1", "cast2", "cast3", "cast4", "cast5", "cast6", "cast7",
+        ];
+        return CLIPS[slot as usize - 1];
+    }
     match ability {
-        N::RevengeRoar
-        | N::Heal
-        | N::TakeOff
-        | N::ChainLightning
-        | N::WarStomp
-        | N::Purge
-        | N::ManaBurn
-        | N::Shockwave
-        | N::IceArmor
-        | N::HurlBoulder
-        | N::ThunderClap
-        | N::Tornado
-        | N::Hurricane
-        | N::Ensnare
-        | N::SeedShot
-        | N::Fireball
-        | N::Frenzy
-        | N::IcefireBomb
-        | N::Desecrate => "cast1",
         N::GrabAndThrow
         | N::Bash
         | N::Vex
@@ -168,41 +151,7 @@ const fn neutral_cast_clip(ability: NeutralAbility) -> &'static str {
         | N::WaterBubbleLarge => "cast2",
         N::Slam | N::RoshanSlam => "cast3",
         N::ArmOfTheDeep | N::TendrilsOfTheDeep | N::CongregationsOfTheDeep => "cast5",
-        // Never cast, so never shown: Dota's default animation.
-        N::SpellBlock
-        | N::Devotion
-        | N::StrengthOfTheImmortal
-        | N::ProspectingAura
-        | N::NeutralUpgrade
-        | N::StealWeapon
-        | N::SpeedAura
-        | N::Break
-        | N::Piercing
-        | N::HealAmplificationAura
-        | N::EnvenomedWeapon
-        | N::FrostAttack
-        | N::CloakAura
-        | N::CriticalStrike
-        | N::PackleadersAura
-        | N::ManaAura
-        | N::UnholyAura
-        | N::ShardSplit
-        | N::SwiftnessAura
-        | N::DeathThroeRush
-        | N::DeathThroePower
-        | N::ToughnessAura
-        | N::MagicAmplificationAura
-        | N::SplashAttack
-        | N::DragonhideAura
-        | N::WeakeningAura
-        | N::GraniteAura
-        | N::WarDrumsAura
-        | N::TimeWarpAura
-        | N::ProwlerAura
-        | N::Petrify
-        | N::RiverbornAura
-        | N::Rally
-        | N::Tempest => "cast1",
+        _ => "cast1",
     }
 }
 
@@ -242,7 +191,26 @@ mod tests {
     use crate::manifest::MANIFEST;
 
     /// Every neutral's cast has a clip of its activity on its model, but
-    /// the Fell Spirit's Vex: its model has no animation for it in Dota.
+    /// the Fell Spirit's Vex (its model has no animation for it in Dota) and
+    /// the two casts Dota 7.42 gave the Kobold Soldier and the Mud Golem: the
+    /// manifest holds no such clip of their models yet (7.42's art is not
+    /// imported yet), so they keep their pose through the cast, as a
+    /// model without the activity does.
+    #[test]
+    fn the_reworked_neutral_casts_use_the_imported_numbered_activities() {
+        use NeutralAbility as N;
+        for (spell, clip) in [
+            (N::StealWeaponCast, "cast1"),
+            (N::SnowballShot, "cast1"),
+            (N::Eggstremism, "cast1"),
+            (N::HurlBigBoulder, "cast2"),
+            (N::SealFlop, "cast2"),
+            (N::MinersSlam, "cast3"),
+        ] {
+            assert_eq!(art_of(spell.id()).clip, clip, "{spell:?}");
+        }
+    }
+
     #[test]
     fn every_neutral_cast_has_its_clip() {
         let words = || {
@@ -251,7 +219,10 @@ mod tests {
                 .map(|l| l.split_whitespace().collect::<Vec<_>>())
         };
         let mut missing = Vec::new();
-        for neutral in &NEUTRALS {
+        for neutral in NEUTRALS
+            .iter()
+            .filter(|neutral| !crate::units::PENDING_742_ART.contains(&neutral.unit))
+        {
             let model = words()
                 .find_map(|w| match w.as_slice() {
                     ["unit", unit, model, ..] if *unit == neutral.unit => Some(model.to_string()),
@@ -274,7 +245,19 @@ mod tests {
         }
         assert_eq!(
             missing,
-            [("npc_dota_neutral_fel_beast", "fel_beast_haunt", "cast2")]
+            [
+                (
+                    "npc_dota_neutral_kobold_tunneler",
+                    "bota_kobold_steal_weapon",
+                    "cast1"
+                ),
+                ("npc_dota_neutral_fel_beast", "fel_beast_haunt", "cast2"),
+                (
+                    "npc_dota_neutral_mud_golem",
+                    "mud_golem_hurl_big_boulder",
+                    "cast2"
+                ),
+            ]
         );
     }
 
@@ -289,8 +272,17 @@ mod tests {
                 .lines()
                 .map(|l| l.split_whitespace().collect::<Vec<_>>())
         };
+        // Where Dota 7.42 moved a cast point ("Searing Swoop: Cast Point increased from 0.3s to
+        // 0.6s when cast by a neutral creep") the manifest still holds 7.41f's clip until 7.42's
+        // art is imported. Each such pair names the clip point (in milliseconds) the manifest holds
+        // now: the test asserts it, so that it fails when the art arrives and the entry has to go.
+        const PENDING_742: [(&str, f32); 1] = [("bota_black_dragon_searing_swoop", 300.0)];
         let mut checked = Vec::new();
-        for neutral in &NEUTRALS {
+        let mut pending = Vec::new();
+        for neutral in NEUTRALS
+            .iter()
+            .filter(|neutral| !crate::units::PENDING_742_ART.contains(&neutral.unit))
+        {
             let model = words()
                 .find_map(|w| match w.as_slice() {
                     ["unit", unit, model, ..] if *unit == neutral.unit => Some(model.to_string()),
@@ -310,6 +302,17 @@ mod tests {
                 });
                 let Some(point) = point else { continue };
                 let def = ability.entry().def;
+                if let Some((_, stale)) = PENDING_742.iter().find(|(key, _)| *key == def.key) {
+                    assert!(
+                        (point * 1000.0 - stale).abs() < 1.0,
+                        "{} on {}: the clip point is {point} s now, no longer 7.41f's {stale} ms: \
+                         7.42's art has arrived, so drop the entry of PENDING_742",
+                        def.key,
+                        neutral.unit
+                    );
+                    pending.push(def.key);
+                    continue;
+                }
                 // Immediate activation may schedule an explicit effect windup.
                 let effect_point = match ability.spell() {
                     Spell::Cast {
@@ -330,5 +333,10 @@ mod tests {
         }
         assert!(checked.contains(&"ogre_magi_frost_armor"), "{checked:?}");
         assert!(checked.contains(&"ogre_bruiser_ogre_smash"), "{checked:?}");
+        assert_eq!(
+            pending,
+            PENDING_742.map(|(key, _)| key),
+            "every pending entry stands on an ability whose clip is read"
+        );
     }
 }
