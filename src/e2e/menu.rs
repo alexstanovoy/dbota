@@ -130,6 +130,84 @@ fn leaving_game_permanently_removes_reconnect_but_cancelling_keeps_it() {
     }
 }
 
+#[test]
+fn a_server_websocket_idle_close_reaches_the_drawn_menu() {
+    use std::io::{Read, Write};
+    use std::net::{Shutdown, TcpListener, TcpStream};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let mut server = Server::start(1, &["--ws-port", "0", "--idle-timeout-secs", "1"]);
+    let upstream = server
+        .address
+        .strip_prefix("ws://")
+        .expect("WebSocket")
+        .to_owned();
+    let relay = TcpListener::bind("127.0.0.1:0").expect("relay listener");
+    server.address = format!("ws://{}", relay.local_addr().expect("relay address"));
+    let silent = Arc::new(AtomicBool::new(false));
+    let upstream_silent = Arc::clone(&silent);
+    let forwarding = std::thread::spawn(move || {
+        let (mut client, _) = relay.accept().expect("client connection");
+        let mut server = TcpStream::connect(upstream).expect("server connection");
+        let mut to_client = client.try_clone().expect("client writer");
+        let mut from_server = server.try_clone().expect("server reader");
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let _ = std::io::copy(&mut from_server, &mut to_client);
+                let _ = to_client.shutdown(Shutdown::Both);
+            });
+            let mut bytes = [0; 8192];
+            while let Ok(count @ 1..) = client.read(&mut bytes) {
+                if !upstream_silent.load(Ordering::Acquire)
+                    && server.write_all(&bytes[..count]).is_err()
+                {
+                    break;
+                }
+            }
+            let _ = server.shutdown(Shutdown::Both);
+        });
+    });
+
+    // Use the production link and a real snapshot before constructing the
+    // menu. Loading the map renderer would hide the cost of the network test.
+    use clap::Parser;
+    let args = crate::Args::parse_from(["dbota", "--addr", &server.address]);
+    let crate::session::Session(mut game) = crate::session::open(&args).expect("a real match link");
+    let mut patience = super::harness::Patience::of(Duration::from_secs(5));
+    while game.ears().is_none() {
+        patience.pass("a snapshot from the server");
+        game.pump(0.001);
+        if game.my_slot.is_some() && !game.ready {
+            game.act(bota_client_core::Intent::PickHero(
+                bota_proto::HeroId::SHADOW_FIEND.0,
+            ));
+            game.act(bota_client_core::Intent::ToggleReady);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // The relay never constructs a frame. Only the server supplies the code.
+    silent.store(true, Ordering::Release);
+    while !game.lost {
+        patience.pass("the server closed its idle WebSocket");
+        game.pump(0.001);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let mut client = Client::run_with_core(&["--addr", &server.address], game);
+    crate::main_menu::handle_test_disconnect(client.world_mut());
+    client.frames(5);
+    let message = "The game server stopped receiving network replies from this client.";
+    let shown = client.shown_texts();
+    assert!(
+        shown.iter().any(|text| text == message),
+        "visible text: {shown:?}"
+    );
+    drop(client);
+    drop(server);
+    forwarding.join().expect("relay finished");
+}
+
 /// A leave reached the server, but its echo was lost: the next Hello is refused permanently.
 fn lost_leave_echo() -> (
     String,

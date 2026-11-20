@@ -11,7 +11,7 @@ use bevy::{
     prelude::*,
     window::Ime,
 };
-use bota_client_core::{App as Core, Phase, Source};
+use bota_client_core::{App as Core, FeedKind, Phase, Source};
 
 use super::core::{Act, Launch, MenuCore, Page};
 use super::launch::{Hosted, Idle, Opening, Trust};
@@ -445,10 +445,21 @@ fn guard(
     let lost = (game.lost && !game.source.is_redialing()) || unreadable.is_some();
     let why = lost.then(|| match &unreadable {
         Some(err) => format!("The replay cannot be read: {err}"),
-        None => game.feed.last().filter(|_| game.view().is_none()).map_or(
-            "the connection to the game server was lost".to_owned(),
-            |l| crate::feed::text(game, &l.kind),
-        ),
+        None => game
+            .feed
+            .iter()
+            .rev()
+            .find(|line| {
+                game.view().is_none()
+                    || matches!(
+                        line.kind,
+                        FeedKind::LinkEnded(_) | FeedKind::ProtocolBroken { .. }
+                    )
+            })
+            .map_or_else(
+                || "the connection to the game server was lost".to_owned(),
+                |line| crate::feed::text(game, &line.kind),
+            ),
     });
     let over = game.over.is_some();
     let done = lost || over;
@@ -461,6 +472,9 @@ fn guard(
             && !screen.open
             && !panels.shop);
     if leave || (lost && !over) {
+        if let Some(why) = &why {
+            warn!("game: connection ended: {why}");
+        }
         // Escape leaves the game here, not the client too.
         fired.pressed.retain(|action| *action != escape);
         *session = idle();
@@ -468,6 +482,13 @@ fn guard(
         forget_units(&mut commands, &mut index);
         core.left_game(if leave { None } else { why.as_deref() }, over);
     }
+}
+
+/// Lets a socket test start the menu after the close without scheduling a
+/// map load first. The production guard still chooses and posts the status.
+#[cfg(test)]
+pub(crate) fn handle_test_disconnect(world: &mut World) {
+    world.run_system_cached(guard).expect("game shell");
 }
 
 /// Tells the interface's scale whether the game's HUD is on screen or the menu covers it.

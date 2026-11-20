@@ -149,7 +149,9 @@ impl Server {
             let mut line = String::new();
             let read = output.read_line(&mut line).expect("the server's output");
             assert!(read > 0, "the server ended before it listened");
-            if let Some(address) = line.trim().strip_prefix("bota_server listening on ") {
+            if let Some(address) = line.trim().strip_prefix("bota_server listening on ")
+                && (!extra.contains(&"--ws-port") || address.starts_with("ws://"))
+            {
                 break address.to_owned();
             }
         };

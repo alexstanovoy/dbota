@@ -5,7 +5,7 @@
 
 use bevy::color::Mix;
 use bevy::prelude::*;
-use bota_client_core::{App as Core, FeedKind, FeedLine, Killer, RuneAct, Victim};
+use bota_client_core::{App as Core, FeedKind, FeedLine, Killer, LinkEnd, RuneAct, Victim};
 use bota_proto::{RuneKind, Team, UnitKind, Vec2};
 
 mod toast;
@@ -1163,7 +1163,18 @@ fn localized_text(core: &Core, kind: &FeedKind, texts: Option<&Texts>) -> String
         }
         FeedKind::Disconnected { seat } => format!("{} disconnected", seat_name(core, seat, texts)),
         FeedKind::ProtocolBroken { ref why } => format!("the server broke the protocol: {why}"),
-        FeedKind::ConnectionLost => "connection to the server lost".to_string(),
+        FeedKind::ConnectionLost => "connection to the server lost".to_owned(),
+        FeedKind::LinkEnded(end) => match end {
+            LinkEnd::WebSocketIdle => {
+                "The game server stopped receiving network replies from this client.".to_owned()
+            }
+            LinkEnd::WebSocketClosed(1005 | 1006) => {
+                "The game connection ended without a close reason.".to_owned()
+            }
+            LinkEnd::WebSocketClosed(code) => {
+                format!("The game connection closed with WebSocket status {code}.")
+            }
+        },
         FeedKind::TimeLimitNear { remaining_secs } => format!(
             "The match ends in {} (time limit)",
             time_left(remaining_secs)

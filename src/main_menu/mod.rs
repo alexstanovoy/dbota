@@ -86,6 +86,8 @@ pub use play::Section as PlaySection;
 pub use prefs::page_service;
 pub(crate) use preview::loading_chat;
 pub use preview::{NAMES as PREVIEWS, view as preview};
+#[cfg(test)]
+pub(crate) use shell::handle_test_disconnect;
 pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;
 pub(crate) use text::line;

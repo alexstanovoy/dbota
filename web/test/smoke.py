@@ -1476,11 +1476,8 @@ def assert_in(text, part):
     assert part in text, f"{part!r} not in {text!r}"
 
 
-# Where the main menu's buttons are in a 1280x720 page (calibrated by `--shots`): the page is
-# drawn at the viewport's size with the interface at its default scale, so they stay put.
-CLICK_LOBBIES = (329, 22)
-CLICK_REPLAYS = (505, 22)
-CLICK_START = (310, 520)
+# The replay smoke uses the default UI scale in a 1920×1080 viewport.
+CLICK_REPLAYS = (590, 24)
 
 
 def wait_port(port, seconds=60):
@@ -1496,8 +1493,98 @@ def wait_port(port, seconds=60):
     sys.exit(f"nothing listens on port {port}")
 
 
-def radovid_config(directory, page_dir, server_bin, port, game_port, cert, key):
-    """A radovid for one practice ruleset whose games keep their replay and end quickly once the
+def delay_game_replies(game_port):
+    """Pass the real TLS stream both ways until the test cuts the client's replies."""
+    import select
+    import socket
+    import socketserver
+
+    silent = threading.Event()
+
+    class Transfer(socketserver.BaseRequestHandler):
+        def handle(self):
+            try:
+                with socket.create_connection(("127.0.0.1", game_port), timeout=5) as game:
+                    client = self.request
+                    for _ in range(100000):
+                        readable, _, _ = select.select([client, game], [], [], 60)
+                        if not readable:
+                            return
+                        for source in readable:
+                            data = source.recv(65536)
+                            if not data:
+                                return
+                            if source is game:
+                                client.sendall(data)
+                            elif not silent.is_set():
+                                game.sendall(data)
+            except ConnectionError:
+                return
+
+    relay = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Transfer)
+    relay.daemon_threads = True
+    threading.Thread(target=relay.serve_forever, daemon=True).start()
+    return relay, silent
+
+
+def watch_game_close(page, port):
+    page.add_init_script(f"""(() => {{
+        const BrowserSocket = globalThis.WebSocket;
+        globalThis.WebSocket = class extends BrowserSocket {{
+            constructor(url, ...options) {{
+                super(url, ...options);
+                if (new URL(url).port === '{port}') {{
+                    this.addEventListener('close', event => {{
+                        globalThis.gameClose = [event.code, event.reason];
+                    }});
+                }}
+            }}
+        }};
+    }})();""")
+
+
+def assert_game_timeout(page, console, silent, evidence=None):
+    # The network cut is the only stimulus. Chromium and the game client
+    # receive the server's bytes, and the Bevy menu draws its own status.
+    import base64
+
+    expected = "The game server stopped receiving network replies from this client."
+    silent.set()
+    for _ in range(500):
+        if close := page.evaluate("globalThis.gameClose"):
+            break
+        page.wait_for_timeout(30)
+    else:
+        raise AssertionError("the browser received no WebSocket close event")
+    assert close == [4001, "game transport idle"], close
+    wait_console(page, console, re.escape(f"game: connection ended: {expected}"), 15, "the disconnect toast")
+    page.evaluate("new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))")
+    width, height = page.viewport_size["width"], page.viewport_size["height"]
+    clip = {"x": width // 5, "y": round(height * .85), "width": width * 3 // 5,
+            "height": round(height * .08)}
+    pixels = page.screenshot(path=evidence, clip=clip, timeout=15000)
+    ink = page.evaluate("""async (encoded) => {
+        const png = Uint8Array.from(atob(encoded), value => value.charCodeAt(0));
+        const screenshot = await createImageBitmap(new Blob([png], {type: 'image/png'}));
+        const canvas = document.createElement('canvas');
+        canvas.width = screenshot.width;
+        canvas.height = screenshot.height;
+        const graphics = canvas.getContext('2d');
+        graphics.drawImage(screenshot, 0, 0);
+        const rgba = graphics.getImageData(0, 0, canvas.width, canvas.height).data;
+        let ink = 0;
+        for (let pixel = 0; pixel < rgba.length; pixel += 4) {
+            const [red, green, blue] = rgba.subarray(pixel, pixel + 3);
+            if (red >= 230 && green >= 118 && green <= 148 && blue >= 92 && blue <= 130) ink++;
+        }
+        return ink;
+    }""", base64.b64encode(pixels).decode("ascii"))
+    assert ink >= 25, f"the game's orange disconnect text is missing ({ink} foreground pixels)"
+    print("game WebSocket: the server closed with 4001 and the client drew the idle reason")
+
+
+def radovid_config(directory, page_dir, server_bin, port, game_port, cert, key, relay_port):
+    """A radovid for one demo ruleset whose games keep their replay and end quickly once the
     player is gone, serving `page_dir` on its own origin."""
     fingerprint = subprocess.run([server_bin, "--wire-fingerprint"], capture_output=True, text=True).stdout.strip()
     return f"""
@@ -1518,8 +1605,10 @@ save_replays = true
 game_capacity = 1
 lobby_games_max = 1
 [[ruleset]]
-id = "practice"
-name = "Practice"
+id = "demo"
+name = "Demo Hero"
+instant_solo = true
+info = "01"
 game = "bota"
 game_fingerprint = "{fingerprint}"
 teams = [1, 1]
@@ -1529,10 +1618,10 @@ max_duration_secs = 600
 [ruleset.launcher]
 kind = "local"
 binary = "{server_bin}"
-public_url = "wss://127.0.0.1:{{port}}"
+public_url = "wss://127.0.0.1:{relay_port}"
 version_probe = ["--wire-fingerprint"]
-args = ["--map", "2", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0", "--ws-port", "{{port}}",
-        "--tls-cert", "{cert}", "--tls-key", "{key}", "--heroes", "1", "--pick-secs", "1", "--tactical-secs", "0",
+args = ["--map", "0", "--cheats", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0", "--ws-port", "{{port}}",
+        "--tls-cert", "{cert}", "--tls-key", "{key}", "--idle-timeout-secs", "1", "--heroes", "1", "--pick-secs", "1", "--tactical-secs", "0",
         "--start-after-secs", "120", "--abandon-unjoined", "--empty-after-secs", "5"]
 env = {{ BOTA_SEATS = "{{seats}}" }}
 artifact = "{directory}/replays/replay-{{match_id}}.brp"
@@ -1598,25 +1687,27 @@ def check_replay_probe(directory):
 
 def check_replays_page(directory, server_bin, radovid_bin, shots=False):
     """A match through a real radovid is kept in the browser's private storage: the page enters a
-    practice match alone and is closed (the player gone, the game server ends and the service
-    records it); the next visit signs in with the kept session, fetches the replay it was away
+    Demo Hero match and loses its transport (the player gone, the game server ends and the service
+    records it). The next visit signs in with the kept session, fetches the replay it was away
     for and stores it in OPFS. The REPLAYS tab lists it and WATCH plays it; DELETE removes it.
     File import and replay download are deliberately absent from the interface."""
+    from tempfile import mkdtemp
+
     check_replay_probe(directory)
-    work = HERE.parent.parent / "temp/smoke-replays"
-    work.mkdir(parents=True, exist_ok=True)
+    temp = HERE.parent.parent / "temp"
+    temp.mkdir(parents=True, exist_ok=True)
+    work = pathlib.Path(mkdtemp(prefix="smoke-replays-", dir=temp))
     cert, key = work / "cert.pem", work / "key.pem"
     subprocess.run([radovid_bin, "dev-cert", str(work)], check=True, capture_output=True)
-    for stale in [*work.glob("radovid.db*"), *(work / "replays").glob("*")]:
-        stale.unlink()
     port, game = free_port(), free_port()
-    # radovid serves the page from a folder of its own (it follows no link out of it).
+    # The service follows no links out of its static directory. Share the files
+    # with the built page and the cache without copying the art.
     page_dir = work / "page"
-    shutil.rmtree(page_dir, ignore_errors=True)
-    shutil.copytree(directory, page_dir, symlinks=False)
-    # The page plays on a native cache (`?cache=http`): hard links to its files, nothing copied.
+    shutil.copytree(directory, page_dir, copy_function=os.link)
     shutil.copytree(cache_folder(), page_dir / "cache", copy_function=os.link)
-    (work / "radovid.toml").write_text(radovid_config(work, page_dir, server_bin, port, game, cert, key))
+    relay, silent = delay_game_replies(game)
+    relay_port = relay.server_address[1]
+    (work / "radovid.toml").write_text(radovid_config(work, page_dir, server_bin, port, game, cert, key, relay_port))
     service = subprocess.Popen([radovid_bin, "serve", "--config", str(work / "radovid.toml")],
                                stdout=subprocess.DEVNULL, stderr=open(work / "radovid.log", "w"),
                                env=without_steering_variables())
@@ -1624,12 +1715,13 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
         wait_port(port)
         with sync_playwright() as p:
             browser = p.chromium.launch(args=[*BROWSER_ARGS, "--ignore-certificate-errors"])
-            context = browser.new_context(viewport={"width": 1280, "height": 720}, ignore_https_errors=True,
+            context = browser.new_context(viewport={"width": 1920, "height": 1080}, ignore_https_errors=True,
                                           accept_downloads=True)
             page = context.new_page()
             console, problems = [], []
             page.on("console", lambda m: console.append(m.text))
             page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
+            watch_game_close(page, relay_port)
             url = f"https://127.0.0.1:{port}/?cache=http"
 
             def shot(name):
@@ -1639,37 +1731,38 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
             def step(wait=4000):
                 page.wait_for_timeout(wait)
 
-            # First visit: register, make a practice lobby, START NOW; then close the page.
+            # Launch from the hero catalogue. This reuses the match for both
+            # the transport check and the replay that the next page fetches.
+            page.add_init_script("Element.prototype.requestPointerLock = () => Promise.resolve();")
             page.goto(url)
-            wait_console(page, console, r"replays: kept in the browser's opfs storage", 600, "the replay storage")
-            step(15000)
-            shot("1-login")
-            for _ in range(3):  # login, password, SIGN IN, then REGISTER
+            wait_console(page, console, "dbota: running", 600, "the client’s first frame")
+            assert_launch_labels_hidden(page)
+            step(1000)
+            page.mouse.move(960, 543)
+            step(200)
+            page.mouse.click(960, 543)  # CREATE ACCOUNT
+            step(650)
+            for value in ("smoker", "correct horse battery", "correct horse battery"):
+                page.keyboard.type(value)
+                step(160)
                 page.keyboard.press("Tab")
+                step(150)
             page.keyboard.press("Enter")
-            step()
-            shot("2-register")
-            page.keyboard.type("smoker")
-            page.keyboard.press("Tab")
-            page.keyboard.type("correct horse battery")
-            page.keyboard.press("Tab")
-            page.keyboard.type("correct horse battery")
-            page.keyboard.press("Enter")
-            step(8000)
-            shot("3-home")
-            page.mouse.click(*CLICK_LOBBIES)
-            step()
-            shot("4-lobbies")
-            page.keyboard.type("alone")
-            page.keyboard.press("Tab")
-            page.keyboard.press("Tab")
-            page.keyboard.press("Enter")
-            step(6000)
-            shot("5-lobby")
-            page.mouse.click(*CLICK_START)
-            wait_console(page, console, r"match known: tick \d+", 600, "the practice match")
-            step(5000)
+            for _ in range(100):
+                if page.evaluate("localStorage.getItem('dbota.session') !== null"):
+                    break
+                step(200)
+            else:
+                raise AssertionError("the fixture could not sign in")
+            for x, y in ((687, 24), (80, 200), (180, 577)):  # HEROES, Pudge, DEMO HERO
+                page.mouse.move(x, y)
+                step(350)
+                page.mouse.click(x, y)
+                step(800)
+            wait_console(page, console, "loading: done in", 600, "the demo match")
             shot("6-game")
+            assert_game_timeout(page, console, silent, str(work / "6-idle-timeout.png") if shots else None)
+            shot("6-idle-menu")
             page.close()
 
             # The game server ends once its only seat has stayed empty; radovid records the match.
@@ -1735,6 +1828,8 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
             print("delete: the replay is gone from OPFS")
             browser.close()
     finally:
+        relay.shutdown()
+        relay.server_close()
         service.terminate()
         service.wait(timeout=20)
     print("replays: kept in OPFS from a match through radovid, listed and played")
