@@ -1531,10 +1531,24 @@ pub fn toasts(world: &mut World) -> Vec<(Rect, Vec<Segment>)> {
                         .filter(|c| *c != Color::NONE);
                     icons.push((*n, path, plate));
                 }
-                (Some(Slot::Text(n)), _) => {
+                (Some(Slot::Text(n)), true) => {
                     let text = world.get::<Text>(child).map(|t| t.0.clone());
                     let ink = world.get::<TextColor>(child).map(|c| c.0);
                     if let Some(text) = text.filter(|t| !t.is_empty()) {
+                        texts.push((*n, text, ink));
+                    }
+                }
+                (Some(Slot::Identity(n)), true) => {
+                    let label = world.get::<IdentityLabel>(child).expect("a name label").0;
+                    let name = &world.get::<Text>(label.name).expect("a name run").0;
+                    let version = &world.get::<Text>(label.version).expect("a version run").0;
+                    let ink = world.get::<TextColor>(label.name).map(|c| c.0);
+                    if !name.is_empty() {
+                        let text = if version.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{name} {version}")
+                        };
                         texts.push((*n, text, ink));
                     }
                 }
