@@ -14,6 +14,7 @@ use crate::talents::{Look, Mode, shown};
 /// A client at `level` with its hero invulnerable and the talents of that level open.
 fn at_level(server: &Server, level: u8, files: &[(&str, &str)]) -> Client {
     let mut client = Client::join_with_files(server, HeroId::SHADOW_FIEND, files);
+    client.ready_with_match_held(server);
     client.cheat(Cheat::Invulnerable { on: true });
     client.cheat(Cheat::Levels { count: level - 1 });
     client.until("the talents of that level open", |c| {
@@ -72,7 +73,7 @@ fn tap(client: &mut Client, key: KeyCode) {
 #[test]
 fn with_a_free_point_at_level_ten_the_plus_and_the_button_open_the_window_and_the_open_tier_glows()
 {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
     let before = shown(client.world_mut());
     assert_eq!(before.mode, Mode::Closed, "the window waits to be asked");
@@ -161,7 +162,7 @@ fn one_key_learns_one_side_of_the_open_tier(key: KeyCode, taken: u8, left_alone:
 
 #[test]
 fn a_pointer_click_learns_the_right_talent_and_leaves_the_tree_open() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
     client.click_named("talent button");
     let orders = client.record_sent_orders();
@@ -178,7 +179,7 @@ fn a_pointer_click_learns_the_right_talent_and_leaves_the_tree_open() {
 
 #[test]
 fn key_three_spends_a_point_on_the_attribute_bonus() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
     client.click_named("talent button");
     let orders = client.record_sent_orders();
@@ -202,7 +203,7 @@ fn key_two_learns_the_right_talent_of_the_open_tier_and_the_left_one_goes_dim() 
 
 #[test]
 fn at_level_fifteen_a_key_takes_the_lowest_open_tier_first_and_then_the_next() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 15, &[]);
     client.click_named("talent button");
     assert_eq!(
@@ -249,7 +250,7 @@ fn at_level_fifteen_a_key_takes_the_lowest_open_tier_first_and_then_the_next() {
 
 #[test]
 fn a_talent_key_with_the_window_closed_leaves_the_talents_alone_and_picks_the_control_group() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
     client.core_mut().act(bota_client_core::Intent::SelectHero);
     client.key(KeyCode::ControlLeft, ButtonState::Pressed);
@@ -277,7 +278,7 @@ fn a_talent_key_with_the_window_closed_leaves_the_talents_alone_and_picks_the_co
 
 #[test]
 fn a_talent_key_with_the_window_open_does_not_pick_the_control_group() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
     client.core_mut().act(bota_client_core::Intent::SelectHero);
     client.key(KeyCode::ControlLeft, ButtonState::Pressed);
@@ -299,7 +300,7 @@ fn a_talent_key_with_the_window_open_does_not_pick_the_control_group() {
 #[test]
 fn an_item_on_a_talent_key_is_taken_up_with_the_window_closed_and_leaves_the_talent_key_to_the_window()
  {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
     let item_1 = crate::keys::index_of(crate::keys::Action::Item(0)).expect("bound");
     client
@@ -336,7 +337,7 @@ fn an_item_on_a_talent_key_is_taken_up_with_the_window_closed_and_leaves_the_tal
 
 #[test]
 fn a_talent_of_a_tier_not_yet_reached_is_refused_with_the_level_it_waits_for() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
     client.click_named("talent button");
     let orders = client.record_sent_orders();
@@ -356,7 +357,7 @@ fn a_talent_of_a_tier_not_yet_reached_is_refused_with_the_level_it_waits_for() {
 
 #[test]
 fn a_talent_already_learned_is_refused_as_such() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
     client.click_named("talent button");
     tap(&mut client, KeyCode::Digit1);
@@ -395,7 +396,7 @@ fn the_attribute_bonus_asked_for_below_its_level_is_refused_with_the_level_it_ne
 
 #[test]
 fn the_window_hovered_over_the_button_is_a_tooltip_that_learns_nothing() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
     let button = client
         .world_mut()
@@ -466,7 +467,7 @@ fn the_dead_hero_refuses_pointer_and_key_learning_without_sending() {
 #[test]
 fn a_second_learning_key_waits_until_the_first_order_is_visible_in_the_view() {
     for key in [KeyCode::Digit1, KeyCode::Digit3] {
-        let server = Server::start(1, &[]);
+        let server = Server::for_hud(1, &[]);
         let mut client = at_level(&server, 15, &[]);
         client.click_named("talent button");
         client.hold_incoming();
@@ -569,7 +570,7 @@ fn the_open_shop_leaves_every_talent_choice_accessible_at_1024_by_600() {
 
 #[test]
 fn the_pinned_window_aligns_with_the_hud_and_clears_the_attribute_badge() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = at_level(&server, 10, &[]);
     client.click_named("talent button");
     let panel = drawn_rect::<crate::talents::TalentPanel>(&mut client);

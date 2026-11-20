@@ -75,13 +75,14 @@ fn icon(client: &mut Client, slot: u8) -> Option<String> {
 }
 
 fn scene(item: ItemId) -> (Server, Client, [i32; 3], [i32; 3]) {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     client
         .world_mut()
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             Duration::from_nanos(33_333_333),
         ));
+    client.ready_with_match_held(&server);
     client.core_mut().act(Intent::Stop);
     client.frames(3);
     client.cheat(Cheat::Invulnerable { on: true });
