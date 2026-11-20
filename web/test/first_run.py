@@ -285,6 +285,39 @@ def failed_write(p, page_dir, install):
         run.close()
 
 
+def failed_replacement(p, page_dir, install):
+    """Fail the publication of a replacement and keep the previous copy, even when it is stale."""
+    run = Run(p, page_dir)
+    try:
+        run.page.add_init_script("delete window.showDirectoryPicker;" + scripts_init([
+            "click:choose the dota 2 folder;await:button:continue;click:continue",
+            "await:button:sign in",
+            "click:choose the dota 2 folder;await:text:The import failed: ;await:text:injected publication failure",
+        ]))
+        run.choose(install, install)
+        run.page.goto(run.base)
+        run.step("await:button:sign in")
+        run.copy_file("stamp.txt", "rev1.1/0000000000000000/1/2")
+        previous = run.storage()
+
+        def failing(route):
+            body = route.fetch().text()
+            route.fulfill(body="""for (const method of ['createWritable', 'createSyncAccessHandle']) {
+              const open = FileSystemFileHandle.prototype[method];
+              FileSystemFileHandle.prototype[method] = function (...args) {
+                return this.name === 'current.txt' ? Promise.reject(new Error('injected publication failure')) : open.apply(this, args);
+              };
+            }\n""" + body, content_type="text/javascript")
+
+        run.page.route("**/import_worker.js", failing)
+        run.page.reload()
+        run.step("await:text:injected publication failure")
+        assert run.storage() == previous, "a failed publication lost the previous copy"
+        print("a failed publication kept the previous copy")
+    finally:
+        run.close()
+
+
 PICKER = """(() => {
   // The browser's directory picker, answered with a folder of the page's own private storage: the
   // tiny install, or a folder without Dota.
@@ -524,6 +557,7 @@ def main():
                 finally:
                     run.close()
                 failed_write(p, args.page, install)
+                failed_replacement(p, args.page, install)
                 directory_picker(p, args.page)
                 unsupported(p, args.page)
                 storage_hangs(p, args.page)

@@ -27,7 +27,7 @@ use web_sys::{
     DedicatedWorkerGlobalScope, File, FileList, FileReaderSync, FileSystemDirectoryHandle,
     FileSystemFileHandle, FileSystemGetDirectoryOptions, FileSystemGetFileOptions,
     FileSystemReadWriteOptions, FileSystemRemoveOptions, FileSystemSyncAccessHandle, MessageEvent,
-    StorageEstimate,
+    FileSystemWritableFileStream, StorageEstimate,
 };
 
 use dbota_import::browser::{self, CURRENT, IMPORT_LOCK, LEVELS, MAX_PICKED, PACKAGE, ROOT};
@@ -100,8 +100,7 @@ pub fn run() {
     post("ready", &[]);
 }
 
-/// Runs `work` holding [`IMPORT_LOCK`]; nothing when another tab's import holds it. A browser
-/// without Web Locks runs it all the same.
+/// Runs `work` holding [`IMPORT_LOCK`]; no copy may be written without this lock.
 async fn locked<T: 'static>(work: impl Future<Output = T> + 'static) -> Option<T> {
     let locks = Reflect::get(&scope().navigator(), &"locks".into())
         .ok()
@@ -112,7 +111,7 @@ async fn locked<T: 'static>(work: impl Future<Output = T> + 'static) -> Option<T
             .and_then(|r| r.dyn_into::<Function>().ok())
     });
     let (Some(locks), Some(request)) = (locks, request) else {
-        return Some(work.await);
+        return None;
     };
     let result = Rc::new(RefCell::new(None));
     let kept = result.clone();
@@ -410,47 +409,67 @@ async fn write_file(
     written
 }
 
+/// The browser commits a writable stream on close. A refused write leaves the old pointer whole.
+async fn publish_current(root: &FileSystemDirectoryHandle, name: &str) -> Result<bool, String> {
+    let options = FileSystemGetFileOptions::new();
+    options.set_create(true);
+    let handle: FileSystemFileHandle = wait(root.get_file_handle_with_options(CURRENT, &options))
+        .await?.unchecked_into();
+    let stream: FileSystemWritableFileStream = wait(handle.create_writable()).await?.unchecked_into();
+    if let Err(why) = wait(stream.write_with_str(&format!("{name}\n")).map_err(said)?).await {
+        let _ = wait(stream.abort()).await;
+        return Err(why);
+    }
+    if STOPPING.get() {
+        wait(stream.abort()).await?;
+        return Ok(false);
+    }
+    wait(stream.close()).await?;
+    Ok(true)
+}
+
+fn missing(error: &JsValue) -> bool {
+    Reflect::get(error, &"name".into()).ok().and_then(|name| name.as_string()).as_deref()
+        == Some("NotFoundError")
+}
+
 /// Removes `name` from `dir`, with all it holds; a name not there is no error.
 async fn remove(dir: &FileSystemDirectoryHandle, name: &str) -> Result<(), String> {
     let options = FileSystemRemoveOptions::new();
     options.set_recursive(true);
     match JsFuture::from(dir.remove_entry_with_options(name, &options)).await {
         Ok(_) => Ok(()),
-        Err(e)
-            if Reflect::get(&e, &"name".into())
-                .ok()
-                .and_then(|n| n.as_string())
-                .as_deref()
-                == Some("NotFoundError") =>
-        {
-            Ok(())
-        }
+        Err(e) if missing(&e) => Ok(()),
         Err(e) => Err(said(e)),
     }
 }
 
-/// Removes everything in the copies' folder but `keep` (a copy's folder and the file naming it).
-async fn sweep(root: &FileSystemDirectoryHandle, keep: &[&str]) -> Result<(), String> {
-    for (name, _) in entries(root, 4096).await? {
-        if !keep.contains(&name.as_str()) {
+/// Cleans up superseded or incomplete copies while holding the import lock.
+async fn sweep(root: &FileSystemDirectoryHandle, keep: Option<&str>) -> Result<(), String> {
+    for (name, entry) in entries(root, 4096).await? {
+        if Some(name.as_str()) != keep
+            && browser::current_copy(&name).is_some()
+            && entry.is_instance_of::<FileSystemDirectoryHandle>()
+        {
             remove(root, &name).await?;
         }
     }
     Ok(())
 }
 
-/// The copy [`CURRENT`] names, if it names one.
-async fn current_copy(root: &FileSystemDirectoryHandle) -> Option<String> {
-    let handle: FileSystemFileHandle = wait(root.get_file_handle(CURRENT))
-        .await
-        .ok()?
-        .unchecked_into();
-    let file: File = wait(handle.get_file()).await.ok()?.unchecked_into();
+/// The copy [`CURRENT`] names. An unreadable pointer must not authorize cleanup.
+async fn current_copy(root: &FileSystemDirectoryHandle) -> Result<Option<String>, String> {
+    let handle: FileSystemFileHandle = match JsFuture::from(root.get_file_handle(CURRENT)).await {
+        Ok(handle) => handle.unchecked_into(),
+        Err(error) if missing(&error) => return Ok(None),
+        Err(error) => return Err(said(error)),
+    };
+    let file: File = wait(handle.get_file()).await?.unchecked_into();
     if file.size() > browser::MAX_CURRENT as f64 {
-        return None;
+        return Ok(None);
     }
-    let text = wait(file.text()).await.ok()?.as_string()?;
-    browser::current_copy(&text).map(str::to_owned)
+    let text = wait(file.text()).await?.as_string().ok_or("the cache pointer could not be read")?;
+    Ok(browser::current_copy(&text).map(str::to_owned))
 }
 
 /// Lets a message in (a stop) once [`SLICE_MS`] of work has passed since the last time.
@@ -475,7 +494,6 @@ async fn import_from(data: JsValue) -> Result<(), Failure> {
     let folder = Reflect::get(&data, &"folder".into())
         .ok()
         .and_then(|f| f.dyn_into::<FileSystemDirectoryHandle>().ok());
-    let keep = Reflect::get(&data, &"keep".into()).is_ok_and(|k| k.is_truthy());
     let install = match (list, folder) {
         (Some(list), _) => from_list(&list),
         (None, Some(folder)) => from_folder(&folder).await.map_err(Failure::failed)?,
@@ -512,18 +530,9 @@ async fn import_from(data: JsValue) -> Result<(), Failure> {
             .await
             .map_err(Failure::failed)?
             .unchecked_into();
-    // Whatever is not the copy kept goes first: a copy of another build, what a closed tab left.
-    let kept = if keep {
-        current_copy(&root).await
-    } else {
-        None
-    };
-    let keep_names: Vec<&str> = kept
-        .iter()
-        .map(String::as_str)
-        .chain(kept.as_ref().map(|_| CURRENT))
-        .collect();
-    sweep(&root, &keep_names).await.map_err(Failure::failed)?;
+    // Keep even a stale published copy until its successor has committed.
+    let kept = current_copy(&root).await.map_err(Failure::failed)?;
+    sweep(&root, kept.as_deref()).await.map_err(Failure::failed)?;
     if let Some(free) = room().await
         && free < ROOM
     {
@@ -532,7 +541,11 @@ async fn import_from(data: JsValue) -> Result<(), Failure> {
             message: format!("{:.0}", free / 1e6),
         });
     }
-    let name = browser::copy_name(js_sys::Date::now() as u64);
+    let millis = js_sys::Date::now() as u64;
+    let mut name = browser::copy_name(millis);
+    if kept.as_deref() == Some(name.as_str()) {
+        name = browser::copy_name(millis.saturating_add(1));
+    }
     let copy_root: FileSystemDirectoryHandle =
         wait(root.get_directory_handle_with_options(&name, &options))
             .await
@@ -544,15 +557,17 @@ async fn import_from(data: JsValue) -> Result<(), Failure> {
     };
     let made = convert(install.files, &mut copy, &stamp).await;
     let ended = match made {
-        Ok(Some(report)) => {
-            // The copy is whole: it is named the current one, and the one before goes.
-            let named = write_file(&root, CURRENT, format!("{name}\n").as_bytes()).await;
-            let swept = match named {
-                Ok(()) => sweep(&root, &[&name, CURRENT]).await,
-                Err(why) => Err(why),
-            };
-            swept.map(|()| Some(report))
-        }
+        Ok(Some(report)) if !STOPPING.get() => match publish_current(&root, &name).await {
+            Ok(true) => {
+                if let Err(why) = sweep(&root, Some(&name)).await {
+                    web_sys::console::warn_1(&format!("The cache was published but old copies could not be removed: {why}").into());
+                }
+                Ok(Some(report))
+            }
+            Ok(false) => Ok(None),
+            Err(why) => Err(why),
+        },
+        Ok(Some(_)) => Ok(None),
         other => other,
     };
     match ended {

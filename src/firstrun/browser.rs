@@ -11,7 +11,7 @@ use js_sys::{Function, Object, Reflect};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{FileSystemDirectoryHandle, HtmlInputElement, MessageEvent, Worker};
 
-use super::{FirstRun, Made, Need, Press, Screen, Told, Work};
+use super::{FirstRun, Made, Press, Screen, Told, Work};
 
 /// Where a copy is made from: the name of the folder the player picked.
 pub(super) type Source = String;
@@ -74,8 +74,6 @@ struct Page {
     picked: Option<Object>,
     /// An import asked for, waiting for the worker (or a debug hold) to post it.
     queued: bool,
-    /// Whether the copy in place stays until the new one is whole.
-    keep: bool,
     input: Option<HtmlInputElement>,
     /// The worker's and the field's listeners, alive as long as the page.
     listeners: Vec<Closure<dyn FnMut(JsValue)>>,
@@ -120,7 +118,6 @@ fn field(value: &JsValue, name: &str) -> JsValue {
 /// asks for the folder.
 pub(super) fn begin(run: &mut FirstRun, _: &crate::Args) {
     run.screen = Screen::Ready;
-    PAGE.with_borrow_mut(|page| page.keep = run.need == Need::Requested);
     if let Err(why) = start_worker(run.tell.clone()) {
         run.trouble(why);
     }
@@ -352,7 +349,6 @@ fn post_queued(run: &FirstRun) {
         };
         let _ = Reflect::set(&message, &"list".into(), &list);
         let _ = Reflect::set(&message, &"folder".into(), &folder);
-        let _ = Reflect::set(&message, &"keep".into(), &page.keep.into());
         page.queued = false;
         if let Err(e) = worker.post_message(&message) {
             let why = format!("The import could not start: {}", said(&e));

@@ -68,6 +68,10 @@ function lacking() {
   if (typeof showDirectoryPicker !== "function" && !("webkitdirectory" in HTMLInputElement.prototype)) {
     lacks.push("A way to choose a folder of your computer (a directory picker or a folder upload).");
   }
+  if (!navigator.locks?.request) lacks.push("Web Locks, which keep imports in different tabs from overwriting each other.");
+  if (typeof FileSystemFileHandle !== "function" || !("createWritable" in FileSystemFileHandle.prototype)) {
+    lacks.push("A browser that can save a new copy before replacing the previous one (writable file streams).");
+  }
   if (typeof Worker !== "function") lacks.push("Web workers, which make the copy while the game keeps drawing.");
   return lacks;
 }
