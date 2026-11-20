@@ -126,6 +126,7 @@ impl MenuCore {
             (Saving::Create, Reply::Lobby { state }) => {
                 if self.sit(state) {
                     self.lobby_editor_saved(request);
+                    bevy::log::info!("lobby: creation confirmed");
                 } else if let Some(editor) = &mut self.lobby_ui.editor {
                     editor.saving = None;
                     editor.saving_until = None;

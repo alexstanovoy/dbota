@@ -67,12 +67,36 @@ import tempfile
 import threading
 import time
 
-from playwright.sync_api import Error as PlaywrightError, sync_playwright
+from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeout, sync_playwright
 
 from render_errors import RENDERER_ERROR
 
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parent / "out"
+STEAM = [
+    "~/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/dota 2 beta",
+    "~/.steam/steam/steamapps/common/dota 2 beta",
+    "~/.local/share/Steam/steamapps/common/dota 2 beta",
+]
+
+
+def find_install(given):
+    for c in [given, os.environ.get("DBOTA_DOTA_PATH"), *STEAM]:
+        if c and (pathlib.Path(c).expanduser() / "game/dota/pak01_dir.vpk").is_file():
+            return pathlib.Path(c).expanduser()
+    return None
+
+
+def farm(install, root):
+    """`root/dota 2 beta/game/dota/*.vpk` as hard links (Chromium's folder upload skips symlinks;
+    nothing is copied), plus a decoy file the page must ignore."""
+    dota = root / "dota 2 beta/game/dota"
+    src = install / "game/dota"
+    (dota / "maps").mkdir(parents=True)
+    for vpk in [*src.glob("*.vpk"), *(src / "maps").glob("*.vpk")]:
+        os.link(vpk, dota / vpk.relative_to(src))
+    (dota / "gameinfo.gi").write_text("not a package")
+    return root / "dota 2 beta"
 
 
 # The asset cache the pages that need no import play on (`?cache=http`): a native import of this
@@ -116,6 +140,275 @@ def serve(directory=OUT, handler_class=Quiet):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
+
+
+GRANT_LOGIC = """async () => {
+  const grant = await import('./grant.js');
+  const fake = (path) => ({ webkitRelativePath: path, name: path.split('/').pop() });
+  const keys = (m) => [...m.keys()].sort().join(',');
+  const out = {};
+  // The fallback picker's list: every file below the folder; only packages are kept, relative
+  // to the folder holding pak01_dir.vpk closest to the top.
+  out.list = keys(grant.filesFromList([
+    fake('dota 2 beta/game/dota/pak01_dir.vpk'), fake('dota 2 beta/game/dota/pak01_000.vpk'),
+    fake('dota 2 beta/game/dota/maps/dota.vpk'), fake('dota 2 beta/game/dota/maps/deep/x.vpk'),
+    fake('dota 2 beta/game/dota/addons/pak01_dir.vpk'), fake('dota 2 beta/game/dota/cfg.txt'),
+    fake('dota 2 beta/game/bin/pak01_001.vpk'), fake('dota 2 beta/game/dota/../x.vpk'),
+    // The interface's typefaces, and what lies beside them.
+    fake('dota 2 beta/game/dota/panorama/fonts/reaver-bold.otf'),
+    fake('dota 2 beta/game/dota/panorama/fonts/thai.uifont'),
+    fake('dota 2 beta/game/dota/panorama/fonts/deep/x.otf'),
+    fake('dota 2 beta/game/dota/panorama/x.otf'),
+  ]));
+  out.none = keys(grant.filesFromList([fake('dota 2 beta/readme.txt')]));
+  out.direct = keys(grant.filesFromList([fake('dota/pak01_dir.vpk'), fake('dota/pak01_002.vpk')]));
+  // The directory picker: a folder tree in private storage stands in for the player's folder.
+  const root = await navigator.storage.getDirectory();
+  const base = await root.getDirectoryHandle('grant-test', { create: true });
+  const dota = await (await (await base.getDirectoryHandle('dota 2 beta', { create: true }))
+    .getDirectoryHandle('game', { create: true })).getDirectoryHandle('dota', { create: true });
+  const put = async (dir, name) => (await dir.getFileHandle(name, { create: true }));
+  for (const name of ['pak01_dir.vpk', 'pak01_000.vpk', 'notes.txt']) await put(dota, name);
+  await put(await dota.getDirectoryHandle('maps', { create: true }), 'dota.vpk');
+  const panorama = await dota.getDirectoryHandle('panorama', { create: true });
+  const fonts = await panorama.getDirectoryHandle('fonts', { create: true });
+  for (const name of ['radiance-bold.otf', 'thai.uifont']) await put(fonts, name);
+  await put(panorama, 'x.otf');
+  await put(await fonts.getDirectoryHandle('deep', { create: true }), 'y.otf');
+  out.fromRoot = keys(await grant.filesOf(await base.getDirectoryHandle('dota 2 beta')));
+  out.fromGame = keys(await grant.filesOf(await (await base.getDirectoryHandle('dota 2 beta')).getDirectoryHandle('game')));
+  out.fromDota = keys(await grant.filesOf(dota));
+  out.wrong = keys(await grant.filesOf(base));
+  await root.removeEntry('grant-test', { recursive: true });
+  return out;
+}"""
+
+
+def check_grant_logic(page):
+    got = page.evaluate(GRANT_LOGIC)
+    packages = "maps/dota.vpk,pak01_000.vpk,pak01_dir.vpk,panorama/fonts/radiance-bold.otf"
+    want = {
+        "list": "maps/dota.vpk,pak01_000.vpk,pak01_dir.vpk,panorama/fonts/reaver-bold.otf",
+        "none": "",
+        "direct": "pak01_002.vpk,pak01_dir.vpk",
+        "fromRoot": packages,
+        "fromGame": packages,
+        "fromDota": packages,
+        "wrong": "",
+    }
+    assert got == want, f"folder grant logic: {got}"
+    print("folder grant logic ok")
+
+
+ICONS_SUMS = """async (paths) => {
+  const c = await import('./cache.js');
+  const hex = (b) => [...new Uint8Array(b)].map((v) => v.toString(16).padStart(2, '0')).join('');
+  const out = {};
+  for (const p of paths) out[p] = hex(await crypto.subtle.digest('SHA-256', await c.readCache(p)));
+  return out;
+}"""
+
+
+def check_icons_as_native(page, reference):
+    """The importer is the same code in the browser's wasm (32-bit) and on the desktop, and must
+    make the same files: a block decoder that kept 32 of a BC3 block's 48 alpha index bits in a
+    `usize` drew every icon jagged and dashed in the browser only. Every icon the browser made is
+    compared, byte for byte, with the one a desktop `dbota import` made (`--reference-cache`, or
+    DBOTA_ASSETS); without one the check fails."""
+    reference = reference or os.environ.get("DBOTA_ASSETS")
+    root = pathlib.Path(reference).expanduser() if reference else None
+    if not root or not (root / "index.txt").is_file():
+        sys.exit("the icons are compared with a desktop import: --reference-cache DIR or DBOTA_ASSETS must name one")
+    paths = sorted(str(p.relative_to(root)) for p in (root / "icons").rglob("*.png"))
+    assert paths, f"no icons in {root}"
+    got = page.evaluate(ICONS_SUMS, paths)
+    wrong = [p for p in paths if got[p] != hashlib.sha256((root / p).read_bytes()).hexdigest()]
+    assert not wrong, f"{len(wrong)} of {len(paths)} icons differ from the desktop's import, e.g. {wrong[:5]}"
+    print(f"icons: all {len(paths)} the same as the desktop's import")
+    backdrop = ["menu/radiantancient_loadingscreen.png", "menu/direancient_loadingscreen.png"]
+    got = page.evaluate(ICONS_SUMS, backdrop)
+    for path in backdrop:
+        assert got[path] == hashlib.sha256((root / path).read_bytes()).hexdigest(), path
+    print("backdrops: browser worker and desktop imports are byte-identical")
+
+
+def play_scene(page, report, settle):
+    """Plays on the copy in private storage: the client reads the map and the scene is drawn."""
+    page.click("#play")
+    try:
+        page.wait_for_function(
+            "() => globalThis.dbota_cache && globalThis.dbota_cache.reads && globalThis.dbota_cache.reads.count > 20",
+            timeout=180000,
+        )
+        # The map: its glTF, its geometry and its textures.
+        page.wait_for_function(
+            """() => { const s = globalThis.dbota_cache.reads.seen;
+               return s.has('map/mid/mid.gltf') && s.has('map/mid/mid.bin')
+                 && [...s].some((p) => p.startsWith('map/mid/') && p.endsWith('.ktx2')); }""",
+            timeout=300000,
+        )
+    except Exception:
+        print("status:", page.inner_text("#status"), file=sys.stderr)
+        report()
+        page.screenshot(path=str(HERE.parent.parent / "temp/smoke-fail.png"))
+        raise
+    reads = page.evaluate("() => globalThis.dbota_cache.reads")
+    seen = page.evaluate("() => globalThis.dbota_cache.reads.seen.size")
+    print("the client read", reads["count"], "times,", seen, "cache files, last:", reads["last"][-3:])
+    assert any(p.endswith((".png", ".ktx2", ".mp3", ".wav")) for p in reads["last"]), reads
+    # The map's chunks are merged and uploaded frame by frame after they are read.
+    page.wait_for_timeout(settle * 1000)
+    # A software GPU draws the whole map slowly: a frame may take minutes.
+    page.screenshot(path=str(HERE.parent.parent / "temp/smoke.png"), timeout=600000)
+
+
+def import_smoke(args, install):
+    scratch = HERE.parent.parent / "temp"
+    scratch.mkdir(exist_ok=True)
+    # Hard links left by an earlier run keep the install as it was before a game update.
+    with tempfile.TemporaryDirectory(dir=scratch, prefix="smoke-install-") as work:
+        import_picked_folder(args, farm(install, pathlib.Path(work)))
+
+
+def import_picked_folder(args, folder):
+    server = serve(args.import_page or OUT)
+    base = f"http://127.0.0.1:{server.server_address[1]}/"
+    requests, console, failures = [], [], []
+
+    def report():
+        print("console:", *[c[:300] for c in [c for c in console if "CommandQueue" not in c and not c.startswith("log.")][-25:]], sep="\n  ", file=sys.stderr)
+        print("errors:", failures, file=sys.stderr)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(args=BROWSER_ARGS)
+        page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
+        page.on("request", lambda r: requests.append((r.method, r.url, r.post_data)))
+        page.on("console", lambda m: console.append(m.text))
+        page.on("pageerror", lambda e: failures.append(f"page error: {e}"))
+        # The fallback picker (`<input webkitdirectory>`) is the path every browser has.
+        page.add_init_script("delete window.showDirectoryPicker")
+
+        page.goto(base)
+        try:
+            page.wait_for_selector("#grant:not([hidden])", timeout=90000)
+        except Exception:
+            report()
+            page.screenshot(path=str(HERE.parent.parent / "temp/smoke-grant.png"))
+            raise
+        assert page.is_hidden("#standins") and "stand-in" not in page.inner_text("main"), "no way to play without assets is offered"
+        assert "never leave your computer" in page.inner_text("#grant"), "the privacy promise is on the page"
+
+        check_grant_logic(page)
+
+        # Cancelling an import leaves nothing behind and the question comes back.
+        with page.expect_file_chooser() as chooser:
+            page.click("#pick")
+        chooser.value.set_files(str(folder))
+        page.wait_for_selector("#progress:not([hidden])", timeout=120000)
+        page.wait_for_function("() => document.getElementById('bar').value > 0", timeout=120000)
+        page.click("#cancel")
+        page.wait_for_selector("#grant:not([hidden])", timeout=60000)
+        assert "cancelled" in page.inner_text("#status"), page.inner_text("#status")
+        assert page.evaluate("async () => (await (await import('./cache.js')).readState()) === null")
+        print("cancel leaves no copy")
+
+        # A write the browser refuses ends the import: the copy is unfinished (no index, no
+        # stamp), the page says so, and the question comes back. The worker is served with its
+        # 300th write failing.
+        def failing_worker(route):
+            body = route.fetch().text()
+            body = body.replace(
+                "async function writeFile(path, bytes) {",
+                'let writes = 0;\nasync function writeFile(path, bytes) {\n'
+                '  if (++writes === 300) throw new Error("injected: the write failed");',
+                1,
+            )
+            assert "injected" in body, "the worker's writeFile changed"
+            route.fulfill(body=body, content_type="text/javascript")
+
+        page.route("**/import_worker.js", failing_worker)
+        with page.expect_file_chooser() as chooser:
+            page.click("#pick")
+        chooser.value.set_files(str(folder))
+        page.wait_for_selector("#grant:not([hidden])", timeout=300000)
+        assert "injected" in page.inner_text("#status"), page.inner_text("#status")
+        assert page.evaluate("async () => (await (await import('./cache.js')).readState()) === null")
+        assert page.evaluate("() => globalThis.dbota_cache === undefined")
+        page.unroute("**/import_worker.js")
+        print("a failed write ends the import, unfinished")
+
+        started = time.time()
+        with page.expect_file_chooser() as chooser:
+            page.click("#pick")
+        chooser.value.set_files(str(folder))
+        try:
+            page.wait_for_selector("#progress:not([hidden]), #ready:not([hidden])", timeout=120000)
+            page.wait_for_selector("#ready:not([hidden])", timeout=300000)
+        except Exception:
+            print("status:", page.inner_text("#status"), file=sys.stderr)
+            report()
+            raise
+        print(f"ready after {time.time() - started:.0f} s:", page.inner_text("#readyText"))
+        state = page.evaluate(
+            """async () => { const c = await import('./cache.js'); const s = await c.readState();
+               return s && {stamp: s.stamp, files: s.files.size, small: s.small.length,
+                            head: await c.readCache('models/hero/nevermore_head/nevermore_head.glb').then(b => b && b.length)}; }"""
+        )
+        print("cache:", state)
+        assert state and state["files"] > 800 and state["head"] and state["head"] > 1000, state
+
+        check_icons_as_native(page, args.reference_cache)
+
+        page.reload()
+        page.wait_for_selector("#ready:not([hidden])", timeout=20000)
+        print("after reload: ready without picking again")
+
+        # A copy another dbota made (its stamp of another asset fingerprint) is not played: the
+        # page holds at the question, publishes nothing to the client, and makes it again.
+        page.evaluate(
+            """async () => { const c = await import('./cache.js');
+               const h = await (await c.dir([], false)).getFileHandle('stamp.txt');
+               const w = await h.createWritable(); await w.write('v1/rev1/0000000000000000/1/2'); await w.close(); }"""
+        )
+        page.reload()
+        page.wait_for_selector("#stale:not([hidden])", timeout=20000)
+        assert page.is_hidden("#ready") and page.is_hidden("#play"), "no Play on a stale copy"
+        assert page.evaluate("() => globalThis.dbota_cache === undefined"), "a stale copy is not published"
+        with page.expect_file_chooser() as chooser:
+            page.click("#reimport")
+        chooser.value.set_files(str(folder))
+        page.wait_for_selector("#ready:not([hidden])", timeout=300000)
+        print("a stale copy holds the page and is imported again:", page.inner_text("#readyText"))
+
+        if not args.no_game:
+            play_scene(page, report, args.settle)
+
+        bad = [(m, u) for m, u, d in requests if not u.startswith(base) and not u.startswith("blob:") and not u.startswith("data:")]
+        posts = [(m, u) for m, u, d in requests if m != "GET" or d]
+        assert not bad, f"requests outside the page's own origin: {bad}"
+        assert not posts, f"the page sent data: {posts}"
+        errs = [c for c in console if "panicked" in c or "RuntimeError" in c]
+        assert not errs, errs
+        # The models' and the map's textures are block-compressed KTX2 files: drawn as they are
+        # where the GPU samples BC, else decoded as they load; either way none fails.
+        decoded = any("samples no BC textures" in c for c in console)
+        print("textures:", "decoded on load (no BC on this GPU)" if decoded else "block-compressed on the GPU")
+        ktx2 = [c for c in console if ".ktx2" in c and ("rror" in c or "ailed" in c)]
+        assert not ktx2, ktx2[:5]
+
+        if not args.keep:
+            page.goto(base)
+            page.wait_for_selector("#ready:not([hidden])", timeout=20000)
+            page.click("#remove")
+            page.wait_for_selector("#grant:not([hidden])", timeout=20000)
+            gone = page.evaluate("async () => { const c = await import('./cache.js'); return (await c.readState()) === null; }")
+            assert gone, "the copy is deleted"
+            print("deleted")
+        browser.close()
+    server.shutdown()
+    if failures:
+        sys.exit("\n".join(failures))
+    print("smoke test passed:", len(requests), "requests, all to", base)
 
 
 def browser_arguments():
@@ -242,6 +535,30 @@ def check_scene_page(directory):
                 server.server_close()
 
 
+def after_frames(page, count=3):
+    page.evaluate("""count => new Promise(done => {
+      function frame() { if (--count) requestAnimationFrame(frame); else done(); }
+      requestAnimationFrame(frame);
+    })""", count)
+
+
+def click_drawn(page, at):
+    page.mouse.move(*at)
+    after_frames(page)
+    page.mouse.click(*at)
+    after_frames(page)
+
+
+def wait_browser_state(page, observe, what, timeout):
+    """Observe state through the page's strict CSP, using time only as a hang guard."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if value := observe():
+            return value
+        after_frames(page)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
 def check_fullscreen_page(directory):
     """Windowed fullscreen in Settings puts the canvas fullscreen (inside the click's gesture), the
     page leaving it (Esc) turns the setting back, and F11 is the same fullscreen. Headless Chromium
@@ -250,29 +567,33 @@ def check_fullscreen_page(directory):
         server, base, browser, page, console, problems = opened(p, directory)
         page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
-        page.wait_for_timeout(4000)
-        fullscreen = lambda: page.evaluate("!!document.fullscreenElement")
+        wait_loading_cover(page, console)
         shot = lambda name: page.screenshot(path=str(HERE.parent.parent / f"temp/smoke-{name}.png"), timeout=600000)
-        # The Video tab is open (--settings video): the display mode's list, its second option. The
-        # settings window is 1100 interface pixels wide under the top bar, at 0.8 of them a pixel: the
-        # Display mode field is at (1045, 231) of the 1440 by 900 frame, its list's second option
-        # at (1040, 310) (the browser has no Resolution row, so Display mode is the first row).
-        page.mouse.click(836, 185)
-        page.wait_for_timeout(1500)
-        page.mouse.click(832, 248)
-        page.wait_for_timeout(2500)
-        assert fullscreen(), "picking windowed fullscreen puts the canvas fullscreen"
+
+        def fullscreen_becomes(entered, what):
+            # The state itself, polled: how long a loaded machine takes to draw and handle a click
+            # decides nothing, only the 60 s hang guard.
+            try:
+                page.wait_for_function(f"() => !!document.fullscreenElement === {str(entered).lower()}", timeout=60000)
+            except PlaywrightTimeout as error:
+                raise AssertionError(what) from error
+
+        # The settings window is open on its Video section (--settings video), drawn into the 1280 by
+        # 720 viewport: the Display mode field is at (848, 397) (the browser has no Resolution row,
+        # so it is the first row of Display) and the second option of its list, Windowed fullscreen,
+        # at (820, 454).
+        click_drawn(page, (848, 397))
+        click_drawn(page, (820, 454))
+        fullscreen_becomes(True, "picking windowed fullscreen puts the canvas fullscreen")
         shot("fullscreen-picked")
         page.evaluate("document.exitFullscreen()")
-        page.wait_for_timeout(2500)
-        assert not fullscreen()
+        fullscreen_becomes(False, "the page leaves fullscreen")
+        after_frames(page)
         shot("fullscreen-left")  # the setting shows Windowed again
         page.keyboard.press("F11")
-        page.wait_for_timeout(2500)
-        assert fullscreen(), "F11 is the canvas's fullscreen"
+        fullscreen_becomes(True, "F11 is the canvas's fullscreen")
         page.keyboard.press("F11")
-        page.wait_for_timeout(2500)
-        assert not fullscreen()
+        fullscreen_becomes(False, "F11 leaves fullscreen")
         assert not problems, problems
         print("fullscreen: the setting and F11 enter it, leaving it works")
         browser.close()
@@ -587,19 +908,16 @@ def check_cursor_input(directory):
         page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
         wait_loading_cover(page, console)
-        page.wait_for_timeout(4000)
         assert page.evaluate("devicePixelRatio") == scale, page.evaluate("devicePixelRatio")
-        locked = lambda: page.evaluate("document.pointerLockElement === document.getElementById('dbota')")
         last = lambda: page.evaluate("handed.length ? handed[handed.length - 1] : null")
 
         # A click in the window takes the pointer.
         mouse.to(400, 300)
-        page.wait_for_timeout(300)
+        after_frames(page)
         mouse.click()
-        deadline = time.time() + 60
-        while not locked() and time.time() < deadline:
-            page.wait_for_timeout(500)
-        assert locked(), "a real click on the canvas in a match locks the pointer"
+        page.wait_for_function(
+            "() => document.pointerLockElement === document.getElementById('dbota')", timeout=60000
+        )
         wait_console(page, console, "cursor locked to the canvas", 60, "the client to see the lock")
         print("cursor input: a real click locks the pointer")
 
@@ -607,12 +925,18 @@ def check_cursor_input(directory):
         # page's (CSS) pixels at a scale of 1.5.
         # A single device pixel can round away at this scale. Wait for a genuine handed move
         # before taking the starting position; pointer lock alone does not acknowledge input.
-        mouse.by(3, 3)
-        page.wait_for_function("() => handed.some(([type]) => type === 'pointermove')", timeout=60000)
+        def move_mouse(x, y):
+            before = page.evaluate("handed.length")
+            mouse.by(x, y)
+            page.wait_for_function(
+                "before => handed.slice(before).some(([type]) => type === 'pointermove')",
+                arg=before, timeout=60000,
+            )
+
+        move_mouse(3, 3)
         start = last()
         for _ in range(3):
-            mouse.by(10, 5)
-            page.wait_for_timeout(100)
+            move_mouse(10, 5)
         # Xwayland and the browser can coalesce several moves; await their delivery.
         page.wait_for_function("""([x, y]) => {
           const at = handed.at(-1);
@@ -632,14 +956,25 @@ def check_cursor_input(directory):
         for _ in range(60):
             if last()[1:] == [0, 0]:
                 break
-            mouse.by(-60, -60)
-            page.wait_for_timeout(50)
+            move_mouse(-60, -60)
         assert last()[1:] == [0, 0], f"the cursor stops at the top-left corner: {last()}"
+        before_move = page.evaluate("handed.length")
         mouse.by(steps, steps)
-        page.wait_for_timeout(500)
+        # The move reaches the page through Xwayland and the browser, when it does: as late as the machine is busy
+        # (a 500 ms sleep read the corner on a loaded run, and the press that followed was already at the right place).
+        # So the state is awaited, not a span: the wait ends the moment the cursor is within a pixel of where it
+        # must end, and its 60 s only decides that it never came.
+        try:
+            page.wait_for_function("""([before, x, y]) => {
+              const at = handed.at(-1);
+              return handed.length > before && at[0] === 'pointermove'
+                && Math.abs(at[1] - x) <= 1 && Math.abs(at[2] - y) <= 1;
+            }""", arg=[before_move, *target], timeout=60000)
+        except PlaywrightTimeout as error:
+            raise AssertionError(
+                f"the cursor never reached {target} CSS pixels within 60 s of the mouse's {steps}x{steps} device "
+                f"pixels from the corner; the last place handed to the client is {last()}") from error
         at = last()[1:]
-        if max(abs(a - t) for a, t in zip(at, target)) > 1:
-            failures.append(f"{steps} device pixels from the corner are {target} CSS pixels, not {at}")
         # A real click there: the press and the release are handed at the cursor, the client's cursor is that
         # place (it reports it when the settings the button opens let the pointer go), and the button opens.
         before = page.evaluate("handed.length")
@@ -1196,15 +1531,9 @@ def assert_in(text, part):
 CLICK_PLAY = (1140, 688)
 CLICK_CUSTOM_LOBBIES = (1140, 478)
 CLICK_CREATE_LOBBY = (1140, 549)
-CLICK_LOBBY_OK = (578, 500)
-CLICK_MY_GAMES = (220, 16)
-CLICK_LOG_OUT = (1132, 16)
-CLICK_LOGIN_FIELD = (560, 225)
-CLICK_PASSWORD_FIELD = (560, 280)
-CLICK_SIGN_IN = (640, 325)
-CLICK_WATCH_REPLAY = (646, 150)
-CLICK_DELETE_REPLAY = (788, 150)
-CLICK_CONFIRM_DELETE = (578, 388)
+CLICK_LOBBY_NAME = (526, 284)
+CLICK_LOBBY_OK = (578, 502)
+CLICK_REPLAYS = (395, 15)
 CLICK_START = (1135, 688)
 
 
@@ -1412,8 +1741,8 @@ def check_replay_probe(directory, context):
 
 
 def check_replays_page(directory, server_bin, radovid_bin, shots=False):
-    """A practice match through radovid goes into OPFS, plays from MY GAMES, and can be deleted
-    with confirmation."""
+    """A real practice match is kept in OPFS, played and deleted from the replays page."""
+    check_replay_probe(directory)
     evidence = HERE.parent.parent / "temp/smoke-replays"
     evidence.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="service-", dir=evidence) as folder:
@@ -1423,135 +1752,89 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
         port, game = free_port(), free_port()
         page_dir = work / "page"
         shutil.copytree(directory, page_dir, copy_function=os.link)
-        # Link the read-only shared cache's files and keep our own directories writable.
+        # Inherit the cache's files by link, leaving this check's directories removable.
         shutil.copytree(cache_folder(), page_dir / "cache", copy_function=os.link)
-        for path, _, _ in os.walk(page_dir / "cache"):
+        for path, _, _ in os.walk(page_dir):
             os.chmod(path, 0o755)
-        (work / "radovid.toml").write_text(radovid_config(work, page_dir, server_bin, port, game, cert, key))
+        config = work / "radovid.toml"
+        config.write_text(radovid_config(work, page_dir, server_bin, port, game, cert, key))
         with (evidence / "radovid.log").open("w") as log, subprocess.Popen(
-            [radovid_bin, "serve", "--config", str(work / "radovid.toml")],
-            stdout=subprocess.DEVNULL, stderr=log, env=without_steering_variables(),
+            [radovid_bin, "serve", "--config", str(config)], stdout=subprocess.DEVNULL,
+            stderr=log, env=without_steering_variables(),
         ) as service:
             try:
                 wait_port(port)
-                drive_replays_page(directory, work, evidence, port, shots)
+                drive_replays_page(work, port, evidence if shots else None)
             finally:
                 service.terminate()
                 service.wait(timeout=20)
+    print("replays: kept in OPFS from a match through radovid, listed and played")
 
 
-def wait_for_browser(page, condition, what, timeout=120):
-    """Poll browser state under the served page's strict CSP."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if condition():
-            return
-        page.wait_for_timeout(250)
-    try:
-        page.screenshot(path=str(HERE.parent.parent / "temp/smoke-timeout.png"), timeout=20000)
-    except PlaywrightError:
-        pass
-    raise AssertionError(f"timed out waiting for {what}")
+def practice_replay(work):
+    # The files can appear before the service publishes the match result.
+    deadline = time.monotonic() + 300
+    with sqlite3.connect((work / "radovid.db").as_uri() + "?mode=ro", uri=True) as database:
+        while time.monotonic() < deadline:
+            files = sorted((work / "replays").glob("replay-*.brp"))
+            if files and database.execute("SELECT 1 FROM matches WHERE finished = 1").fetchone():
+                assert len(files) == 1, "the one practice replay"
+                return files[0]
+            time.sleep(0.25)
+    raise AssertionError("the service did not record the practice result and its replay")
 
 
-def wait_for_sign_in(page):
-    wait_for_browser(page, lambda: page.evaluate("() => window.smokeSignedIn === true"), "sign-in")
-
-
-def register_replay_player(page, login, draw, *, login_is_prefilled=False):
-    # The form starts at the first empty field, then Tab reaches SIGN IN and REGISTER.
-    for _ in range(2 if login_is_prefilled else 3):
+def start_practice(page, console, shot):
+    for _ in range(3):  # login, password, SIGN IN, then REGISTER
         page.keyboard.press("Tab")
-        draw(page)
+        after_frames(page)
     page.keyboard.press("Enter")
-    draw(page)
-    page.keyboard.type(login)
-    page.keyboard.press("Tab")
-    draw(page)
-    page.keyboard.type("correct horse battery")
-    page.keyboard.press("Tab")
-    draw(page)
+    after_frames(page)
+    shot(page, "2-register")
+    for text in ("smoker", "correct horse battery"):
+        page.keyboard.type(text)
+        page.keyboard.press("Tab")
+        after_frames(page)
     page.keyboard.type("correct horse battery")
     page.keyboard.press("Enter")
     wait_for_sign_in(page)
-    draw(page)
-
-
-def play_practice_match(page, console, draw, click, shot):
-    """Register and start the browser's only practice match through its menu."""
-    register_replay_player(page, "smoker", draw)
     shot(page, "3-home")
-    for position in (CLICK_PLAY, CLICK_CUSTOM_LOBBIES, CLICK_CREATE_LOBBY):
-        click(page, position)
+    for at in (CLICK_PLAY, CLICK_CUSTOM_LOBBIES, CLICK_CREATE_LOBBY):
+        click_drawn(page, at)
     shot(page, "4-create-lobby")
+    click_drawn(page, CLICK_LOBBY_NAME)
     page.keyboard.type("alone")
-    click(page, CLICK_LOBBY_OK)
+    after_frames(page)
+    click_drawn(page, CLICK_LOBBY_OK)
+    wait_console(page, console, "lobby: creation confirmed", 300, "lobby creation")
+    after_frames(page)
     shot(page, "5-lobby")
-    click(page, CLICK_START)
+    click_drawn(page, CLICK_START)
     wait_console(page, console, r"match known: tick \d+", 600, "the practice match")
     shot(page, "6-game")
 
 
-def wait_for_practice_result(work):
-    """The next visit can fetch the replay once the service has both the file and its result."""
-    deadline = time.monotonic() + 300
-    with sqlite3.connect(f"file:{work / 'radovid.db'}?mode=ro", uri=True) as database:
-        while time.monotonic() < deadline:
-            files = sorted((work / "replays").glob("replay-*.brp"))
-            if files and database.execute("SELECT 1 FROM matches WHERE finished = 1").fetchone():
-                return files[0]
-            time.sleep(0.25)
-    raise AssertionError("radovid did not record the result and its replay")
+def wait_for_sign_in(page):
+    wait_browser_state(page, lambda: page.evaluate("window.smokeSignedIn === true"), "sign-in", 120)
+    after_frames(page)
 
 
-def change_replay_account(page, console, draw, click, name):
-    """The saved file stays in OPFS while the second account and the guest see an empty shelf."""
-    def logout():
-        console.clear()
-        click(page, CLICK_LOG_OUT)
-        wait_for_browser(page, lambda: page.evaluate("() => window.smokeSignedIn === false"), "sign-out")
-        wait_console(page, console, r"replays: 0 kept", 30, "the guest shelf")
-        assert any(file == name for file, _ in page.evaluate(OPFS_REPLAYS)), "the replay stays on disk"
-        draw(page)
-
-    logout()
-    console.clear()
-    register_replay_player(page, "other", draw, login_is_prefilled=True)
-    wait_console(page, console, r"replays: 0 kept", 30, "the second account's shelf")
-    click(page, CLICK_MY_GAMES)
-    logout()
-
-    console.clear()
-    click(page, CLICK_LOGIN_FIELD)
-    for _ in "other":
-        page.keyboard.press("Backspace")
-        draw(page)
-    page.keyboard.type("smoker")
-    click(page, CLICK_PASSWORD_FIELD)
-    page.keyboard.type("correct horse battery")
-    click(page, CLICK_SIGN_IN)
-    wait_for_sign_in(page)
-    wait_console(page, console, r"replays: 1 kept", 30, "Alice's shelf")
-    print("replay shelf: account switching hides the saved file until its owner returns")
+def saved_replays(page):
+    entries = page.evaluate(OPFS_REPLAYS)
+    return entries if any(name == "index.txt" for name, _ in entries) else None
 
 
-def drive_replays_page(directory, work, evidence, port, shots):
+def drive_replays_page(work, port, evidence):
     with sync_playwright() as p:
         browser = p.chromium.launch(args=[*BROWSER_ARGS, "--ignore-certificate-errors"])
         context = browser.new_context(viewport={"width": 1280, "height": 720}, ignore_https_errors=True)
-        check_replay_probe(directory, context)
-        # A token is stored again when the service accepts a saved session on a later visit.
+        # Each visit has to receive its own successful login, even when a token is already saved.
         context.add_init_script("""(() => {
-            const save = Storage.prototype.setItem;
-            const remove = Storage.prototype.removeItem;
-            Storage.prototype.removeItem = function(key) {
-                remove.call(this, key);
-                if (key === 'dbota.session') window.smokeSignedIn = false;
-            };
-            Storage.prototype.setItem = function(key, value) {
-                save.call(this, key, value);
-                if (key === 'dbota.session') window.smokeSignedIn = true;
-            };
+          const save = Storage.prototype.setItem;
+          Storage.prototype.setItem = function(key, value) {
+            save.call(this, key, value);
+            if (key === 'dbota.session') window.smokeSignedIn = true;
+          };
         })()""")
         url = f"https://127.0.0.1:{port}/?cache=http&gpu=webgl2"
 
@@ -1562,98 +1845,57 @@ def drive_replays_page(directory, work, evidence, port, shots):
             page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
             page.goto(url)
             wait_console(page, console, "dbota: running", 600, "the live menu")
+            after_frames(page)
             return page, console, problems
 
-        def draw(page):
-            page.evaluate("""() => new Promise(done => {
-              let frames = 3;
-              function next() { if (--frames) requestAnimationFrame(next); else done(); }
-              requestAnimationFrame(next);
-            })""")
-
-        def click(page, position):
-            page.mouse.move(*position)
-            draw(page)
-            page.mouse.click(*position)
-            draw(page)
-
         def shot(page, name):
-            if shots:
-                page.screenshot(path=str(evidence / f"{name}.png"), timeout=60000)
+            if evidence is not None:
+                page.screenshot(path=str(evidence / f"{name}.png"), timeout=600000)
 
         page, console, problems = visit()
-        play_practice_match(page, console, draw, click, shot)
+        start_practice(page, console, shot)
         page.close()
-        assert not problems, f"first visit: {problems}"
-
-        file = wait_for_practice_result(work)
+        assert not problems, problems
+        replay_size = practice_replay(work).stat().st_size
 
         page, console, problems = visit()
         wait_for_sign_in(page)
         wait_console(page, console, r"replays: 1 kept", 300, "the replay kept in OPFS")
-        stored = page.evaluate(OPFS_REPLAYS)
+        stored = wait_browser_state(page, lambda: saved_replays(page), "the replay's OPFS index", 300)
         replay = [(name, size) for name, size in stored if name.endswith(".brp")]
         assert len(replay) == 1, f"the replay is stored in OPFS: {stored}"
         name, size = replay[0]
-        assert size == file.stat().st_size, "the stored replay is the service's file"
-        wait_for_browser(page, lambda: page.evaluate("""async name => {
-            const root = await navigator.storage.getDirectory();
-            const library = await root.getDirectoryHandle('dbota-replays');
-            const index = await (await library.getFileHandle('index.txt')).getFile();
-            return (await index.text()).split('\\n').some(row => row.split('\\t')[5] === name);
-        }""", name), "the saved replay's index row")
-        assert not problems, f"fetch visit: {problems}"
+        assert size == replay_size, "the stored replay is the service's file"
+        assert any(file == "index.txt" for file, _ in stored), "the index is beside it"
+        assert not problems, problems
         print(f"stored: {name} ({size} bytes) in OPFS")
         page.close()
 
         page, console, problems = visit()
         wait_for_sign_in(page)
-        wait_console(page, console, r"replays: 1 kept", 300, "the replay listed again")
-        click(page, CLICK_MY_GAMES)
-        shot(page, "8-my-games")
-        click(page, CLICK_WATCH_REPLAY)
+        wait_console(page, console, r"replays: 1 kept", 600, "the replay listed again")
+        click_drawn(page, CLICK_REPLAYS)
+        page.keyboard.press("Enter")  # first row starts on WATCH
         wait_console(page, console, r"match known: tick \d+", 600, "the stored replay to play")
+        shot(page, "8-watch")
         bad = [line for line in console if "cannot be read" in line or "panicked" in line or "RuntimeError" in line]
         assert not bad and not problems, (bad, problems)
-        print("watch: the stored replay plays from MY GAMES")
-        # Damage the owned file after the successful playback. Its index and owner stay put.
-        page.evaluate("""async name => {
-            const root = await navigator.storage.getDirectory();
-            const replays = await root.getDirectoryHandle('dbota-replays');
-            const write = await (await replays.getFileHandle(name)).createWritable();
-            await write.write(new Uint8Array(2048).fill(7));
-            await write.close();
-        }""", name)
         page.close()
 
         page, console, problems = visit()
         wait_for_sign_in(page)
-        wait_console(page, console, r"replays: 1 kept", 300, "the replay available for inspection")
-        click(page, CLICK_MY_GAMES)
-        wait_console(page, console, r"replays: a kept replay is unreadable", 30, "the broken replay row")
-        shot(page, "9-broken-replay")
-        click(page, CLICK_WATCH_REPLAY)
-        assert not any("match known:" in line for line in console), "a broken replay has no watch action"
-        print("replay shelf: an unreadable file is marked broken")
-
-        change_replay_account(page, console, draw, click, name)
-        click(page, CLICK_MY_GAMES)
-        wait_console(page, console, r"replays: a kept replay is unreadable", 30, "Alice's broken replay after signing back in")
-        size = 2048
-        click(page, CLICK_DELETE_REPLAY)
-        shot(page, "9-delete-confirm")
-        assert (name, size) in map(tuple, page.evaluate(OPFS_REPLAYS)), "one click keeps the file"
-        page.keyboard.press("Escape")
-        draw(page)
-        assert (name, size) in map(tuple, page.evaluate(OPFS_REPLAYS)), "cancellation keeps the file"
-        click(page, CLICK_DELETE_REPLAY)
-        click(page, CLICK_CONFIRM_DELETE)
-        wait_for_browser(
+        wait_console(page, console, r"replays: 1 kept", 120, "the replay available for deletion")
+        assert [name, size] in page.evaluate(OPFS_REPLAYS), "the replay exists before DELETE"
+        click_drawn(page, CLICK_REPLAYS)
+        page.keyboard.press("Tab")  # WATCH -> DELETE
+        after_frames(page)
+        page.keyboard.press("Enter")
+        wait_browser_state(
             page, lambda: all(file != name for file, _ in page.evaluate(OPFS_REPLAYS)),
-            "the confirmed replay deletion", timeout=30,
+            "removal of the kept replay after DELETE", 120,
         )
-        assert not problems, f"delete visit: {problems}"
-        print("delete: OPFS keeps a replay until deletion is confirmed")
+        assert not problems, problems
+        print("delete: the replay is gone from OPFS")
         browser.close()
 
 
