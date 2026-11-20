@@ -260,10 +260,37 @@ fn fragile_mark_is_drawn(client: &Client, id: EntityId) -> bool {
     })
 }
 
-/// A melee hero sees a pair on a courier and two plain pips on a ward.
+#[test]
+fn a_live_spectator_watching_pudge_sees_plain_fragile_pips() {
+    let mut game = super::fog_pov::Spectated::hero("2", HeroId::PUDGE);
+    game.cheat(Cheat::AllVision { on: true });
+    game.next_side(Team::Radiant);
+    let courier = game
+        .client
+        .view()
+        .units
+        .iter()
+        .find(|unit| unit.kind == UnitKind::Courier && unit.team == Team::Dire)
+        .expect("Pudge's team can see the enemy courier")
+        .id;
+    game.client.core_mut().pinned = Some(bota_client_core::Pin::Unit(courier));
+    game.wait(
+        "the enemy courier bar drawn for the spectator",
+        |_, client| bar(client, courier).is_some(),
+    );
+    assert_eq!(
+        game.client.core().my_slot,
+        None,
+        "a live spectator has no seat"
+    );
+    assert_eq!(blocks(&game.client, courier), Some((2, 2)));
+    assert!(!fragile_mark_is_drawn(&game.client, courier));
+}
+
+/// A melee hero sees two plain pips on the allied courier and on a ward.
 /// Their bars keep Dota's sizes (a courier's 50 by 6, a ward's 40 by 5).
 #[test]
-fn a_melee_hero_sees_plain_ward_pips_and_paired_courier_pips() {
+fn a_melee_hero_sees_plain_pips_on_a_ward_and_its_own_courier() {
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::PUDGE, &[]);
     client.stand_at(MID);
@@ -313,9 +340,10 @@ fn a_melee_hero_sees_plain_ward_pips_and_paired_courier_pips() {
     assert_eq!((w, h), (50.0 * crate::ui::DOTA, 6.0 * crate::ui::DOTA));
     assert_eq!(
         blocks(&client, courier),
-        Some((1, 1)),
-        "a courier's paired block"
+        Some((2, 2)),
+        "allied courier pips"
     );
+    assert!(!fragile_mark_is_drawn(&client, courier));
 }
 
 /// The width each block of a unit's bar is drawn, nought for one hidden.

@@ -682,11 +682,11 @@ fn bar_ticks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
 fn bar_blocks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let mut told = Vec::new();
     let core = &c.session.0;
-    let melee = core
+    let melee_team = core
         .view()
-        .is_some_and(|view| crate::bars::melee_viewer(core, view));
+        .and_then(|view| crate::bars::melee_viewer_team(core, view));
     for (e, w, live) in shown_bars(c) {
-        let Some(layout) = crate::bars::hit_blocks(live, melee) else {
+        let Some(layout) = crate::bars::hit_blocks(live, melee_team) else {
             continue;
         };
         let parts: Vec<(&Node, &Visibility)> = c

@@ -1,14 +1,15 @@
 //! Health bars over units, Dota's way: screen-space bars that keep their
 //! size, the health just lost trailing off, a small mark every 250 health
 //! and a big one every 1000 (`dota_health_per_vertical_marker`), level and
-//! name; health counted in hits as pips, paired for Fragile units when
-//! viewed by a melee hero.
+//! name; health counted in hits as pips, grouped for enemy Fragile units
+//! when viewed by a melee hero.
 //! Also the numbers and words that rise off units.
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bota_client_core::{Floater, FloaterKind};
+use bota_core::{HitCount, QUARTERS_A_PIP, Striker};
 use bota_proto::{Team, UnitKind, UnitView, WorldView};
 
 use crate::config::Settings;
@@ -120,11 +121,11 @@ pub fn tick_marks(max_hp: i32, w: f32) -> Vec<(f32, bool)> {
         .collect()
 }
 
-pub(crate) fn melee_viewer(core: &bota_client_core::App, view: &WorldView) -> bool {
-    core.my_slot
-        .and_then(|slot| view.player(slot))
-        .and_then(|player| bota_core::hero_def(player.hero))
-        .is_some_and(|hero| hero.unit.projectile_speed.is_none())
+/// The team of the local melee hero. A spectator's camera can follow any player.
+pub(crate) fn melee_viewer_team(core: &bota_client_core::App, view: &WorldView) -> Option<Team> {
+    let player = view.player(core.my_slot?)?;
+    let hero = bota_core::hero_def(player.hero)?;
+    hero.unit.projectile_speed.is_none().then_some(player.team)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -133,19 +134,27 @@ pub(crate) struct HitBlocks {
     pips_per_hit: usize,
 }
 
-/// A pip is a ranged hero's hit. A melee hero sees Fragile pips in pairs.
-pub(crate) fn hit_blocks(live: &UnitView, melee: bool) -> Option<HitBlocks> {
+/// Group the target's pips by how much the local melee hero's attack takes.
+pub(crate) fn hit_blocks(live: &UnitView, melee_team: Option<Team>) -> Option<HitBlocks> {
     use bota_proto::Fixed;
     let count = bota_core::kind_def(live.kind).hit_count?;
     let max = Fixed::from_int(live.max_hp.clamp(1, Fixed::MAX.to_int()));
-    let pip = count.taken(bota_core::Striker::RangedHero, max).to_int();
-    let pips = (live.max_hp.max(1) / pip.max(1)).max(1) as usize;
-    let paired = melee
+    let pip = match count {
+        HitCount::Pips { .. } => QUARTERS_A_PIP,
+        HitCount::Hits { .. } => count.taken(Striker::RangedHero, max).to_int().max(1),
+    };
+    let pips = (live.max_hp.max(1) / pip).max(1) as usize;
+    let pips_per_hit = if melee_team.is_some_and(|team| team != live.team)
         && live.hit_health.is_some()
-        && matches!(count, bota_core::HitCount::Pips { fragile: true });
+        && matches!(count, HitCount::Pips { fragile: true })
+    {
+        (count.taken(Striker::MeleeHero, max).to_int() / pip).max(1) as usize
+    } else {
+        1
+    };
     Some(HitBlocks {
         pips: pips.min(MAX_SEGMENTS),
-        pips_per_hit: if paired { 2 } else { 1 },
+        pips_per_hit,
     })
 }
 
@@ -153,7 +162,7 @@ pub(crate) struct HitBlock {
     pub left: f32,
     pub width: f32,
     pub fill: f32,
-    pub paired: bool,
+    pub shaded: bool,
 }
 
 impl HitBlocks {
@@ -168,7 +177,7 @@ impl HitBlocks {
                 width: pips as f32 * (pip_width + SEGMENT_GAP) - SEGMENT_GAP,
                 fill: ((health - first as f32 * pip_health) / (pips as f32 * pip_health))
                     .clamp(0.0, 1.0),
-                paired: pips == 2,
+                shaded: pips > 1,
             }
         })
     }
@@ -525,8 +534,8 @@ fn lay_segments(
             ))
             .id();
         bar.segments.push(fill);
-        if block.paired {
-            // Keep the shaded pair in place as health recedes across it.
+        if block.shaded {
+            // Keep the shading in place as health recedes across the group.
             let edge = Color::srgba(0.0, 0.0, 0.0, 0.8);
             let center = Color::srgba(0.0, 0.0, 0.0, 0.48);
             commands.spawn((
@@ -603,7 +612,7 @@ fn bars(
     let (Some(view), Some(layer)) = (core.view(), &p.layer) else {
         return;
     };
-    let melee = melee_viewer(core, view);
+    let melee_team = melee_viewer_team(core, view);
     let layer = layer.0;
     let (camera_entity, camera) = *p.camera;
     let Ok(cam_gt) = p.transforms.compute_global_transform(camera_entity) else {
@@ -669,7 +678,7 @@ fn bars(
             bar,
             live,
             (w, h),
-            hit_blocks(live, melee),
+            hit_blocks(live, melee_team),
             color,
         );
         lay_ticks(&mut p.commands, bar, live.max_hp, (w, h));
