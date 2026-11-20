@@ -1059,6 +1059,12 @@ def check_fonts_page(directory):
     server.shutdown()
 
 
+def assert_launch_labels_hidden(page):
+    assert page.is_hidden("#booting"), "the page's loading label covers the game canvas"
+    assert page.is_hidden("#starting"), "the startup label covers the game canvas"
+    assert page.is_hidden("#gate"), "the asset gate covers the game canvas"
+
+
 def check_startup_page(directory):
     """The page picks the client the browser can draw with, and a start that fails says so on the
     page: no graphics, a renderer that cannot be made (offering the WebGL2 client), no memory."""
@@ -1081,7 +1087,8 @@ def check_startup_page(directory):
         for page, console, problems in run(query):
             wait_console(page, console, "dbota: drawing with " + api, 60, f"the {api} client")
             wait_console(page, console, "dbota: running", 600, f"the {api} client's first frame")
-            assert page.is_hidden("#gate") and not problems, problems
+            assert_launch_labels_hidden(page)
+            assert not problems, problems
             print(f"{api}: the client runs")
     for page, console, problems in run("?cache=http", NO_GRAPHICS):
         failed(page, "does not let the page use the graphics card")

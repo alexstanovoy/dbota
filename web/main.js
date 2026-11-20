@@ -200,6 +200,7 @@ function downloaded(url, onBytes, onBusy) {
 const sayStarting = (text) => ($("starting").textContent = text);
 
 async function startGame() {
+  $("booting").hidden = true;
   $("gate").hidden = true;
   $("starting").hidden = false;
   sayStarting("Starting the game...");
