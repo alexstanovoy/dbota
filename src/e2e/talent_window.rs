@@ -372,8 +372,9 @@ fn a_talent_already_learned_is_refused_as_such() {
 
 #[test]
 fn the_attribute_bonus_asked_for_below_its_level_is_refused_with_the_level_it_needs() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.ready_with_match_held(&server);
     client.click_named("talent button");
     let row = {
         let world = client.world_mut();
@@ -428,8 +429,9 @@ fn the_window_hovered_over_the_button_is_a_tooltip_that_learns_nothing() {
 
 #[test]
 fn the_dead_hero_refuses_pointer_and_key_learning_without_sending() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.ready_with_match_held(&server);
     client.cheat(Cheat::Levels { count: 9 });
     client.until("the level-ten choices open", |c| {
         learnable(c).has(TalentSlot(0))
@@ -523,8 +525,9 @@ fn assert_inside_window(client: &mut Client) {
 
 #[test]
 fn the_talent_window_fits_at_1024_by_600() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--window", "1024x600"]);
+    client.ready_with_match_held(&server);
     client.click_named("talent button");
     assert_inside_window(&mut client);
     assert!(crate::talents::overflowing(client.world_mut()).is_empty());
@@ -532,8 +535,9 @@ fn the_talent_window_fits_at_1024_by_600() {
 
 #[test]
 fn the_talent_window_fits_at_double_interface_scale() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--set", "ui_scale=2"]);
+    client.ready_with_match_held(&server);
     client.click_named("talent button");
     assert_inside_window(&mut client);
     assert!(crate::talents::overflowing(client.world_mut()).is_empty());
@@ -541,12 +545,13 @@ fn the_talent_window_fits_at_double_interface_scale() {
 
 #[test]
 fn the_open_shop_leaves_every_talent_choice_accessible_at_1024_by_600() {
-    let server = Server::start(1, &[]);
+    let server = Server::for_hud(1, &[]);
     let mut client = Client::join(
         &server,
         HeroId::SHADOW_FIEND,
         &["--window", "1024x600", "--set", "ui_scale=2"],
     );
+    client.ready_with_match_held(&server);
     client
         .world_mut()
         .resource_mut::<crate::input::Panels>()
