@@ -68,11 +68,13 @@ pub struct Simulation {
     /// drew.
     started: Vec<(Arc<Effect>, u32)>,
     stage_started: Vec<(Arc<Effect>, u32)>,
-    /// Actual instance contributions to frames, including retained ending tails.
-    #[cfg(any(test, feature = "test-support"))]
+    draw_counts: Option<DrawCounts>,
+}
+
+#[derive(Default)]
+struct DrawCounts {
     drawn: Vec<(Arc<Effect>, u32)>,
-    #[cfg(any(test, feature = "test-support"))]
-    drawn_endings: Vec<(Arc<Effect>, u32)>,
+    endings: Vec<(Arc<Effect>, u32)>,
 }
 
 impl Simulation {
@@ -88,22 +90,23 @@ impl Simulation {
         self.stage_owed = 0.0;
     }
 
+    /// Opt in to collecting per-effect frame counts for a host that needs draw observations.
+    pub fn record_draws(&mut self) {
+        self.draw_counts.get_or_insert_with(DrawCounts::default);
+    }
+
     /// How many instance frames actually contributed cards, lights or models.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn drawn(&self, effect: &Arc<Effect>) -> u32 {
-        self.drawn
-            .iter()
-            .find(|(held, _)| Arc::ptr_eq(held, effect))
-            .map_or(0, |(_, count)| *count)
+        self.draw_counts
+            .as_ref()
+            .map_or(0, |counts| count_of(&counts.drawn, effect))
     }
 
     /// Actual contributions made after an emitter ended, while its tails remained.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn drawn_endings(&self, effect: &Arc<Effect>) -> u32 {
-        self.drawn_endings
-            .iter()
-            .find(|(held, _)| Arc::ptr_eq(held, effect))
-            .map_or(0, |(_, count)| *count)
+        self.draw_counts
+            .as_ref()
+            .map_or(0, |counts| count_of(&counts.endings, effect))
     }
 
     /// How many times `effect` was started.
@@ -111,14 +114,12 @@ impl Simulation {
         count_of(&self.started, effect)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn started_on_stage(&self, effect: &Arc<Effect>) -> u32 {
         count_of(&self.stage_started, effect)
     }
 
     /// Leaves out the cards of the systems of `effect`'s playing instances whose path contains
     /// `matching` (none when it is empty): presentation only, the simulation runs on.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn hide_systems(&mut self, effect: &Arc<Effect>, matching: &str) {
         let hidden: Vec<usize> = effect
             .defs
@@ -135,7 +136,6 @@ impl Simulation {
     }
 
     /// The playing instances of `effect`.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn instances_of<'a>(
         &'a self,
         effect: &'a Arc<Effect>,
@@ -147,7 +147,6 @@ impl Simulation {
     }
 
     /// Live simulation instances paired with their opaque, generation-checked handles.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn instances(&self) -> impl Iterator<Item = (Handle, &Instance)> {
         self.slots
             .iter()
@@ -260,21 +259,10 @@ impl Simulation {
         }
     }
 
-    /// Steps authored-effect fixtures without gathering a render frame.
-    #[cfg(feature = "test-support")]
-    pub fn advance_for_test(
-        &mut self,
-        dt: f32,
-        stage_dt: Option<f32>,
-        ground: Option<HeightAt<'_>>,
-    ) {
-        self.advance(dt, stage_dt, ground);
-    }
-
     /// Steps every effect by `dt`, on the compute threads when there are enough of them that
     /// the effects take turns on no single thread (each effect steps alone: the order they step
     /// in changes nothing), and retires the ones that are finished.
-    pub(crate) fn advance(&mut self, dt: f32, stage_dt: Option<f32>, ground: Option<HeightAt<'_>>) {
+    pub fn advance(&mut self, dt: f32, stage_dt: Option<f32>, ground: Option<HeightAt<'_>>) {
         self.clock += dt;
         // The portrait's effects: what they are owed, at most STAGE_OWED_MAX, in steps of the
         // portrait's frame, so no step outruns what the simulation steps in one; on no ground,
@@ -440,17 +428,10 @@ impl Simulation {
             let Some((eye, _)) = view_of(instance).filter(|_| permitted(handle, instance)) else {
                 continue;
             };
-            #[cfg(any(test, feature = "test-support"))]
-            let before = (
-                playing
-                    .lists
-                    .iter()
-                    .chain(&playing.stage_lists)
-                    .map(Vec::len)
-                    .sum::<usize>(),
-                frame.lights.len(),
-                frame.placed.len(),
-            );
+            let before = playing
+                .draw_counts
+                .as_ref()
+                .map(|_| contribution_counts(&playing.lists, &playing.stage_lists, frame));
             // Out of view an effect draws no cards; its lights may still reach into it.
             let mut socket = None;
             if !instance.portrait {
@@ -487,23 +468,14 @@ impl Simulation {
                 let ground = if instance.portrait { None } else { height };
                 draw(instance, &eye, ground, lists, socket);
             }
-            #[cfg(any(test, feature = "test-support"))]
-            if before
-                != (
-                    playing
-                        .lists
-                        .iter()
-                        .chain(&playing.stage_lists)
-                        .map(Vec::len)
-                        .sum::<usize>(),
-                    frame.lights.len(),
-                    frame.placed.len(),
-                )
+            if let Some(before) = before
+                && before != contribution_counts(&playing.lists, &playing.stage_lists, frame)
+                && let Some(counts) = &mut playing.draw_counts
             {
                 if instance.ending() {
-                    count_contribution(&mut playing.drawn_endings, &instance.effect);
+                    count_contribution(&mut counts.endings, &instance.effect);
                 }
-                count_contribution(&mut playing.drawn, &instance.effect);
+                count_contribution(&mut counts.drawn, &instance.effect);
             }
         }
         let world_lists = playing.lists.iter().map(|list| (list, false));
@@ -525,7 +497,18 @@ impl Simulation {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+fn contribution_counts(
+    world: &[Vec<Quad>],
+    stage: &[Vec<Quad>],
+    frame: &ParticleFrame,
+) -> (usize, usize, usize) {
+    (
+        world.iter().chain(stage).map(Vec::len).sum(),
+        frame.lights.len(),
+        frame.placed.len(),
+    )
+}
+
 fn count_contribution(counts: &mut Vec<(Arc<Effect>, u32)>, effect: &Arc<Effect>) {
     if let Some((_, count)) = counts
         .iter_mut()

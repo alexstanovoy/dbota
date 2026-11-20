@@ -499,12 +499,12 @@ fn run_command(command: &Command, cache: &std::path::Path) -> AppExit {
     }
 }
 
-/// The client's version: its package version and the commit it was built from (build.rs).
+/// The client's package version and the revision supplied by distribution builds.
 pub fn version() -> String {
     format!(
         "dbota {} ({})",
         env!("CARGO_PKG_VERSION"),
-        env!("DBOTA_BUILD")
+        option_env!("DBOTA_BUILD").unwrap_or("dev")
     )
 }
 

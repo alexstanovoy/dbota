@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/dbota_import", "crates/dbota_import_web", "crates/dbota_particles"]
+members = [".", "crates/dbota_bevy", "crates/dbota_import", "crates/dbota_import_web", "crates/dbota_particles"]
 # Root builds and checks cover every client crate except the browser-only importer module.
 default-members = [".", "crates/dbota_import", "crates/dbota_particles"]
 
@@ -9,14 +9,22 @@ skrifa = { version = "=0.42.1", default-features = false, features = ["std"] }
 bytemuck = { version = "1.24", default-features = false, features = ["derive"] }
 heatel = { path = "../heatel", default-features = false, features = ["serde"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
-bevy = { version = "=0.20.0", default-features = false }
+bevy = { package = "dbota_bevy", path = "crates/dbota_bevy", default-features = false }
+bevy_engine = { package = "bevy", version = "=0.20.0", default-features = false, features = [
+    "std", "bevy_log", "async_executor", "multi_threaded", "bevy_asset", "bevy_render",
+    "bevy_core_pipeline", "bevy_pbr", "bevy_light", "bevy_gltf",
+] }
 bevy_image = { version = "=0.20.0", default-features = false }
 dbota_particles = { path = "crates/dbota_particles", default-features = false }
 dbota_import = { path = "crates/dbota_import", default-features = false }
 js-sys = { version = "0.3", default-features = false, features = ["std", "unsafe-eval"] }
 wasm-bindgen = { version = "0.2", default-features = false, features = ["std"] }
 web-sys = { version = "0.3", default-features = false, features = ["std"] }
+digest = { version = "0.11", default-features = false, features = ["mac"] }
 fontique = { version = "=0.11.0", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["default", "std", "sink"] }
+rand = { version = "0.10", default-features = false, features = ["default"] }
+sha2 = { version = "0.11", default-features = false, features = ["default"] }
 
 
 [package]
@@ -25,58 +33,14 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
+build = false
+
+[package.metadata.cargo-machete]
+# Align native dependency features with the matchmaking server used by tests.
+ignored = ["digest", "futures-util", "sha2"]
 
 [dependencies]
-# Bevy's parts dbota draws and plays with, nothing more: no gamepads, no
-# system-info polling, no mesh or sprite picking, no post
-# processing besides anti-aliasing, no built-in font.
-bevy = { workspace = true, features = [
-    # The app, its window and its threads.
-    "std",
-    "async_executor",
-    "multi_threaded",
-    "bevy_asset",
-    "bevy_log",
-    "reflect_auto_register",
-    "bevy_winit",
-    # Dota's mouse cursors, drawn as the install ships them.
-    "custom_cursor",
-    # A paste (Ctrl+V) into the menu's fields.
-    "system_clipboard",
-    "x11",
-    "wayland",
-    # The 3D scene: glTF models and their clips, the sun, PBR, gizmos.
-    "bevy_render",
-    "bevy_core_pipeline",
-    "bevy_pbr",
-    "bevy_light",
-    "bevy_gltf",
-    "gltf_animation",
-    "bevy_animation",
-    "bevy_mikktspace",
-    "bevy_gizmos",
-    "bevy_gizmos_render",
-    # FXAA and SMAA (its lookup tables are embedded), on WebGPU and WebGL2 alike.
-    "bevy_anti_alias",
-    "smaa_luts",
-    "png",
-    # Tony McMapface tonemapping reads its table from a zstd KTX2 file.
-    "tonemapping_luts",
-    "ktx2",
-    "zstd_rust",
-    # The interface, and clicks on it.
-    "bevy_ui",
-    "bevy_input_focus",
-    "bevy_ui_render",
-    "bevy_ui_widgets",
-    "bevy_text",
-    "bevy_picking",
-    "ui_picking",
-    # Sound: Valve's WAVs and voice lines.
-    "bevy_audio",
-    "wav",
-    "mp3",
-] }
+bevy = { workspace = true, features = ["client"] }
 bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui"] }
 bota_core = { path = "../bota/crates/bota_core" }
 bota_proto = { path = "../bota/crates/bota_proto" }
@@ -115,6 +79,10 @@ bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui",
 bevy = { workspace = true, features = ["system_font_discovery"] }
 fontique = { workspace = true, features = ["fontconfig-dlopen"] }
 bota_radovid = { path = "../bota/crates/bota_radovid", features = ["native"] }
+# Match the features enabled by the matchmaking server in the end-to-end tests.
+digest.workspace = true
+futures-util.workspace = true
+sha2.workspace = true
 # A seat claimed in a direct or local game is claimed with a key of the system's randomness.
 getrandom = "0.4"
 
@@ -157,10 +125,6 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 # The menu's typeface test lays out a word from the font file's own advances (the reader parley
 # draws with) to tell the install's face from the shipped one.
 skrifa = { version = "=0.42.1", default-features = false, features = ["std"] }
-
-[dev-dependencies]
-# Game E2E contracts inspect the particles drawn by the separately compiled renderer.
-dbota_particles = { workspace = true, features = ["test-support"] }
 
 [features]
 # A browser build embeds DBOTA_WEB_REPLAY and takes DBOTA_WEB_ARGS at build time.

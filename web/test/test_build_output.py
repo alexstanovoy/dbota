@@ -24,17 +24,81 @@ class BuildOutputTests(unittest.TestCase):
         self.font.write_bytes(b"source font must survive")
         self.tools = self.root / "tools"
         self.tools.mkdir()
+        for script in ("stamp.sh", "build.sh"):
+            shutil.copyfile(REPOSITORY / "tools" / script, self.tools / script)
+        self.server = self.root / "bota"
+        self.server.mkdir()
+        self.stamps = self.root / "stamp.log"
         for command in ("cargo", "wasm-bindgen", "rustc"):
             tool = self.tools / command
             tool.write_text("#!/bin/sh\nexit 0\n")
             tool.chmod(0o755)
 
-    def build(self, destination):
+    def run_build(self, script, **settings):
+        environment = {
+            **os.environ, "PATH": f"{self.tools}:{os.environ['PATH']}",
+            "GIT_CEILING_DIRECTORIES": str(self.root.parent),
+            "PROFILE": "release", "STAMPS_LOG": str(self.stamps), **settings,
+        }
+        environment.pop("DBOTA_BUILD", None)
         return subprocess.run(
-            ["bash", "web/build.sh"], cwd=self.root, capture_output=True, text=True,
-            env={**os.environ, "PATH": f"{self.tools}:{os.environ['PATH']}",
-                 "OUT": destination, "PROFILE": "release", "WASM_OPT": "0"}, timeout=15,
+            ["bash", script], cwd=self.root, capture_output=True, text=True,
+            env=environment, timeout=15,
         )
+
+    def build(self, destination):
+        return self.run_build("web/build.sh", APIS="webgpu webgl2", OUT=destination, WASM_OPT="0")
+
+    def build_desktop(self):
+        return self.run_build("tools/build.sh", DBOTA_GATE_BOTA=str(self.server))
+
+    def commit_wrapper(self, script):
+        def git(*arguments):
+            return subprocess.check_output(["git", *arguments], cwd=self.root, text=True).strip()
+
+        git("init", "--quiet", "--template=")
+        git("add", script)
+        git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit",
+            "--quiet", "--no-gpg-sign", "-m", "Build fixture")
+        return git("rev-parse", "--short=12", "HEAD")
+
+    def record_cargo(self):
+        (self.tools / "cargo").write_text(
+            '#!/bin/sh\nprintf "%s %s\\n" "${DBOTA_BUILD-unset}" "$*" >> "$STAMPS_LOG"\n'
+        )
+
+    def test_browser_build_stamps_only_the_client(self):
+        revision = self.commit_wrapper("web/build.sh")
+        with (self.root / "web/build.sh").open("a") as script:
+            script.write("\n# Dirty checkout\n")
+        self.record_cargo()
+        result = self.build("out")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = self.stamps.read_text().splitlines()
+        self.assertEqual([line.split()[0] for line in lines], [revision + "+", revision + "+", "unset"])
+        self.assertEqual([line.split()[-1] for line in lines], ["dbota", "dbota", "dbota_import_web"])
+
+    def test_desktop_build_stamps_only_the_client(self):
+        revision = self.commit_wrapper("tools/build.sh")
+        self.record_cargo()
+        result = self.build_desktop()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        client, server = self.stamps.read_text().splitlines()
+        self.assertEqual(client.split()[0], revision)
+        self.assertEqual(server.split()[0], "unset")
+        self.assertIn("-p bota_server", server)
+
+    def test_build_wrappers_use_dev_outside_git(self):
+        self.record_cargo()
+        for build, stamps in [
+            (self.build_desktop, ["dev", "unset"]),
+            (lambda: self.build("out"), ["dev", "dev", "unset"]),
+        ]:
+            with self.subTest(stamps=stamps):
+                self.stamps.write_text("")
+                result = build()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual([line.split()[0] for line in self.stamps.read_text().splitlines()], stamps)
 
     def test_hostile_destinations_preserve_source_fonts(self):
         (self.root / "alias").symlink_to(self.root, target_is_directory=True)

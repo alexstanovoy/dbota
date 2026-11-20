@@ -49,7 +49,6 @@ pub struct ParticleFrame {
     pub(super) placed: Vec<Placed>,
 }
 
-#[cfg(any(test, feature = "test-support"))]
 impl ParticleFrame {
     /// The models drawn this frame: each one's index in the library's models and its placement
     /// in Bevy's frame.

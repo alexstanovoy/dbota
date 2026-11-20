@@ -5,15 +5,21 @@ edition = "2024"
 license = "MIT"
 publish = false
 
+[package.metadata.cargo-machete]
+# Match the native client's features in standalone particle tests.
+ignored = ["fontique", "futures-util", "image", "rand"]
+
 [dependencies]
-bevy = { workspace = true, features = [
-    "std", "bevy_log", "async_executor", "multi_threaded", "bevy_asset", "bevy_render",
-    "bevy_core_pipeline", "bevy_pbr", "bevy_light", "bevy_gltf",
-] }
+bevy.workspace = true
 bytemuck.workspace = true
 heatel.workspace = true
 serde_json.workspace = true
 
-[features]
-# Introspection for the application's real-game E2E contracts.
-test-support = []
+# Standalone tests share the native client's dependency features.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+bevy = { workspace = true, features = ["client", "system_font_discovery"] }
+fontique = { workspace = true, features = ["fontconfig-dlopen"] }
+futures-util.workspace = true
+heatel = { workspace = true, features = ["encode"] }
+image.workspace = true
+rand.workspace = true

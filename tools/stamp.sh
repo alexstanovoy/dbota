@@ -8,6 +8,16 @@
 #   precheck ok <time>        tools/precheck.sh passed
 #   gate ok <time>            tools/gate.sh passed (gate-lean for its lean run)
 
+# Distribution builds opt into a revision stamp for the settings version line.
+build_revision() {
+    local revision
+    revision=$(git rev-parse --short=12 HEAD 2>/dev/null) || { printf 'dev\n'; return; }
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+        revision+=+
+    fi
+    printf '%s\n' "$revision"
+}
+
 tree_key() {
     local idx real_idx rs
     idx=$(mktemp) && rm -f "$idx"

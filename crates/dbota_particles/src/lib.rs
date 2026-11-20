@@ -26,11 +26,9 @@ mod tests;
 
 use bevy::prelude::*;
 
-#[cfg(any(test, feature = "test-support"))]
 pub use body::BODY;
 pub use eval::HeightAt;
 pub use library::{Effect, Library};
-#[cfg(any(test, feature = "test-support"))]
 pub use models::ModelPiece;
 pub use plugin::{Handle, Simulation, StageView};
 pub use render::ParticleFrame;

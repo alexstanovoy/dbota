@@ -14,7 +14,6 @@ use super::store::{self, Particles, slot};
 const BODY_RADIUS: f32 = 30.0;
 const BODY_HEIGHT: f32 = 120.0;
 /// The capsule's radius and height, for the bounds of what is made in it.
-#[cfg(any(test, feature = "test-support"))]
 pub const BODY: (f32, f32) = (BODY_RADIUS, BODY_HEIGHT);
 
 /// `C_INIT_SetHitboxToModel`: each new particle's place on the body, as an offset from the

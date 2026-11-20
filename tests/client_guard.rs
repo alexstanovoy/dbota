@@ -909,6 +909,92 @@ fn repository_sources() -> Vec<(String, String)> {
         .collect()
 }
 
+fn root_build_script(root: &Path) -> Option<PathBuf> {
+    match root.join("build.rs").symlink_metadata() {
+        Ok(_) => return Some(PathBuf::from("build.rs")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("cannot inspect the root build.rs: {error}"),
+    }
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = std::process::Command::new(cargo)
+        .current_dir(root)
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--offline",
+        ])
+        .output()
+        .expect("cargo inspects build targets");
+    assert!(
+        output.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("Cargo metadata");
+    let workspace = metadata["workspace_root"].as_str().expect("workspace root");
+    let manifest = Path::new(workspace).join("Cargo.toml");
+    let package = metadata["packages"]
+        .as_array()
+        .expect("workspace packages")
+        .iter()
+        .find(|package| {
+            package["manifest_path"].as_str().map(Path::new) == Some(manifest.as_path())
+        })
+        .expect("the root package");
+    package["targets"]
+        .as_array()
+        .expect("package targets")
+        .iter()
+        .find(|target| target["kind"][0] == "custom-build")
+        .map(|target| PathBuf::from(target["src_path"].as_str().expect("build script path")))
+}
+
+#[test]
+fn the_root_package_has_no_build_script() {
+    let script = root_build_script(&manifest());
+    assert!(
+        script.is_none(),
+        "root build script {script:?}; stamp distribution builds outside Cargo"
+    );
+}
+
+#[test]
+fn the_build_script_guard_finds_an_implicit_file_and_a_manifest_target() {
+    let scratch = common::scratch::Scratch::new("build-script-guard");
+    let package = "[workspace]\n[package]\nname = 'fixture'\nversion = '0.1.0'\nedition = '2024'\n";
+    std::fs::create_dir(scratch.path("src")).expect("fixture sources");
+    std::fs::write(scratch.path("src/main.rs"), "fn main() {}").expect("fixture target");
+    std::fs::write(
+        scratch.path("Cargo.toml"),
+        format!("{package}build = false\n"),
+    )
+    .expect("fixture manifest");
+    assert_eq!(root_build_script(&scratch.0), None);
+
+    let script = scratch.path("stamp.rs");
+    std::fs::write(&script, "fn main() {}").expect("fixture script");
+    std::fs::write(
+        scratch.path("Cargo.toml"),
+        format!("{package}build = 'stamp.rs'\n"),
+    )
+    .expect("custom build target");
+    assert!(root_build_script(&scratch.0).is_some_and(|path| path.ends_with("stamp.rs")));
+
+    std::fs::write(
+        scratch.path("Cargo.toml"),
+        format!("{package}build = false\n"),
+    )
+    .expect("disable build scripts");
+    std::fs::write(scratch.path("build.rs"), "fn main() {}").expect("leftover script");
+    assert_eq!(
+        root_build_script(&scratch.0),
+        Some(PathBuf::from("build.rs"))
+    );
+}
+
 /// The exact lines the guard finds that start the client or a game server as it is, with why each
 /// is no problem: it is the isolating wrapper itself, or only a name or a message to the guard's
 /// squeezed reading, or it needs the user's real home and writes only an explicit folder.

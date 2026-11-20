@@ -75,7 +75,6 @@ pub fn draw(
         if node.parts.is_empty() || !instance.shows_system(node.def) {
             continue;
         }
-        #[cfg(any(test, feature = "test-support"))]
         if instance.hidden_defs.contains(&node.def) {
             continue;
         }

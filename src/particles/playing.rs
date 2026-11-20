@@ -175,6 +175,8 @@ impl Playing {
             #[cfg(test)]
             isolated_effect,
         } = self;
+        #[cfg(test)]
+        simulation.record_draws();
         simulation.step(
             dt,
             height,
@@ -229,7 +231,7 @@ impl Playing {
         stage_dt: Option<f32>,
         ground: Option<dbota_particles::HeightAt<'_>>,
     ) {
-        self.simulation.advance_for_test(dt, stage_dt, ground);
+        self.simulation.advance(dt, stage_dt, ground);
         self.presentation
             .retain(|handle, _| self.simulation.contains(*handle));
     }

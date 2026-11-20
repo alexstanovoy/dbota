@@ -1,0 +1,52 @@
+[package]
+name = "dbota_bevy"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+bevy_engine.workspace = true
+
+[features]
+# Extra features the client enables beyond the particle renderer's requirements.
+client = [
+    # The client window and registration of reflected types.
+    "bevy_engine/reflect_auto_register",
+    "bevy_engine/bevy_winit",
+    # Dota's mouse cursors, drawn as the install ships them.
+    "bevy_engine/custom_cursor",
+    # A paste (Ctrl+V) into the menu's fields.
+    "bevy_engine/system_clipboard",
+    "bevy_engine/x11",
+    "bevy_engine/wayland",
+    # glTF animations, normal maps and gizmos.
+    "bevy_engine/gltf_animation",
+    "bevy_engine/bevy_animation",
+    "bevy_engine/bevy_mikktspace",
+    "bevy_engine/bevy_gizmos",
+    "bevy_engine/bevy_gizmos_render",
+    # FXAA and SMAA (its lookup tables are embedded), on WebGPU and WebGL2 alike.
+    "bevy_engine/bevy_anti_alias",
+    "bevy_engine/smaa_luts",
+    "bevy_engine/png",
+    # Tony McMapface tonemapping reads its table from a zstd KTX2 file.
+    "bevy_engine/tonemapping_luts",
+    "bevy_engine/ktx2",
+    "bevy_engine/zstd_rust",
+    # The interface, and clicks on it.
+    "bevy_engine/bevy_ui",
+    "bevy_engine/bevy_input_focus",
+    "bevy_engine/bevy_ui_render",
+    "bevy_engine/bevy_ui_widgets",
+    "bevy_engine/bevy_text",
+    "bevy_engine/bevy_picking",
+    "bevy_engine/ui_picking",
+    # Sound: Valve's WAVs and voice lines.
+    "bevy_engine/bevy_audio",
+    "bevy_engine/wav",
+    "bevy_engine/mp3",
+]
+system_font_discovery = ["bevy_engine/system_font_discovery"]
+webgpu = ["bevy_engine/webgpu"]
+webgl2 = ["bevy_engine/webgl2"]

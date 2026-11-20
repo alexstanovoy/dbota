@@ -6,6 +6,10 @@ license = "MIT"
 publish = false
 description = "The asset importer: the manifest's assets read out of a local Dota 2 install (through heatel) into dbota's asset cache, natively and as a browser module (a Web Worker hands it the files the user picked and gets the converted cache back)."
 
+[package.metadata.cargo-machete]
+# Match the native client's feature set and keep Bevy's image decoders available to tests.
+ignored = ["bevy", "bevy_image", "digest", "fontique", "futures-util", "rand", "sha2"]
+
 [dependencies]
 image.workspace = true
 bota_core = { path = "../../../bota/crates/bota_core" }
@@ -21,3 +25,12 @@ texture2ddecoder = "0.1.2"
 bevy_image = { workspace = true, features = ["ktx2", "zstd_rust"] }
 ktx2 = "0.5"
 png = { version = "0.18", default-features = false }
+
+# Standalone tests share the native client's dependency features.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+bevy = { workspace = true, features = ["client", "system_font_discovery"] }
+digest.workspace = true
+fontique = { workspace = true, features = ["fontconfig-dlopen"] }
+futures-util.workspace = true
+rand.workspace = true
+sha2.workspace = true

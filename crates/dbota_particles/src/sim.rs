@@ -120,7 +120,6 @@ pub struct Instance {
     pub(crate) rope_model_source: Option<super::plugin::Handle>,
     /// Definitions (indices into the effect) whose cards are left out of the frame, for a test
     /// comparing the frame without them.
-    #[cfg(any(test, feature = "test-support"))]
     pub hidden_defs: Vec<usize>,
     /// Drawn only by the host's separate stage view, without world ground or lights.
     pub portrait: bool,
@@ -217,7 +216,6 @@ impl Instance {
             host_pose_changed: false,
             rope_model_point: None,
             rope_model_source: None,
-            #[cfg(any(test, feature = "test-support"))]
             hidden_defs: Vec::new(),
             portrait: false,
             presentation_opacity: 1.0,
@@ -421,7 +419,6 @@ impl Instance {
 
     /// Every live particle of every system: its system's index in the effect, where it is (the
     /// particles' frame, Z up) and its age.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn particles(&self) -> Vec<(usize, Vec3, f32)> {
         let mut out = Vec::new();
         for node in &self.nodes {
@@ -436,7 +433,6 @@ impl Instance {
     }
 
     /// Whether the emitter ended while any remaining particles finish their tails.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn ending(&self) -> bool {
         self.ending
     }

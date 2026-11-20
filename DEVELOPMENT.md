@@ -11,6 +11,8 @@ tools/build.sh                    # target/release/dbota and target/release/bota
 PROFILE=dist tools/build.sh       # smaller, link-time optimised, in target/dist (~6 min)
 ```
 
+Plain `cargo build` shows `dev` in the version line. `tools/build.sh` and `web/build.sh` stamp the Git revision when available.
+
 A live match needs a client and a server of the same wire fingerprint. LOCAL LOBBY looks for `bota_server` beside the
 client, then in the settings' path or `$BOTA_SERVER`, then on the `PATH`, and skips a server of another wire.
 

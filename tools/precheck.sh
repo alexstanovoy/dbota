@@ -5,6 +5,7 @@
 #
 # Formatting is no part of it: it changes no code, and is checked last, by the gate.
 # Steps, each only for what the work touches (the files changed since the merge-base with BASE, committed or not):
+#   feature-forks  the build and tests share dependency features
 #   clippy  the crates with a changed file and every crate of the repository that depends on them
 #   test-groups  every test in exactly one group and every file routed (tools/test_groups.py check; the gate's check too)
 #   test    the test groups the change affects (tools/test_groups.py select shows the commands); the tests that failed in
@@ -93,6 +94,7 @@ fi
 echo "precheck: crates ${plan:-none}; test groups $groups"
 pflags=(); for c in $plan; do pflags+=(-p "$c"); done
 
+step feature-forks python3 tools/feature_forks.py || exit 1
 [ -z "$plan" ] || step clippy cargo clippy "${pflags[@]}" --all-targets -- -D warnings || exit 1
 for c in $plan; do
     e=$(extra_clippy "$c")

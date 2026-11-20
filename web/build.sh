@@ -11,6 +11,8 @@ set -euo pipefail
 export PATH="$PATH:$HOME/.cargo/bin"
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$here"
+# shellcheck source=tools/stamp.sh
+. tools/stamp.sh
 profile=${PROFILE:-web}
 # Validate the explicit shipping policy before spending time compiling.
 if [ "$profile" = web ] || [ -n "${WASM_OPT:-}" ]; then
@@ -36,8 +38,9 @@ optimize() {
 }
 # One client per graphics API (Bevy fixes its render paths when it is compiled); the page loads the
 # one the browser can draw with: dbota.js (WebGPU) or dbota_webgl2.js.
+revision=$(build_revision)
 for api in ${APIS:-webgpu webgl2}; do
-    cargo build --locked --profile "$profile" --target-dir "$target" --target wasm32-unknown-unknown --features "$api" "${features[@]}" -p dbota
+    DBOTA_BUILD=$revision cargo build --locked --profile "$profile" --target-dir "$target" --target wasm32-unknown-unknown --features "$api" "${features[@]}" -p dbota
     name=dbota; [ "$api" = webgpu ] || name=dbota_$api
     wasm-bindgen --target web --no-typescript --out-dir "$out" --out-name "$name" \
         "$target/wasm32-unknown-unknown/$profile/dbota.wasm"

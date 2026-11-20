@@ -37,7 +37,7 @@ step = "none: the script, not a test (test_test_groups.py tests it)"
 
 # Files outside the groups' own.
 [[route]]
-paths = ["Cargo.toml", "Cargo.lock", "build.rs", "assets-manifest/**", "crates/dbota_import/Cargo.toml", "crates/dbota_import/src/**"]
+paths = ["Cargo.toml", "Cargo.lock", "assets-manifest/**", "crates/dbota_bevy/**", "crates/dbota_import/Cargo.toml", "crates/dbota_import/src/**"]
 groups = ["*"]
 
 [[route]]
@@ -79,8 +79,9 @@ tests = [{ unittest = "web/test", modules = ["test_build_output", "test_optimize
 [[group]]
 name = "tooling"
 about = "the test groups' own machinery (Python unittest)"
-paths = ["tools/test_groups.py", "tools/test_groups.toml", "tools/known_baselines.txt", "tools/test_test_groups.py", "tools/test/**", "tools/test_runner.py", "tools/test.sh"]
-tests = [{ unittest = "tools", modules = ["test_test_groups"] }, { unittest = "tools/test", modules = ["test_runner_test"] }]
+paths = ["tools/test_groups.py", "tools/test_groups.toml", "tools/known_baselines.txt", "tools/test_test_groups.py", "tools/feature_forks.py", "tools/test_feature_forks.py", "tools/test/**", "tools/test_runner.py", "tools/test.sh"]
+before = [["python3", "tools/feature_forks.py"]]
+tests = [{ unittest = "tools", modules = ["test_test_groups", "test_feature_forks"] }, { unittest = "tools/test", modules = ["test_runner_test"] }]
 
 [[group]]
 name = "client_menu"

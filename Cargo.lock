@@ -2651,7 +2651,6 @@ name = "dbota"
 version = "0.1.0"
 dependencies = [
  "base64",
- "bevy",
  "blake3",
  "bota_client_core",
  "bota_core",
@@ -2659,9 +2658,12 @@ dependencies = [
  "bota_radovid",
  "bota_replay",
  "clap",
+ "dbota_bevy",
  "dbota_import",
  "dbota_particles",
+ "digest",
  "fontique",
+ "futures-util",
  "getrandom 0.4.3",
  "half",
  "heatel",
@@ -2673,12 +2675,20 @@ dependencies = [
  "rodio",
  "serde",
  "serde_json",
+ "sha2",
  "skrifa 0.42.1",
  "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
  "windows",
+]
+
+[[package]]
+name = "dbota_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
 ]
 
 [[package]]
@@ -2689,11 +2699,17 @@ dependencies = [
  "bota_core",
  "bota_proto",
  "crc32fast",
+ "dbota_bevy",
+ "digest",
+ "fontique",
+ "futures-util",
  "heatel",
  "image",
  "ktx2",
  "png",
+ "rand",
  "serde_json",
+ "sha2",
  "skrifa 0.42.1",
  "texture2ddecoder",
 ]
@@ -2713,9 +2729,13 @@ dependencies = [
 name = "dbota_particles"
 version = "0.1.0"
 dependencies = [
- "bevy",
  "bytemuck",
+ "dbota_bevy",
+ "fontique",
+ "futures-util",
  "heatel",
+ "image",
+ "rand",
  "serde_json",
 ]
 
