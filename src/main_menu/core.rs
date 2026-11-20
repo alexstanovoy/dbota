@@ -3229,15 +3229,19 @@ impl MenuCore {
             PlayAction::Find => self.find_selected(),
             PlayAction::LobbyLink(create) => {
                 let online = self.logged_in();
-                self.go(if online {
-                    Page::Lobbies
-                } else {
-                    Page::LocalLobby
-                });
                 if online && create {
+                    // Opening Lobbies can reconnect after the link idled out. Take the
+                    // signed-in name before the new link starts restoring the account.
+                    let creator = self.lobby_creator();
+                    self.go(Page::Lobbies);
                     self.lobby_ui.server = super::lobby_controls::Server::Service;
-                    self.lobby_action(super::LobbyAction::Create);
+                    self.create_lobby_now(creator);
                 } else {
+                    self.go(if online {
+                        Page::Lobbies
+                    } else {
+                        Page::LocalLobby
+                    });
                     self.form.focus(if !online && !create { 1 } else { 0 });
                 }
             }
@@ -3600,6 +3604,21 @@ mod result_overlay_tests {
 #[cfg(test)]
 mod identity_alias_tests {
     use super::*;
+
+    #[test]
+    fn creating_a_lobby_from_play_keeps_the_hosts_name_during_reconnect() {
+        let service = crate::main_menu::tests::service();
+        let mut player = crate::main_menu::tests::Player::new(Some(&service));
+        player.register("lobby_host");
+        player.menu.drop_link();
+
+        player.menu.act(Act::Play(super::super::play::PlayAction::LobbyLink(true)));
+
+        assert!(player.menu.outbox.iter().any(|(message, _)| {
+            matches!(message, ClientMsg::LobbyCreate { name, .. } if name == "lobby_host's lobby")
+        }), "creation is queued with the signed-in name while the link resumes");
+    }
+
     #[test]
     fn an_uncorrelated_public_reply_cannot_overwrite_the_signed_in_account() {
         let service = crate::main_menu::tests::service();

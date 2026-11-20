@@ -269,7 +269,7 @@ impl MenuCore {
 
     fn edit_lobby_draft(&mut self, action: Action) {
         match action {
-            Action::Create => self.create_lobby_now(),
+            Action::Create => self.create_lobby_now(self.lobby_creator()),
             Action::Edit => self.open_lobby_editor(false),
             Action::Cancel => {
                 self.cancel_lobby_editor();
@@ -506,16 +506,18 @@ impl MenuCore {
         self.form.set_controls(items);
     }
 
-    /// Makes the lobby at once, named after its host; its name stays, and the mode, password and
-    /// audience are edited from the room.
-    fn create_lobby_now(&mut self) {
-        self.open_lobby_editor(true);
-        let Some(nickname) = self
-            .client
+    pub(super) fn lobby_creator(&self) -> Option<String> {
+        self.client
             .as_ref()
             .and_then(|client| client.me())
             .map(|me| me.nickname.clone())
-        else {
+    }
+
+    /// Makes the lobby at once, named after its host; its name stays, and the mode, password and
+    /// audience are edited from the room.
+    pub(super) fn create_lobby_now(&mut self, nickname: Option<String>) {
+        self.open_lobby_editor(true);
+        let Some(nickname) = nickname else {
             return;
         };
         let name = super::text::line(
