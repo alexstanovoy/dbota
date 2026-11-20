@@ -1701,6 +1701,19 @@ OPFS_REPLAYS = """async () => {
   return out;
 }"""
 
+OPFS_PRACTICE_CLAIM = r"""async () => {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const dir = await root.getDirectoryHandle('dbota-replays');
+    const index = await (await dir.getFileHandle('index.txt')).getFile();
+    const claim = (await index.text()).match(/^w\t(\d+)\t\d+\tpractice$/m);
+    return claim ? Number(claim[1]) : null;
+  } catch (error) {
+    if (error.name === 'NotFoundError') return null;
+    throw error;
+  }
+}"""
+
 
 def check_replay_probe(directory, context):
     """An OPFS inspection survives concurrent deletion and still reports unrelated read errors."""
@@ -1769,17 +1782,20 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
     print("replays: kept in OPFS from a match through radovid, listed and played")
 
 
-def practice_replay(work):
+def practice_replay(work, match):
     # The files can appear before the service publishes the match result.
     deadline = time.monotonic() + 300
+    replay = work / "replays" / f"replay-{match}.brp"
     with sqlite3.connect((work / "radovid.db").as_uri() + "?mode=ro", uri=True) as database:
         while time.monotonic() < deadline:
-            files = sorted((work / "replays").glob("replay-*.brp"))
-            if files and database.execute("SELECT 1 FROM matches WHERE finished = 1").fetchone():
-                assert len(files) == 1, "the one practice replay"
-                return files[0]
+            if replay.is_file() and database.execute(
+                "SELECT 1 FROM matches WHERE id = ? AND finished = 1", (match,),
+            ).fetchone():
+                size = replay.stat().st_size
+                assert size >= 1024, f"practice replay {match} contains only {size} bytes"
+                return size
             time.sleep(0.25)
-    raise AssertionError("the service did not record the practice result and its replay")
+    raise AssertionError(f"the service did not record the result and replay for practice match {match}")
 
 
 def start_practice(page, console, shot):
@@ -1804,7 +1820,11 @@ def start_practice(page, console, shot):
     shot(page, "5-lobby")
     click_drawn(page, CLICK_START)
     wait_console(page, console, r"match known: tick \d+", 600, "the practice match")
+    match = wait_browser_state(
+        page, lambda: page.evaluate(OPFS_PRACTICE_CLAIM), "the practice match's persisted replay claim", 300,
+    )
     shot(page, "6-game")
+    return match
 
 
 def wait_for_sign_in(page):
@@ -1846,10 +1866,10 @@ def drive_replays_page(work, port, evidence):
                 page.screenshot(path=str(evidence / f"{name}.png"), timeout=600000)
 
         page, console, problems = visit()
-        start_practice(page, console, shot)
+        match = start_practice(page, console, shot)
         page.close()
         assert not problems, problems
-        replay_size = practice_replay(work).stat().st_size
+        replay_size = practice_replay(work, match)
 
         page, console, problems = visit()
         wait_for_sign_in(page)
