@@ -182,9 +182,11 @@ fn a_tower_banner_tells_who_destroyed_it_the_sword_of_the_side_the_tower_and_its
         "the kind of event: the sword of the side that struck"
     );
     assert!(segments[1].plate.is_some(), "on a plate");
+    let tower_name = format!("{side} Top Tier 1 Tower ");
+    let team_bounty = bota_core::rules::TOWER_TIER_TEAM_BOUNTY[0].to_string();
     assert_eq!(
         texts(&segments[2..]),
-        [&format!("{side} Top Tier 1 Tower ")[..], "90", "each"],
+        [tower_name.as_str(), team_bounty.as_str(), "each"],
         "the tower, the gold it pays each seat of the side, the coin before `each`"
     );
     assert_eq!(segments[3].ink, Some(NUMBER_INK), "the sum is lit");
