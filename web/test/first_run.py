@@ -244,6 +244,44 @@ def again_at_screen(run, change, screen, why):
     run.said(r"first run: ready \| " + screen, f"the {screen} screen", after=at)
 
 
+def cleanup_while_another_tab_publishes(run):
+    """Publish while startup is between reading the current pointer and taking its cleanup lock."""
+    original = run.storage()
+    run.page.evaluate("sessionStorage.setItem('race-cleanup', '1')")
+    run.page.add_init_script("""(() => {
+      if (!sessionStorage.getItem('race-cleanup')) return;
+      const locks = navigator.locks;
+      const request = locks.request.bind(locks);
+      locks.request = async (name, options, run) => {
+        if (name !== 'dbota-import' || !sessionStorage.getItem('race-cleanup')) {
+          return request(name, options, run);
+        }
+        sessionStorage.removeItem('race-cleanup');
+        await request(name, async () => {
+          const root = await (await navigator.storage.getDirectory()).getDirectoryHandle('dbota');
+          await root.getDirectoryHandle('copy-42', {create: true});
+          const pointer = await (await root.getFileHandle('current.txt')).createWritable();
+          await pointer.write('copy-42\\n');
+          await pointer.close();
+        });
+        const result = await request(name, options, run);
+        console.info('cache fixture: startup cleanup completed');
+        return result;
+      };
+    })();""")
+    run.page.reload()
+    run.said(r"^cache fixture: startup cleanup completed$", "the startup cleanup")
+    storage = run.storage()
+    assert storage["current"] == "copy-42\n" and "copy-42" in storage["names"], storage
+    run.page.evaluate("""async (previous) => {
+      const root = await (await navigator.storage.getDirectory()).getDirectoryHandle('dbota');
+      const pointer = await (await root.getFileHandle('current.txt')).createWritable();
+      await pointer.write(previous); await pointer.close();
+      await root.removeEntry('copy-42');
+    }""", original["current"])
+    print("startup cleanup left the copy published by another tab")
+
+
 def copies(run, page_dir, install):
     """A copy of another build, one without its index, one whose stamp is too long to be one, and one the
     browser evicted each start at the screen; the import then makes a copy the client starts on."""
@@ -554,6 +592,7 @@ def main():
                 install, nothing = fixtures(scratch)
                 run = journey(p, args.page, install, nothing)
                 try:
+                    cleanup_while_another_tab_publishes(run)
                     copies(run, args.page, install)
                 finally:
                     run.close()

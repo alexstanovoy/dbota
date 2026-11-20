@@ -324,8 +324,7 @@ async fn private() -> Result<Found, Trouble> {
     })
 }
 
-/// Runs `work` when no import holds [`dbota_import::browser::IMPORT_LOCK`], holding it meanwhile;
-/// a browser without Web Locks runs it all the same.
+/// Runs `work` only while holding [`dbota_import::browser::IMPORT_LOCK`].
 async fn unless_importing(work: impl std::future::Future<Output = ()> + 'static) {
     let Some(window) = web_sys::window() else {
         return;
@@ -339,7 +338,7 @@ async fn unless_importing(work: impl std::future::Future<Output = ()> + 'static)
             .and_then(|r| r.dyn_into::<js_sys::Function>().ok())
     });
     let (Some(locks), Some(request)) = (locks, request) else {
-        return work.await;
+        return;
     };
     let granted = wasm_bindgen::closure::Closure::once_into_js(move |lock: JsValue| -> JsValue {
         if lock.is_null() {
@@ -365,6 +364,17 @@ async fn unless_importing(work: impl std::future::Future<Output = ()> + 'static)
 
 /// Removes what [`ROOT`] holds besides the copy `kept` and the file naming it.
 async fn sweep(root: FileSystemDirectoryHandle, kept: String) {
+    // The startup read happened outside the lock. A writer may have published since then.
+    let Ok(Some(current)) = file(&root, CURRENT, MAX_CURRENT).await else {
+        return;
+    };
+    if std::str::from_utf8(&current)
+        .ok()
+        .and_then(dbota_import::browser::current_copy)
+        != Some(kept.as_str())
+    {
+        return;
+    }
     let entries = root.keys();
     let mut names = Vec::new();
     while names.len() < 4096 {
@@ -384,7 +394,10 @@ async fn sweep(root: FileSystemDirectoryHandle, kept: String) {
     }
     let options = web_sys::FileSystemRemoveOptions::new();
     options.set_recursive(true);
-    for name in names.into_iter().filter(|n| *n != kept && n != CURRENT) {
+    for name in names
+        .into_iter()
+        .filter(|name| *name != kept && dbota_import::browser::current_copy(name).is_some())
+    {
         match JsFuture::from(root.remove_entry_with_options(&name, &options)).await {
             Ok(_) => info!("asset copy: removed {name}, left beside the copy"),
             Err(e) => warn!("asset copy: {name} could not be removed: {}", said(&e)),
