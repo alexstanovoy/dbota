@@ -319,7 +319,7 @@ pub const FALLBACK: &[(&str, &str)] = &[
     ("npc_dota_neutral_black_drake", "Ancient Black Drake"),
     ("npc_dota_neutral_centaur_khan", "Centaur Conqueror"),
     ("npc_dota_neutral_centaur_outrunner", "Centaur Courser"),
-    ("npc_dota_neutral_dark_troll", "Hill Troll"),
+    ("npc_dota_neutral_dark_troll", "Dark Troll Trapper"),
     ("npc_dota_neutral_dark_troll_warlord", "Dark Troll Summoner"),
     ("npc_dota_neutral_enraged_wildkin", "Wildwing Ripper"),
     ("npc_dota_neutral_fel_beast", "Fell Spirit"),

@@ -1689,6 +1689,17 @@ pub(crate) mod tests {
     use super::*;
 
     #[test]
+    fn a_dark_troll_trapper_has_its_patch_name_in_the_unit_panel() {
+        let mut unit = stray_hero(1);
+        unit.kind = UnitKind::CreepNeutral;
+        unit.hero = None;
+        unit.neutral = Some(bota_core::NeutralKind::DarkTroll.id());
+        let texts = crate::dota_text::Texts::default();
+        let map = bota_core::map_of(bota_proto::MapId(0));
+        assert_eq!(unit_name(&texts, map, &unit), "Dark Troll Trapper");
+    }
+
+    #[test]
     fn empty_buffer_meshes_do_not_discard_other_meshes_render_bounds() {
         use bevy::gltf::{GltfExtras, GltfPrimitive};
         let mesh = |extras| GltfMesh {
