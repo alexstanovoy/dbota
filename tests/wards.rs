@@ -10,13 +10,18 @@ use std::path::PathBuf;
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn placed_wards_are_drawn_with_dotas_ward_models_and_effects() {
-    let shots = std::env::var_os("DBOTA_SHOTS").map(PathBuf::from);
-    // Teleport past the base's no-ward volume and recenter the camera before planting.
-    // Each ward is handed out (`-item`; both together would make a Ward Dispenser) and planted
-    // from the hero's first item key at the ground beside him.
+    let scratch = common::scratch::Scratch::new("wards");
+    let shots = std::env::var_os("DBOTA_SHOTS").map_or_else(|| scratch.path("shots"), PathBuf::from);
+    let server = common::serve(&[
+        "--cheats", "--players", "1", "--pick-secs", "5", "--tactical-secs", "5",
+    ]);
+    let middle = bota_core::rules::MAP_SIZE / 2;
+    let look = format!("{middle},{middle}");
+    // Plant with a fixed camera at the river, clear of the base's no-ward volume. Hand out
+    // each ward separately so the hero uses each from the same slot.
     let script = "await:game;click:pick shadow fiend;click:pick ready;await:tick:1;await:loaded;\
                   say:-startgame;await:horn;\
-                  mouse:0.95,0.3;say:-teleport;await:settled;key:F1;frames:2;\
+                  mouse:0.5,0.5;frames:2;say:-teleport;await:settled;\
                   say:-item ward_observer;await:items:1;\
                   key:Z;mouse:0.57,0.57;frames:2;lclick;await:items:0;\
                   say:-item ward_sentry;await:items:1;\
@@ -24,5 +29,5 @@ fn placed_wards_are_drawn_with_dotas_ward_models_and_effects() {
                   await:model:ward.observer.model;await:model:ward.sentry.model;\
                   await:started:ward.observer.ambient;await:started:ward.sentry.ambient;\
                   await:heard:sound.ward.activate;shot:wards.png;exit";
-    common::play("wards", script, shots.as_deref());
+    common::play_script_with(&server.address, script, "wards", &shots, &["--look", &look]);
 }
