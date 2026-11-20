@@ -497,19 +497,24 @@ fn replay_to(client: &mut Client, tick: u32) {
     });
     client.world_mut().insert_resource(zero());
     client.core_mut().source = source;
-    let advance = tick
-        .checked_sub(client.tick())
-        .expect("the staged tick follows the first snapshot");
-    if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
-        player.paused = true;
-        player.advance_ticks(f64::from(advance));
-    }
-    client.until("the replay at exactly the staged tick", |c| {
-        c.tick() == tick
-    });
+    advance_replay_to(client, tick);
     client
         .world_mut()
         .insert_resource(bevy::time::TimeUpdateStrategy::Automatic);
+}
+
+fn advance_replay_to(client: &mut Client, tick: u32) {
+    let advance = tick
+        .checked_sub(client.tick())
+        .expect("the staged tick follows the current snapshot");
+    let bota_client_core::Source::Replay(player) = &mut client.core_mut().source else {
+        panic!("a replay");
+    };
+    player.paused = true;
+    player.advance_ticks(f64::from(advance));
+    client.until("the replay at exactly the staged tick", |c| {
+        c.tick() == tick
+    });
 }
 
 fn display_scale(client: &mut Client, scale: f32) {
@@ -823,7 +828,7 @@ fn roshan_icon_count(client: &mut Client) -> usize {
         .count()
 }
 
-fn remembered_roshan_match() -> super::fog_pov::Spectated {
+fn roshan_in_sight() -> super::fog_pov::Spectated {
     let mut game = super::fog_pov::Spectated::pair_with_options(
         "0",
         &["--objectives", "roshan", "--immortal-heroes"],
@@ -837,6 +842,10 @@ fn remembered_roshan_match() -> super::fog_pov::Spectated {
     game.wait("Roshan actually seen and marked", |_, client| {
         roshan_icon_count(client) == 1
     });
+    game
+}
+
+fn leave_roshan_pit(game: &mut super::fog_pov::Spectated) {
     game.cheat(Cheat::Teleport {
         at: bota_core::fountain_pos(game.driver.session().expect("match").map(), Team::Radiant),
     });
@@ -849,13 +858,13 @@ fn remembered_roshan_match() -> super::fog_pov::Spectated {
             && roshan_icon_count(client) == 1
     });
     assert!(game.client.world().resource::<crate::fog::FogGrid>().on);
-    game
 }
 
 #[test]
 fn an_announced_roshan_death_removes_the_remembered_icon_outside_vision() {
     use bota_proto::{EventKind, ModifierSpec, ObjectiveKind, Target};
-    let mut game = remembered_roshan_match();
+    let mut game = roshan_in_sight();
+    leave_roshan_pit(&mut game);
     let boss = game
         .client
         .world()
@@ -924,13 +933,41 @@ fn an_announced_roshan_death_removes_the_remembered_icon_outside_vision() {
 
 #[test]
 fn switching_replay_viewer_does_not_reuse_another_teams_roshan_sighting() {
-    let game = remembered_roshan_match();
+    let mut game = roshan_in_sight();
+    let radiant_sees_roshan = |view: &bota_proto::WorldView| {
+        view.units.iter().any(|unit| {
+            unit.kind == UnitKind::Roshan
+                && unit.hp > 0
+                && unit.seen_by.is_some_and(|seen| seen.radiant)
+        })
+    };
+    // The renderer and the recorder have independent streams. Keep the hero in the pit until
+    // the recording has its own sighting, then let replay rendering observe that exact tick.
+    let sighting = game.recorded_snapshot("Radiant's sighting recorded", radiant_sees_roshan);
+    leave_roshan_pit(&mut game);
+    let hidden = game.recorded_snapshot("Roshan out of Radiant's recorded sight", |view| {
+        !radiant_sees_roshan(view)
+    });
     let file = game.save();
-    let mut client = super::fog_pov::replay_from_side(&file, 0);
+    let mut client = Client::run(&["--replay", file.path().to_str().expect("UTF-8"), "--pov", "0"]);
+    replay_to(&mut client, sighting);
     client.until("Radiant's recorded sighting", |client| {
         roshan_icon_count(client) == 1
     });
     assert_eq!(client.core().my_slot, Some(bota_proto::SlotId(0)));
+    advance_replay_to(&mut client, hidden);
+    client.step_frames(2);
+    let fog = client.world().resource::<crate::fog::FogGrid>();
+    assert!(fog.on, "Radiant's replay fog is enabled");
+    assert!(
+        client
+            .view()
+            .units
+            .iter()
+            .any(|unit| unit.kind == UnitKind::Roshan && fog.hides(unit.seen_by)),
+        "Roshan is alive outside Radiant's vision"
+    );
+    assert_eq!(roshan_icon_count(&mut client), 1, "Radiant remembers Roshan");
     client.key(KeyCode::Tab, bevy::input::ButtonState::Pressed);
     client.key(KeyCode::Tab, bevy::input::ButtonState::Released);
     client.until("the replay watches Dire", |client| {

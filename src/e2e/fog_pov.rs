@@ -81,6 +81,10 @@ impl Recording {
     }
 
     pub(super) fn poll(&mut self) {
+        self.poll_observing(|_| {});
+    }
+
+    fn poll_observing(&mut self, mut snapshot: impl FnMut(&bota_proto::WorldView)) {
         let messages = self.net.poll();
         if self.closed {
             return;
@@ -99,6 +103,7 @@ impl Recording {
                         });
                         self.started = true;
                     }
+                    snapshot(&view);
                     self.append(ServerMsg::Snapshot { view });
                 }
                 ServerMsg::Events { tick, events } if self.started => {
@@ -400,6 +405,28 @@ impl Spectated {
 
     pub(super) fn save(self) -> ReplayFile {
         self.recording.save(self._server)
+    }
+
+    pub(super) fn recorded_snapshot(
+        &mut self,
+        what: &str,
+        mut matches: impl FnMut(&bota_proto::WorldView) -> bool,
+    ) -> u32 {
+        let (driver, recording, other) = (&mut self.driver, &mut self.recording, &mut self.other);
+        let mut tick = None;
+        self.client.within(SOON, what, |_| {
+            driver.pump(0.0);
+            if let Some(other) = other {
+                other.pump(0.0);
+            }
+            recording.poll_observing(|view| {
+                if matches(view) {
+                    tick = Some(view.tick);
+                }
+            });
+            tick.is_some_and(|tick| recording.tick >= tick)
+        });
+        tick.expect("a matching snapshot was recorded")
     }
 
     pub(super) fn until_death(&mut self, unit: bota_proto::EntityId) {
