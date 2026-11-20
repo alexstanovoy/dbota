@@ -70,6 +70,10 @@ pub fn check(file: &[u8]) -> Result<(), String> {
     }
     for uri in document.buffers.iter().filter_map(|b| b.uri.as_deref()) {
         plain(uri)?;
+        // Loading a model already owns a model slot. Its buffers must never queue for another.
+        if cache_path::is_model(Path::new(uri)) {
+            return Err(format!("a model file {uri:?} used as a buffer"));
+        }
     }
     Ok(())
 }
@@ -132,6 +136,10 @@ mod tests {
         assert_eq!(check(&glb(ok)), Ok(()));
         assert_eq!(check(ok.as_bytes()), Ok(()));
         let refused = [
+            (
+                r#"{"buffers":[{"uri":"nested.glTF","byteLength":8}]}"#,
+                "used as a buffer",
+            ),
             (
                 r#"{"images":[{"bufferView":0,"mimeType":"image/png"}]}"#,
                 "an image inside the model",

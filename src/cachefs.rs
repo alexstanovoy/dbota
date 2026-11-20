@@ -827,6 +827,11 @@ impl AssetReader for CacheReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         use std::io::{Read, Seek, SeekFrom};
         Self::check_path(path)?;
+        let model_slot = if cache_path::is_model(path) {
+            Some(crate::io_pool::model_slot().await)
+        } else {
+            None
+        };
         let full = self.root.join(path);
         let mut file = match std::fs::File::open(&full) {
             Ok(file) => file,
@@ -855,17 +860,19 @@ impl AssetReader for CacheReader {
         if self.decodes(path) {
             let bytes = whole()?;
             let decoded = self.decoded(path, &bytes).await?;
-            return Ok(desktop::Served::Memory(bevy::asset::io::VecReader::new(
-                decoded,
-            )));
+            return Ok(desktop::Served::Memory {
+                bytes: bevy::asset::io::VecReader::new(decoded),
+                _model_slot: None,
+            });
         }
-        if cache_path::is_model(path) {
+        if let Some(slot) = model_slot {
             // Read whole, as the loader would: the file is the model's own bytes, vetted.
             let bytes = whole()?;
             Self::vet_model(path, &bytes)?;
-            return Ok(desktop::Served::Memory(bevy::asset::io::VecReader::new(
-                bytes,
-            )));
+            return Ok(desktop::Served::Memory {
+                bytes: bevy::asset::io::VecReader::new(bytes),
+                _model_slot: Some(slot),
+            });
         }
         let mut head = [0u8; HEAD_BYTES];
         let read = file.read(&mut head)?;
@@ -1223,6 +1230,7 @@ mod tests {
         use bevy::asset::AssetApp;
         use bevy::image::{CompressedImageFormats, ImageLoader, ImagePlugin};
 
+        crate::io_pool::make_for_tests();
         let mut app = App::new();
         let source = crate::cache_source(&mut app, root);
         app.register_asset_source(crate::CACHE_SOURCE, source)
@@ -1233,6 +1241,146 @@ mod tests {
             ))
             .register_asset_loader(ImageLoader::new(CompressedImageFormats::NONE));
         app
+    }
+
+    fn textured_gltf_files() -> (PathBuf, Vec<String>) {
+        let first = crate::test_support::scratch_path("textured_model_stack/first.gltf");
+        let root = first.parent().unwrap();
+        let model = br#"{"asset":{"version":"2.0"},
+            "images":[{"uri":"albedo.png"},{"uri":"normal.png"}],
+            "textures":[{"source":0},{"source":1}]}"#;
+        std::fs::write(&first, model).unwrap();
+        for name in ["albedo.png", "normal.png"] {
+            Image::default()
+                .try_into_dynamic()
+                .unwrap()
+                .save(root.join(name))
+                .unwrap();
+        }
+        let others: Vec<_> = (0..24).map(|i| format!("model_{i}.gltf")).collect();
+        for path in &others {
+            std::fs::write(root.join(path), model).unwrap();
+        }
+        (root.to_path_buf(), others)
+    }
+
+    #[test]
+    fn parallel_textured_models_do_not_nest_on_a_production_io_worker() {
+        const CHILD: &str = "DBOTA_TEST_TEXTURED_MODEL_STACK_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            textured_model_stack();
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "cachefs::tests::parallel_textured_models_do_not_nest_on_a_production_io_worker",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env_remove("RUST_MIN_STACK")
+            .output()
+            .expect("isolated asset loader");
+        assert!(
+            output.status.success(),
+            "production asset loader {:?}:\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn textured_model_stack() {
+        use bevy::asset::LoadContext;
+        use bevy::gltf::{
+            Gltf, GltfLoaderSettings, GltfPlugin,
+            extensions::{ErasedGltfExtensionHandler, GltfExtensionHandler, GltfExtensionHandlers},
+            gltf,
+        };
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        #[derive(Clone)]
+        struct ModelDepth {
+            entered: mpsc::Sender<()>,
+            queued: Arc<Mutex<mpsc::Receiver<()>>>,
+            active: Arc<AtomicUsize>,
+            peak: Arc<AtomicUsize>,
+        }
+
+        impl GltfExtensionHandler for ModelDepth {
+            fn dyn_clone(&self) -> Box<dyn ErasedGltfExtensionHandler> {
+                Box::new(self.clone())
+            }
+
+            fn on_root(
+                &mut self,
+                context: &mut LoadContext<'_>,
+                _: &gltf::Gltf,
+                _: &GltfLoaderSettings,
+            ) {
+                let depth = self.active.fetch_add(1, Ordering::Relaxed) + 1;
+                self.peak.fetch_max(depth, Ordering::Relaxed);
+                if context.path().path() == Path::new("first.gltf") {
+                    self.entered.send(()).unwrap();
+                    self.queued
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(10))
+                        .unwrap();
+                }
+            }
+
+            fn on_texture(&mut self, texture: &gltf::Texture, _: Handle<Image>) {
+                if texture.index() == 1 {
+                    self.active.fetch_sub(1, Ordering::Relaxed);
+                }
+            }
+        }
+
+        crate::io_pool::make(1);
+        let (root, others) = textured_gltf_files();
+        let mut app = image_app(&root);
+        app.add_plugins(GltfPlugin::default());
+        let (entered, first_entered) = mpsc::channel();
+        let (send_queued, queued) = mpsc::channel();
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let probe = ModelDepth {
+            entered,
+            queued: Arc::new(Mutex::new(queued)),
+            active: active.clone(),
+            peak: peak.clone(),
+        };
+        app.world()
+            .resource::<GltfExtensionHandlers>()
+            .0
+            .try_write()
+            .unwrap()
+            .push(Box::new(probe));
+        app.finish();
+        app.cleanup();
+        let server = app.world().resource::<AssetServer>().clone();
+        let first = server.load::<Gltf>(crate::manifest::cache_path("first.gltf"));
+        first_entered
+            .recv_timeout(Duration::from_secs(10))
+            .expect("first model reached the loader");
+        let others: Vec<_> = others
+            .iter()
+            .map(|path| server.load::<Gltf>(crate::manifest::cache_path(path)))
+            .collect();
+        send_queued.send(()).unwrap();
+        update_until(&mut app, || {
+            server.is_loaded(first.id())
+                && others.iter().all(|handle| server.is_loaded(handle.id()))
+        });
+        assert_eq!(active.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            peak.load(Ordering::Relaxed),
+            1,
+            "a model ran another queued model on its own IO stack while resolving its textures"
+        );
     }
 
     #[test]
@@ -1597,7 +1745,11 @@ mod desktop {
     /// in memory.
     pub enum Served {
         File(CacheFile),
-        Memory(bevy::asset::io::VecReader),
+        Memory {
+            bytes: bevy::asset::io::VecReader,
+            // The asset server borrows the reader for the whole loader future.
+            _model_slot: Option<async_lock::SemaphoreGuard<'static>>,
+        },
     }
 
     impl AsyncRead for Served {
@@ -1608,7 +1760,7 @@ mod desktop {
         ) -> Poll<std::io::Result<usize>> {
             match self.get_mut() {
                 Served::File(file) => Pin::new(file).poll_read(cx, buf),
-                Served::Memory(bytes) => Pin::new(bytes).poll_read(cx, buf),
+                Served::Memory { bytes, .. } => Pin::new(bytes).poll_read(cx, buf),
             }
         }
     }
@@ -1620,14 +1772,14 @@ mod desktop {
         ) -> StackFuture<'a, std::io::Result<usize>, STACK_FUTURE_SIZE> {
             match self {
                 Served::File(file) => file.read_to_end(buf),
-                Served::Memory(bytes) => bytes.read_to_end(buf),
+                Served::Memory { bytes, .. } => bytes.read_to_end(buf),
             }
         }
 
         fn seekable(&mut self) -> Result<&mut dyn SeekableReader, ReaderNotSeekableError> {
             match self {
                 Served::File(file) => file.seekable(),
-                Served::Memory(bytes) => bytes.seekable(),
+                Served::Memory { bytes, .. } => bytes.seekable(),
             }
         }
     }

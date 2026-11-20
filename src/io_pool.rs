@@ -1,20 +1,17 @@
-//! The asset loaders' threads, with stacks of their own size.
-//!
-//! Bevy's glTF loader waits for a model's textures by running the pool's other tasks on the
-//! loading thread, so the models being loaded nest on one stack, deeper the fewer loader
-//! threads there are. A thread's default 2 MiB held it with four loader threads and overflowed
-//! with fewer (a machine, or a job, with few cores gets one loader thread per four cores), the
-//! client aborting while it loaded its models. Stacks are address space until used, so these
-//! are roomy.
+//! The process-wide pool used by the client and its asset-loading fixtures.
 
+use std::sync::OnceLock;
+
+use async_lock::{Semaphore, SemaphoreGuard};
 use bevy::tasks::{IoTaskPool, TaskPoolBuilder};
 
 /// A loader thread's stack.
 pub const STACK_BYTES: usize = 64 << 20;
+const MAX_WORKERS: usize = 4;
 
 /// Loader threads as Bevy's default assigns them to `cores`: a quarter of them, one to four.
 pub fn threads_for(cores: usize) -> usize {
-    ((cores as f32 / 4.0).round() as usize).clamp(1, 4)
+    ((cores as f32 / 4.0).round() as usize).clamp(1, MAX_WORKERS)
 }
 
 /// Makes the process's IO task pool with `threads` threads of [`STACK_BYTES`], before the app's
@@ -34,14 +31,24 @@ pub fn make_default() {
     make(threads_for(bevy::tasks::available_parallelism()));
 }
 
-/// [`make`] for a test process, with the four threads a machine of sixteen cores gets. A test
-/// that builds an app with plugins that make the task pools (`MinimalPlugins`, Bevy's default
-/// plugins) calls it first: the pool is the process's and made once, and `TaskPoolPlugin`
-/// makes it with Bevy's default 2 MiB stacks when it finds none, which the models a client
-/// test loads overflow. The harness calls it for its clients; later calls leave the pool.
+/// glTF's texture scope can run another queued model on the current worker.
+/// Cap live model readers across all asset servers to bound that stack depth.
+pub async fn model_slot() -> SemaphoreGuard<'static> {
+    static MODELS: OnceLock<Semaphore> = OnceLock::new();
+    MODELS
+        .get_or_init(|| {
+            make_default();
+            Semaphore::new(IoTaskPool::get().thread_num().clamp(1, MAX_WORKERS))
+        })
+        .acquire()
+        .await
+}
+
+/// Start the production pool before any app fixture adds plugins that initialize task pools.
+/// The first initialization sets the configuration for the entire test process.
 #[cfg(test)]
 pub fn make_for_tests() {
-    make(4);
+    make_default();
 }
 
 #[cfg(test)]

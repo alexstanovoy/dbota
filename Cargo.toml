@@ -4,6 +4,7 @@ members = [".", "crates/dbota_bevy", "crates/dbota_import", "crates/dbota_import
 default-members = [".", "crates/dbota_import", "crates/dbota_particles"]
 
 [workspace.dependencies]
+async-lock = { version = "3.5.0", default-features = false, features = ["std"] }
 winapi-util = { version = "0.1.11", default-features = false }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 skrifa = { version = "=0.42.1", default-features = false, features = ["std"] }
@@ -75,6 +76,7 @@ dbota_particles.workspace = true
 # wss:// and the matchmaking menu (radovid and the way into a game it hands out) on the desktop: threads and
 # sockets; a browser build has the browser's own WebSocket.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+async-lock.workspace = true
 bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui", "websocket"] }
 # The system's fonts stand behind the shipped ones for scripts they lack; fontconfig is opened at
 # run time, so building needs no development package and a machine without it just has no system fonts.

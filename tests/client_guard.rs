@@ -1228,6 +1228,7 @@ const KNOWN_VARIABLES: &[(&str, &str)] = &[
     ("DBOTA_SERVER_SCRUB_CHILD", CHILD_MARKER),
     ("DBOTA_PLAY_SCRIPT_CHILD", CHILD_MARKER),
     ("DBOTA_TEST_SHIELD_STACK_CHILD", CHILD_MARKER),
+    ("DBOTA_TEST_TEXTURED_MODEL_STACK_CHILD", CHILD_MARKER),
     (
         "DBOTA_IMPORTED",
         "the importer's tests name an imported cache to read",
