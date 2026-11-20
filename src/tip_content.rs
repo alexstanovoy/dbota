@@ -235,8 +235,12 @@ impl Lookup<'_> {
         let def = ability_def(AbilityId(id))?;
         let subject = Subject::Ability(AbilityId(id), def);
         let entry = self.entry("ability", id);
+        let title = entry
+            .map(|entry| entry.name.as_str())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| self.texts.name(def.key));
         let mut content = Content {
-            title: self.texts.name(def.key).to_owned(),
+            title: title.to_owned(),
             icon: self.manifest.ability_icon(id),
             level: (max_level > 1).then(|| format!("Level {level}")),
             ..Content::default()
@@ -590,6 +594,51 @@ fn plain_ability(content: &mut Content, def: &'static AbilityDef) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_neutral_spell_tooltips_keep_the_current_names_without_the_cache() {
+        let manifest = Manifest::load(std::path::Path::new("/nonexistent"));
+        let texts = Texts::load(&manifest.root);
+        let look = Lookup {
+            texts: &texts,
+            manifest: &manifest,
+            rates: tip_numbers::Rates::default(),
+        };
+        use bota_core::NeutralAbility as Ability;
+        for (ability, expected) in [
+            (Ability::StealWeaponCast, "Steal Weapon"),
+            (Ability::SnowballShot, "Snowball Shot"),
+            (Ability::SearingSwoop, "Searing Swoop"),
+        ] {
+            assert_eq!(
+                look.ability(ability.id().0, 1, 4).expect("a tooltip").title,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn replacement_neutral_spell_tooltips_use_the_imported_name() {
+        let root = std::env::var_os("DBOTA_ASSETS")
+            .filter(|path| !path.is_empty())
+            .map(std::path::PathBuf::from)
+            .expect("DBOTA_ASSETS must name the test asset cache");
+        let manifest = Manifest::load(&root);
+        let texts = Texts::load(&manifest.root);
+        let look = Lookup {
+            texts: &texts,
+            manifest: &manifest,
+            rates: tip_numbers::Rates::default(),
+        };
+        let id = bota_core::NeutralAbility::SearingSwoop.id().0;
+        let imported = look
+            .entry("ability", id)
+            .expect("the Searing Swoop localization");
+        assert_eq!(
+            look.ability(id, 1, 4).expect("a tooltip").title,
+            imported.name
+        );
+    }
 
     /// Whether two lists of numbers state the same quantities.
     fn same(a: &[String], b: &[String]) -> bool {
