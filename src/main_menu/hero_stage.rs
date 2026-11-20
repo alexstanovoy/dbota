@@ -75,10 +75,8 @@ pub(crate) struct HeroStage {
     render: bool,
     /// Whether the stage was made for a screen of its own (lit stronger).
     lit: bool,
-    /// The hero's turn on the hero page (see [`super::hero_turn`]), and whether it changed in
-    /// this frame: a turning hero is drawn every frame, not at the idle pace.
+    /// The hero's turn on the hero page (see [`super::hero_turn`]).
     pub(super) turntable: super::hero_turn::Turntable,
-    pub(super) turning: bool,
     /// The part of the picture the hero covers through its idle cycle, in the picture's pixels.
     silhouette: Option<Rect>,
 }
@@ -282,7 +280,6 @@ fn select(
         stage.reference = Vec::new();
         stage.warmup = 0;
         stage.turntable = default();
-        stage.turning = false;
         stage.silhouette = None;
         stage.hero = hero;
         stage.lit = front;

@@ -233,8 +233,7 @@ fn turn(
     };
     let before = stage.turntable.yaw();
     stage.turntable.step(time.delta(), dragged, gripped);
-    stage.turning = stage.turntable.yaw() != before;
-    if stage.turning
+    if stage.turntable.yaw() != before
         && let Ok(mut at) = pivots.get_mut(pivot)
     {
         at.rotation = Quat::from_rotation_y(stage.turntable.yaw());
