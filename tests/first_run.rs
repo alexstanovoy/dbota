@@ -179,7 +179,7 @@ fn an_up_to_date_import_reports_and_preserves_the_users_backup() {
     let plan = dbota_import::import::plan().unwrap();
     let stamp = dbota_import::cache_dir::stamp(
         &install.join("game/dota"),
-        &dbota_import::import::plan_id(&plan),
+        &dbota_import::import::plan_id(plan),
     )
     .unwrap();
     std::fs::write(cache.join("stamp.txt"), stamp).unwrap();
