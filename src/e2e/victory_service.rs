@@ -21,7 +21,9 @@ fn service_with_cheats(mode: &str, save_replays: bool) -> crate::main_menu::test
     crate::main_menu::tests::start_service(save_replays, |mut config| {
         let ruleset = config.find(&format!("id = \"{mode}\"")).expect("the ruleset");
         let args = ruleset + config[ruleset..].find("args = [").expect("its arguments");
-        config.insert_str(args + "args = [".len(), "\"--cheats\", ");
+        // The local fixture for the two-player result needs cheats with two reserved seats.
+        let cheats = if mode == "solo_mid" { "\"--lobby-cheats\", " } else { "\"--cheats\", " };
+        config.insert_str(args + "args = [".len(), cheats);
         config
     })
 }

@@ -100,6 +100,7 @@ pub struct Run {
     pub cue: String,
     /// Seconds since the decision, on the real clock.
     pub elapsed: f32,
+    began_at: std::time::Duration,
     /// How long it lasts: the collapse and the hold.
     pub length: f32,
     /// When it is left: at its length, or sooner when the player goes on.
@@ -145,6 +146,7 @@ struct Sounds {
     win: [Option<Handle<AudioSource>>; 2],
     lose: [Option<Handle<AudioSource>>; 2],
     victory: [Option<Handle<AudioSource>>; 2],
+    destruction: [Option<String>; 2],
 }
 
 /// The loudness of a stinger before the player's balance: its event's own
@@ -186,6 +188,8 @@ struct Darkening;
 /// The root of what the end draws, which the interface's stepping back leaves alone.
 #[derive(Component)]
 struct FinaleUi;
+#[derive(Component)]
+struct FinaleAudio;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Finale>()
@@ -219,6 +223,11 @@ fn load_sounds(mut finale: ResMut<Finale>, manifest: Res<Manifest>, server: Res<
         finale.sounds.win[at] = load(format!("sound.music.{side}_win"));
         finale.sounds.lose[at] = load(format!("sound.music.{side}_lose"));
         finale.sounds.victory[at] = load(format!("sound.announcer.victory.{side}"));
+        finale.sounds.destruction[at] = manifest
+            .sounds_with_events(&format!("sound.ancient.destroyed.{side}"))
+            .into_iter()
+            .map(|(_, event)| event)
+            .next();
     }
 }
 
@@ -280,16 +289,15 @@ fn begin(
     camera: Single<&RtsCamera>,
     settings: Res<crate::config::Settings>,
     fonts: Res<crate::ui::Fonts>,
+    time: Res<Time<Real>>,
+    mut mixer: ResMut<crate::mixer::Mixer>,
+    audio: Query<Entity, With<FinaleAudio>>,
 ) {
     let core = &session.0;
     if core.over.is_none() {
         if let Some(run) = finale.run.take() {
-            // The music may have ended by itself, or with the match's sounds.
-            for entity in [Some(run.ui), run.music].into_iter().flatten() {
-                if let Ok(mut gone) = commands.get_entity(entity) {
-                    gone.try_despawn();
-                }
-            }
+            commands.entity(run.ui).try_despawn();
+            stop_audio(&mut commands, &audio);
         }
         return;
     }
@@ -310,6 +318,10 @@ fn begin(
     let shot = Vec3::new(x, ground.at(x, y) + SHOT_HEIGHT, -y);
     let viewer = viewer_of(core, winner);
     let length = LONGEST_SECS;
+    mixer.only_event(
+        &mut commands,
+        finale.sounds.destruction[side(fallen)].clone(),
+    );
     let (cue, stinger) = match viewer {
         Viewer::Loser => (
             format!("sound.music.{}_lose", side_name(fallen)),
@@ -331,6 +343,7 @@ fn begin(
                 AudioPlayer::new(source),
                 PlaybackSettings::DESPAWN.with_volume(Volume::Linear(music_gain)),
                 crate::mixer::GameAudio,
+                FinaleAudio,
             ))
             .id()
     });
@@ -340,6 +353,7 @@ fn begin(
         viewer,
         cue,
         elapsed: 0.0,
+        began_at: time.elapsed(),
         length,
         ends_at: length,
         shot,
@@ -359,6 +373,12 @@ fn begin(
             "the end: {:?} won, seen by a {:?}, {} plays, {:.1} s",
             run.winner, run.viewer, run.cue, run.length
         );
+    }
+}
+
+fn stop_audio(commands: &mut Commands, audio: &Query<Entity, With<FinaleAudio>>) {
+    for entity in audio {
+        commands.entity(entity).try_despawn();
     }
 }
 
@@ -532,12 +552,14 @@ fn advance(
     mut dark: Query<&mut BackgroundColor, With<Darkening>>,
     mut tuned: Query<&mut Tuned>,
     menu: Option<NonSendMut<crate::main_menu::MenuCore>>,
+    mut mixer: ResMut<crate::mixer::Mixer>,
+    audio: Query<Entity, With<FinaleAudio>>,
 ) {
     let finale = &mut *finale;
     let Some(run) = finale.run.as_mut() else {
         return;
     };
-    run.elapsed += time.delta_secs();
+    run.elapsed = time.elapsed().saturating_sub(run.began_at).as_secs_f32();
     let t = run.elapsed;
     let shown = t >= CAPTION_SECS;
     let darkness = ease((t - (run.ends_at - FADE_SECS)) / FADE_SECS);
@@ -549,7 +571,7 @@ fn advance(
     {
         tuned.base = run.music_gain * (1.0 - darkness);
     }
-    if shown && !run.announced {
+    if shown && t < run.ends_at && !run.announced {
         run.announced = true;
         if let Some(line) = finale.sounds.victory[side(run.winner)].clone() {
             commands.spawn((
@@ -560,17 +582,15 @@ fn advance(
                 AudioPlayer::new(line),
                 PlaybackSettings::DESPAWN,
                 crate::mixer::GameAudio,
+                FinaleAudio,
             ));
         }
     }
     if t >= run.ends_at && !run.left {
         run.left = true;
-        // Faded out, the stinger stops with the end rather than play on unheard.
-        if let Some(music) = run.music.take()
-            && let Ok(mut gone) = commands.get_entity(music)
-        {
-            gone.try_despawn();
-        }
+        stop_audio(&mut commands, &audio);
+        mixer.close(&mut commands);
+        run.music = None;
         if let Some(mut menu) = menu {
             menu.end_shown();
         }

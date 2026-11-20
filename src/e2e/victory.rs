@@ -433,21 +433,23 @@ fn escape_during_the_end_goes_on_after_its_fade_and_a_click_skips_nothing() {
         client.world().resource::<Finale>().showing(),
         "a click skips nothing"
     );
+    let length = finale(&client).length;
+    let start = now(&client) - finale(&client).elapsed;
     client.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
-    let pressed = finale(&client).elapsed;
+    let pressed = now(&client) - start;
     while !post_game_shown(&client) {
         assert!(
-            finale(&client).elapsed < pressed + 1.0,
+            now(&client) - start < pressed + 1.0,
             "the post-game screen within the fade of the Escape"
         );
         client.step_frames(1);
     }
-    let left = finale(&client).elapsed;
+    let left = now(&client) - start;
     assert!(
         left >= pressed + crate::finale::FADE_SECS - FRAME.as_secs_f32(),
         "the end faded out first: Escape at {pressed} s, left at {left} s"
     );
-    assert!(left < finale(&client).length, "the end was cut short");
+    assert!(left < length, "the end was cut short");
 }
 
 /// A connection lost during the end changes nothing of it: it plays to its length, nothing is

@@ -228,12 +228,16 @@ fn play(
     mut scapes: ResMut<Scapes>,
     mut ambience: ResMut<Ambience>,
     mut mixer: ResMut<Mixer>,
+    finale: Option<Res<crate::finale::Finale>>,
 ) {
     let scapes = &mut *scapes;
     let Ok(camera) = camera.single() else {
         return silence(&mut commands, scapes, &mut ambience);
     };
-    if session.0.view().is_none() || session.0.lost {
+    if session.0.view().is_none()
+        || session.0.lost
+        || finale.is_some_and(|finale| finale.run.is_some())
+    {
         return silence(&mut commands, scapes, &mut ambience);
     }
     let ear = Vec2::new(camera.focus.x, -camera.focus.z);

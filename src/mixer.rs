@@ -136,6 +136,8 @@ pub struct Mixer {
     warned: HashSet<String>,
     /// No match is on to sound: nothing starts.
     closed: bool,
+    /// During the end of a match, only the Ancient's destruction is heard from the world.
+    only_event: Option<String>,
     /// How many times the game's sounds were ended, for what queues outside the mixer.
     ends: u32,
     /// The mix groups and the levels of the default mix.
@@ -397,7 +399,7 @@ impl Mixer {
         class: VoiceClass,
     ) -> Started {
         self.drop_ended(commands, now);
-        if self.closed {
+        if self.closed || self.only_event.as_deref().is_some_and(|event| event != request.event) {
             return Started::Refused;
         }
         if class == VoiceClass::Ambience
@@ -690,6 +692,7 @@ impl Mixer {
             self.ends += 1;
         }
         self.closed = true;
+        self.only_event = None;
         self.recent.clear();
         for layer in &mut self.layers {
             layer.amounts.fill(0.0);
@@ -697,6 +700,13 @@ impl Mixer {
         for voice in self.voices.drain(..) {
             commands.entity(voice.entity).try_despawn();
         }
+    }
+
+    /// Clears gameplay voices and accepts only the event accompanying the final scene.
+    pub fn only_event(&mut self, commands: &mut Commands, event: Option<String>) {
+        self.close(commands);
+        self.closed = event.is_none();
+        self.only_event = event;
     }
 
     /// How many times the game's sounds were ended.
@@ -707,6 +717,7 @@ impl Mixer {
     /// Lets voices start again.
     pub fn open(&mut self) {
         self.closed = false;
+        self.only_event = None;
     }
 
     /// Stops every loop at once, owners gone: no match is on to sound. One-shots play out.
@@ -991,7 +1002,11 @@ fn end_with_the_match(
     mut mixer: ResMut<Mixer>,
     audio: Query<Entity, With<GameAudio>>,
     mut seen: Local<(u32, bool)>,
+    finale: Option<Res<crate::finale::Finale>>,
 ) {
+    if finale.is_some_and(|finale| finale.run.is_some()) {
+        return;
+    }
     let core = &session.0;
     let (seen_epoch, had_match) = &mut *seen;
     let live = core.view().is_some() && !core.lost;

@@ -237,7 +237,9 @@ fn caption_pixels(frame: &[u8], size: UVec2, winner: Team) -> usize {
         for x in columns.clone() {
             let at = ((y * size.x + x) * 4) as usize;
             let (word, glow) = words_and_glow(winner, [frame[at], frame[at + 1], frame[at + 2]]);
-            count += usize::from(word || glow);
+            // A dark part of the terrain can be the same black as Dire's text. Its red
+            // outline is the signal that the letters are visible.
+            count += usize::from(glow || (winner == Team::Radiant && word));
         }
     }
     count
