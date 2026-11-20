@@ -559,7 +559,7 @@ def wait_browser_state(page, observe, what, timeout):
     raise AssertionError(f"timed out waiting for {what}")
 
 
-def check_fullscreen_page(directory):
+def check_fullscreen_page(directory, shots=False):
     """Windowed fullscreen in Settings puts the canvas fullscreen (inside the click's gesture), the
     page leaving it (Esc) turns the setting back, and F11 is the same fullscreen. Headless Chromium
     keeps its viewport, so the canvas filling a bigger screen is not seen here."""
@@ -568,7 +568,9 @@ def check_fullscreen_page(directory):
         page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
         wait_loading_cover(page, console)
-        shot = lambda name: page.screenshot(path=str(HERE.parent.parent / f"temp/smoke-{name}.png"), timeout=600000)
+        def shot(name):
+            if shots:
+                page.screenshot(path=str(HERE.parent.parent / f"temp/smoke-{name}.png"), timeout=600000)
 
         def fullscreen_becomes(entered, what):
             # The state itself, polled: how long a loaded machine takes to draw and handle a click
@@ -1933,7 +1935,8 @@ def main():
     ap.add_argument("--pixels-page", type=pathlib.Path, help="a replay build: the canvas drawn at its device pixels")
     ap.add_argument("--replays-page", type=pathlib.Path, help="a build without a replay: a match through radovid is kept in OPFS")
     ap.add_argument("--radovid", help="the radovid binary, for --replays-page (with --server)")
-    ap.add_argument("--shots", action="store_true", help="--replays-page saves a screenshot of every step to temp/smoke-replays")
+    ap.add_argument("--shots", action="store_true", help="save screenshots during the replay or fullscreen check")
+    ap.add_argument("--only-wire", action="store_true", help="skip the import test even where an install is found")
     args = ap.parse_args()
     if args.sound_page:
         check_sound_page(args.sound_page)
@@ -1955,7 +1958,7 @@ def main():
     if args.scene_page:
         check_scene_page(args.scene_page)
     if args.fullscreen_page:
-        check_fullscreen_page(args.fullscreen_page)
+        check_fullscreen_page(args.fullscreen_page, args.shots)
     if args.cursor_page:
         check_cursor_page(args.cursor_page)
     if args.cursor_input_page:
