@@ -571,8 +571,6 @@ pub(crate) fn scale_ui(
     settings: Res<Settings>,
     hud: Res<HudShown>,
     parts: Query<(&Extent, &ComputedNode)>,
-    demo: Query<(), With<crate::demo::PanelBody>>,
-    demo_root: Query<&Node, With<crate::demo::PanelRoot>>,
     mut ui_scale: ResMut<UiScale>,
 ) {
     let height = if hud.0 {
@@ -589,13 +587,7 @@ pub(crate) fn scale_ui(
             .fold(Vec2::ZERO, Vec2::max)
     };
     let fit = if hud.0 {
-        let mut fit = fitting_scale(window.size(), size);
-        if !demo.is_empty()
-            && let Ok(root) = demo_root.single()
-        {
-            fit = fit.min((window.height() - FIT_ROUNDING) / crate::demo::fitting_height(root));
-        }
-        fit
+        fitting_scale(window.size(), size)
     } else {
         window.width() / MENU_WIDTH
     };

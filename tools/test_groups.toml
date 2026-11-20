@@ -207,6 +207,7 @@ tests = [
         "e2e::lobbies::",
         "e2e::ui_phase::",
         "e2e::controls::",
+        "demo::tests::",
         "e2e::demo::",
         "e2e::cursors::",
         "e2e::pregame::",

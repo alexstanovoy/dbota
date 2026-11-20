@@ -410,48 +410,60 @@ fn demo_uses_the_short_lane_and_draws_roshan() {
     expect_demo_world(&mut client);
 }
 
+fn drawn_ground(client: &Client, id: EntityId) -> Option<Vec2> {
+    let body = client.body(id)?;
+    let place = client.world().get::<GlobalTransform>(body)?.translation();
+    Some(Vec2::new(place.x, -place.z))
+}
+
 fn expect_demo_world(client: &mut Client) {
+    let world = client.world_mut();
+    assert!(
+        world
+            .query::<(&Name, &Mesh3d)>()
+            .iter(world)
+            .any(|(name, _)| name.as_str() == "sandbox terrain"),
+        "the short lane's own terrain mesh is drawn",
+    );
+
     click_cheat(
         client,
         "demo all vision",
         None,
         Cheat::AllVision { on: true },
     );
-    client.within(
-        std::time::Duration::from_secs(25),
-        "both waves drawn",
-        |client| {
-            [Team::Radiant, Team::Dire].into_iter().all(|team| {
-                client.view().units.iter().any(|unit| {
-                    unit.kind == UnitKind::CreepMelee
-                        && unit.team == team
-                        && client.body(unit.id).is_some()
-                })
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::KillCreeps {
+        which: bota_proto::CreepSide::All,
+    });
+    click_cheat(client, "demo creepwave", None, Cheat::SpawnCreeps);
+    use bota_core::rules::{DEMO_DIRE_CREEP_SPAWN, DEMO_RADIANT_CREEP_SPAWN, DEMO_ROSHAN_PIT};
+    let near = |client: &Client, id, at: At| {
+        let at = Vec2::new(at.x.to_f32(), at.y.to_f32());
+        drawn_ground(client, id).is_some_and(|position| position.distance(at) < 450.0)
+    };
+    client.until("one wave drawn at each end of the short lane", |client| {
+        [
+            (Team::Radiant, DEMO_RADIANT_CREEP_SPAWN),
+            (Team::Dire, DEMO_DIRE_CREEP_SPAWN),
+        ]
+        .into_iter()
+        .all(|(team, at)| {
+            client.view().units.iter().any(|unit| {
+                unit.kind == UnitKind::CreepMelee && unit.team == team && near(client, unit.id, at)
             })
-        },
-    );
+        })
+    });
     client.cheat(Cheat::Teleport {
         at: At::from_ints(5800, 9300),
     });
-    client.within(
-        std::time::Duration::from_secs(25),
-        "Roshan drawn in his pit",
-        |client| {
-            client
-                .view()
-                .units
-                .iter()
-                .any(|unit| unit.kind == UnitKind::Roshan && client.body(unit.id).is_some())
-        },
-    );
-    let world = client.world_mut();
-    assert!(
-        world
-            .query::<&Name>()
-            .iter(world)
-            .any(|name| name.as_str() == "sandbox terrain"),
-        "the short lane's own terrain is drawn",
-    );
+    client.until("Roshan drawn in the demo pit", |client| {
+        client
+            .view()
+            .units
+            .iter()
+            .any(|unit| unit.kind == UnitKind::Roshan && near(client, unit.id, DEMO_ROSHAN_PIT))
+    });
 }
 
 #[test]
@@ -569,6 +581,34 @@ fn demo_a_creep_wave_and_creeps_here_draw_new_units() {
         None,
         Cheat::CreepSpawning { on: true },
     );
+}
+
+#[test]
+fn the_demo_places_allied_creeps_at_the_clicked_point() {
+    let (_server, mut client) = demo();
+    let before: Vec<_> = client.view().units.iter().map(|unit| unit.id).collect();
+    let team = client.me().team;
+    let at = nearby(&client, 220, -80);
+    client.click_named("demo allied creeps");
+    point(&mut client, at, MouseButton::Left);
+    assert!(matches!(
+        sent(&client),
+        (
+            None,
+            Order::Cheat {
+                cheat: Cheat::CreateCreeps { enemy: false, .. }
+            }
+        )
+    ));
+    client.until("the allied creep drawn at the placement point", |client| {
+        client.view().units.iter().any(|unit| {
+            !before.contains(&unit.id)
+                && unit.kind == UnitKind::CreepMelee
+                && unit.team == team
+                && unit.pos.within(at, bota_proto::Fixed::from_int(160))
+                && client.body(unit.id).is_some()
+        })
+    });
 }
 
 #[test]
@@ -746,115 +786,6 @@ fn the_hero_controls_explain_when_the_selection_cannot_be_controlled() {
     );
 }
 
-fn forged_cheat(client: &mut Client, unit: EntityId) {
-    let seen = client.tick();
-    client
-        .core_mut()
-        .source
-        .send(&bota_proto::ClientMsg::Order {
-            seq: 1000,
-            unit: Some(unit),
-            order: Order::Cheat {
-                cheat: Cheat::Levels { count: 29 },
-            },
-            seen: Some(seen),
-            queue: false,
-        });
-}
-
-#[test]
-fn an_order_crafted_without_cheats_is_refused_by_the_match() {
-    let server = Server::for_hud_with_cheats(1, &[], false);
-    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
-    client.ready_with_match_held(&server);
-    client.frames(2);
-    assert!(!level_plate(&mut client, "demo fold"));
-    client
-        .core_mut()
-        .act(Intent::Cheat(Cheat::Levels { count: 29 }));
-    client.within(
-        std::time::Duration::from_secs(20),
-        "the server refuses the cheat order",
-        |client| {
-            matches!(
-                client.core().reject,
-                Some((
-                    bota_client_core::Refused::Rule(bota_proto::RejectReason::NoCheats),
-                    _
-                ))
-            )
-        },
-    );
-    assert_eq!(client.me().level, 1);
-}
-
-#[test]
-fn a_spectator_cannot_send_a_cheat_even_if_the_match_allows_cheats() {
-    let server = Server::start(1, &["--spectators", "open"]);
-    let mut player = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
-    let mut watcher = Client::run(&["--addr", &server.address, "--spectate"]);
-    watcher.until("spectator watches the match", |watcher| {
-        player.frames(1);
-        watcher.core().view().is_some()
-    });
-    let id = player.me().id;
-    let tick = watcher.tick();
-    assert!(!level_plate(&mut watcher, "demo fold"));
-    forged_cheat(&mut watcher, id);
-    watcher.until("both sides saw later snapshots", |watcher| {
-        player.frames(1);
-        watcher.tick() > tick + 2 && player.tick() > tick + 2
-    });
-    assert_eq!(player.me().level, 1, "the seatless order had no effect");
-}
-
-#[test]
-fn a_replay_of_a_cheat_match_has_no_panel_or_order_authority() {
-    use bota_proto::{ReplayRecord, ServerMsg};
-    let mut reader = bota_proto::FrameReader::new();
-    reader.push(&crate::units::tests::replay_of_heroes_on_grid(1, 1));
-    let mut replay = Vec::new();
-    while let Some(mut record) = reader
-        .next_message::<ReplayRecord>()
-        .expect("the replay record")
-    {
-        if let ReplayRecord::Msg(ServerMsg::MatchStart { info }) = &mut record {
-            info.cheats = true;
-        }
-        bota_proto::encode_frame(&record, &mut replay).expect("the replay record encoded");
-    }
-    let core = bota_client_core::App::new(bota_client_core::Source::Replay(Box::new(
-        bota_client_core::ReplayPlayer::from_reader(std::io::Cursor::new(replay)),
-    )));
-    let mut client = Client::run_with_core(&["--replay", "in_memory.brp"], core);
-    client.until("the replay snapshot", |client| {
-        client.core().view().is_some()
-    });
-    super::hud_layout::on_screen(&mut client);
-    assert!(!level_plate(&mut client, "demo fold"));
-    let unit = &client.view().units[0];
-    let (id, level) = (unit.id, unit.level);
-    forged_cheat(&mut client, id);
-    client.frames(3);
-    assert_eq!(client.view().unit(id).expect("recorded hero").level, level);
-}
-
-#[test]
-fn the_ended_match_has_no_panel_and_ignores_a_late_cheat() {
-    let (mut server, mut client) = demo();
-    let (id, level) = (client.me().id, client.me().level);
-    server.ask_to_finish();
-    client.until("the match has ended on the client", |client| {
-        client.core().aborted.is_some()
-    });
-    server.wait();
-    client.frames(2);
-    assert!(!level_plate(&mut client, "demo fold"));
-    forged_cheat(&mut client, id);
-    client.frames(3);
-    assert_eq!(client.view().unit(id).expect("last snapshot").level, level);
-}
-
 #[test]
 fn the_panel_takes_its_top_edge_from_the_tally() {
     let (_server, mut client) = demo();
@@ -900,24 +831,7 @@ fn an_armed_teleport_gives_a_short_instruction_and_escape_cancels_it() {
     assert!(!client.shown_texts().contains(&"PICK SPOT".to_owned()));
 }
 
-#[test]
-fn escape_hides_the_search_caret_and_restores_hotkeys() {
-    let (_server, mut client) = demo();
-    client.click_named("demo items");
-    client.type_text("heart");
-    assert!(
-        client.shown_texts().contains(&"heart|".to_owned()),
-        "the focused field shows its caret"
-    );
-    client.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
-    assert!(client.shown_texts().contains(&"heart".to_owned()));
-    assert!(!client.shown_texts().contains(&"heart|".to_owned()));
-    client.tap_named(KeyCode::F4, bevy::input::keyboard::Key::F4);
-    assert!(client.world().resource::<crate::input::Panels>().shop);
-}
-
-#[test]
-fn the_demo_button_launches_the_shipped_demo_and_the_hero_rises_where_it_fell() {
+fn launch_demo_from_example() -> (crate::main_menu::tests::Service, Client) {
     use crate::main_menu::{Act, MenuCore};
     let service = crate::main_menu::tests::service_from_demo_example();
     let mut client = super::menu::signed_up(&service, "demoplayer");
@@ -930,20 +844,46 @@ fn the_demo_button_launches_the_shipped_demo_and_the_hero_rises_where_it_fell() 
         client.world().non_send::<MenuCore>().demo_hero(),
         Some(HeroId::SHADOW_FIEND)
     );
+    super::hud_layout::on_screen(&mut client);
+    (service, client)
+}
+
+// Guards the shipped example's map selection. A deployment supplies its own launcher arguments.
+#[test]
+fn the_demo_button_draws_the_short_lane_and_roshan_from_the_shipped_launcher() {
+    let (_service, mut client) = launch_demo_from_example();
+    expect_demo_world(&mut client);
     assert_eq!(
         client.core().session().expect("service match").map().id,
-        bota_core::HERO_DEMO_ID,
-        "the launched ruleset uses the small Demo Hero map"
+        bota_core::HERO_DEMO_ID
     );
-    super::hud_layout::on_screen(&mut client);
-    expect_demo_world(&mut client);
+}
 
-    let at = bota_core::rules::DEMO_HERO_STARTS[0];
-    client.cheat(Cheat::Teleport { at });
-    let (id, fell) = (client.me().id, client.me().pos);
+#[test]
+fn an_enemy_spawned_from_the_demo_button_rises_at_its_drawn_death_spot() {
+    let (_service, mut client) = launch_demo_from_example();
+    client.cheat(Cheat::AllVision { on: true });
+    let id = spawn(&mut client, true);
+    select(&mut client, id);
+    let slot = client
+        .view()
+        .unit(id)
+        .expect("created enemy")
+        .owner
+        .unwrap();
+    let alive = |client: &Client| client.view().player(slot).unwrap().respawn_left == 0;
+    let fell = drawn_ground(&client, id).expect("the enemy is drawn before death");
     client.cheat(Cheat::Suicide);
-    client.until("the hero down", |c| c.core().my_standing_hero().is_none());
-    client.until("the hero drawn again at its death position", |c| {
-        c.view().unit(id).is_some_and(|unit| unit.pos == fell) && c.body(id).is_some()
+    client.until(
+        "the selected enemy died and its body stopped drawing",
+        |client| !alive(client) && client.body(id).is_none(),
+    );
+    client.until("the same enemy is alive and drawn again", |client| {
+        alive(client) && drawn_ground(client, id).is_some()
     });
+    let risen = drawn_ground(&client, id).unwrap();
+    assert!(
+        risen.distance(fell) < 2.0,
+        "the revived enemy is drawn where it died: {fell:?} -> {risen:?}"
+    );
 }

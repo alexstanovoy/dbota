@@ -4,8 +4,9 @@
 use bevy::input::keyboard::Key;
 use bevy::picking::{events::PointerPress, hover::Hovered, pointer::PointerButton};
 use bevy::prelude::*;
-use bevy::ui::InteractionDisabled;
+use bevy::ui::{ComputedNode, InteractionDisabled};
 use bevy::ui_widgets::Button;
+use bevy::window::PrimaryWindow;
 use bota_client_core::{App as Core, Source, world_vec};
 use bota_proto::{Cheat, EntityId, HeroId, ItemId, Order, Vec2};
 
@@ -23,13 +24,7 @@ const TALLY_GAP: f32 = 18.5;
 const MIN_BODY_HEIGHT: f32 = 260.0;
 const BOTTOM: f32 = crate::minimap::SIDE + ui::BAR_MARGIN;
 
-pub(crate) fn fitting_height(root: &Node) -> f32 {
-    let Val::Px(top) = root.top else {
-        unreachable!("the demo panel is inset in pixels")
-    };
-    top + MIN_BODY_HEIGHT + BOTTOM
-}
-const ROW_HEIGHT: f32 = 26.0;
+const ROW_HEIGHT: f32 = 33.0;
 const GAP: f32 = 4.0;
 const PANEL_INSET: f32 = 9.0;
 const CELL_INSET: f32 = 5.0;
@@ -47,7 +42,7 @@ const ENEMY: Color = Color::srgb_u8(108, 53, 51);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Placement {
     Hero { hero: HeroId, enemy: bool },
-    Creeps,
+    Creeps { enemy: bool },
     Teleport(EntityId),
 }
 
@@ -55,7 +50,7 @@ impl Placement {
     fn order(self, at: Vec2) -> (Option<EntityId>, Cheat) {
         match self {
             Self::Hero { hero, enemy } => (None, Cheat::CreateHero { hero, enemy, at }),
-            Self::Creeps => (None, Cheat::CreateCreeps { enemy: true, at }),
+            Self::Creeps { enemy } => (None, Cheat::CreateCreeps { enemy, at }),
             Self::Teleport(hero) => (Some(hero), Cheat::Teleport { at }),
         }
     }
@@ -104,7 +99,7 @@ enum Press {
     Fold,
     SpawnKind(HeroId),
     Spawn(bool),
-    CreepsHere,
+    CreepsHere { enemy: bool },
     Move,
     LevelMax,
     World(Cheat),
@@ -115,15 +110,15 @@ enum Press {
 }
 
 #[derive(Component)]
-pub(crate) struct PanelRoot;
+struct PanelRoot;
 
 #[derive(Component)]
-pub(crate) struct PanelBody;
+struct PanelBody;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<DemoPanel>()
         .add_systems(Startup, spawn_root)
-        .add_systems(Update, anchor_below_tally)
+        .add_systems(Update, position_panel.after(ui::scale_ui))
         .add_systems(
             First,
             crate::loading::reset::<DemoPanel>.in_set(crate::loading::Begin),
@@ -152,15 +147,35 @@ fn spawn_root(mut commands: Commands) {
     ));
 }
 
-fn anchor_below_tally(
+fn position_panel(
     tally: Single<&Node, (With<crate::tally::Tally>, Without<PanelRoot>)>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    scale: Res<UiScale>,
+    extents: Query<(&ui::Extent, &ComputedNode)>,
     mut root: Single<&mut Node, With<PanelRoot>>,
 ) {
-    if let (Val::Px(top), Val::Px(height)) = (tally.top, tally.height) {
-        let wanted = px(top + height + TALLY_GAP);
-        if root.top != wanted {
-            root.top = wanted;
-        }
+    let (Val::Px(tally_top), Val::Px(tally_height), Val::Px(tally_width)) =
+        (tally.top, tally.height, tally.width)
+    else {
+        return;
+    };
+    let below_tally = tally_top + tally_height + TALLY_GAP;
+    let above_map = window.height() / scale.0 - BOTTOM;
+    let (left, top) = if above_map - below_tally >= MIN_BODY_HEIGHT {
+        (0.0, below_tally)
+    } else {
+        // A short window can use the room beside the tally, above the minimap
+        // and below the scoreboard, without reducing the interface scale.
+        let scoreboard = extents
+            .iter()
+            .filter(|(extent, _)| **extent == ui::Extent::TopCentre)
+            .map(|(_, node)| node.size().y * node.inverse_scale_factor())
+            .fold(0.0, f32::max);
+        (tally_width + TALLY_GAP, scoreboard + TALLY_GAP)
+    };
+    if (root.left, root.top) != (px(left), px(top)) {
+        root.left = px(left);
+        root.top = px(top);
     }
 }
 
@@ -169,7 +184,6 @@ fn allowed(core: &Core) -> bool {
         && core.my_slot.is_some()
         && core.view().is_some()
         && core.over.is_none()
-        && core.aborted.is_none()
         && !core.lost
         && core
             .statics()
@@ -228,7 +242,7 @@ fn presses(
                 enemy,
             })
         }
-        Press::CreepsHere => panel.placing = Some(Placement::Creeps),
+        Press::CreepsHere { enemy } => panel.placing = Some(Placement::Creeps { enemy }),
         Press::Move => {
             panel.placing = core
                 .controlled_hero()
@@ -332,7 +346,6 @@ struct Shown {
     spawn: HeroId,
     placing: Option<Placement>,
     selected: Option<(EntityId, HeroId, bool)>,
-    search: String,
     typing: bool,
 }
 
@@ -354,11 +367,11 @@ fn draw(
     hud: Res<ui::HudShown>,
     art: Art,
     root: Single<Entity, With<PanelRoot>>,
-    mut drawn: Local<Option<Shown>>,
+    mut drawn: Local<(Option<Shown>, String)>,
 ) {
     let core = &session.0;
     if !hud.0 || !allowed(core) {
-        if drawn.take().is_some() {
+        if drawn.0.take().is_some() {
             commands.entity(*root).despawn_children();
         }
         return;
@@ -371,18 +384,18 @@ fn draw(
         selected: core
             .controlled_hero()
             .and_then(|hero| Some((hero.unit?, hero.hero, core.created_seat(hero.slot)))),
-        search: panel.search.clone(),
         typing: *typing == Typing::DemoSearch,
     };
-    if drawn.as_ref() != Some(&shown) {
+    if drawn.0.as_ref() != Some(&shown) || drawn.1 != panel.search {
         commands.entity(*root).despawn_children();
         let mut kit = Kit {
             commands: &mut commands,
             art: &art,
             controlled: shown.selected.map(|(_, _, created)| created),
         };
-        kit.build(*root, &shown, panel.scroll);
-        *drawn = Some(shown);
+        kit.build(*root, &shown, &panel.search, panel.scroll);
+        drawn.0 = Some(shown);
+        drawn.1.clone_from(&panel.search);
     }
 }
 
@@ -522,6 +535,7 @@ impl Kit<'_, '_, '_, '_> {
                 if enabled { ui::INK } else { ui::INK_DIM },
             ),
             TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+            bevy::text::LineHeight::RelativeToFont(1.0),
             Node {
                 width: label_width.map_or(Val::Auto, dota),
                 ..default()
@@ -540,6 +554,7 @@ impl Kit<'_, '_, '_, '_> {
             .spawn((
                 Node {
                     column_gap: dota(GAP),
+                    align_items: AlignItems::Stretch,
                     flex_shrink: 0.0,
                     ..default()
                 },
@@ -559,6 +574,11 @@ impl Kit<'_, '_, '_, '_> {
                 cell,
                 Node {
                     width: dota(width),
+                    height: if matches!(cell.press, Press::Grant(_)) {
+                        Val::Auto
+                    } else {
+                        dota(ROW_HEIGHT)
+                    },
                     min_height: dota(ROW_HEIGHT),
                     flex_shrink: 0.0,
                     align_items: AlignItems::Center,
@@ -577,7 +597,7 @@ impl Kit<'_, '_, '_, '_> {
             .commands
             .spawn((
                 Node {
-                    height: dota(20.0),
+                    height: dota(18.0),
                     flex_shrink: 0.0,
                     align_items: AlignItems::Center,
                     overflow: Overflow::clip(),
@@ -590,7 +610,7 @@ impl Kit<'_, '_, '_, '_> {
         self.text(row, text, 13.0, ink);
     }
 
-    fn build(&mut self, root: Entity, shown: &Shown, scroll: f32) {
+    fn build(&mut self, root: Entity, shown: &Shown, search: &str, scroll: f32) {
         if shown.open {
             let body = self
                 .commands
@@ -619,7 +639,7 @@ impl Kit<'_, '_, '_, '_> {
                 ))
                 .id();
             self.spawn_controls(body, shown);
-            self.hero_controls(body, shown);
+            self.hero_controls(body, shown, search);
             self.world_controls(body, shown);
         }
         self.button(
@@ -674,8 +694,24 @@ impl Kit<'_, '_, '_, '_> {
             body,
             &[
                 Cell::new("creepwave", "CREEP WAVE", Press::World(Cheat::SpawnCreeps)),
-                Cell::new("creepsat", "ENEMY CREEPS HERE", Press::CreepsHere),
                 Cell::new("neutrals", "NEUTRALS", Press::World(Cheat::SpawnNeutrals)),
+            ],
+        );
+        self.row(
+            body,
+            &[
+                Cell::new(
+                    "allied creeps",
+                    "ALLIED CREEPS HERE",
+                    Press::CreepsHere { enemy: false },
+                )
+                .fill(ALLY),
+                Cell::new(
+                    "creepsat",
+                    "ENEMY CREEPS HERE",
+                    Press::CreepsHere { enemy: true },
+                )
+                .fill(ENEMY),
             ],
         );
         let instruction = if shown.placing.is_some() {
@@ -686,7 +722,7 @@ impl Kit<'_, '_, '_, '_> {
         self.label(body, instruction, ui::INK);
     }
 
-    fn hero_controls(&mut self, body: Entity, shown: &Shown) {
+    fn hero_controls(&mut self, body: Entity, shown: &Shown, search: &str) {
         use Press::Hero;
         let selected = shown
             .selected
@@ -757,15 +793,12 @@ impl Kit<'_, '_, '_, '_> {
                 ),
             ],
         );
-        let query = if shown.typing {
-            format!("{}|", shown.search)
-        } else {
-            shown.search.clone()
-        };
+        let caret = shown.typing.then(|| format!("{search}|"));
+        let query = caret.as_deref().unwrap_or(search);
         let label = if query.is_empty() {
             "FREE ITEMS · SEARCH"
         } else {
-            &query
+            query
         };
         self.row(
             body,
@@ -782,7 +815,7 @@ impl Kit<'_, '_, '_, '_> {
             manifest: &self.art.manifest,
             rates: Default::default(),
         };
-        let results: Vec<_> = item_results(&self.art.catalog, &look, &shown.search).collect();
+        let results: Vec<_> = item_results(&self.art.catalog, &look, search).collect();
         for items in results.chunks(2) {
             let names: Vec<_> = items
                 .iter()
@@ -863,5 +896,46 @@ impl Kit<'_, '_, '_, '_> {
                 &[Cell::new("quit", "QUIT DEMO", Press::Quit).fill(ENEMY)],
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opening_the_demo_panel_preserves_the_hud_scale_at_the_smallest_window() {
+        let mut app = App::new();
+        app.insert_resource(crate::config::Settings {
+            ui_scale: 2.0,
+            ..default()
+        })
+        .init_resource::<UiScale>()
+        .init_resource::<ui::HudShown>()
+        .add_systems(Update, ui::scale_ui);
+        app.world_mut().spawn((
+            Window {
+                resolution: (1024, 600).into(),
+                ..default()
+            },
+            bevy::window::PrimaryWindow,
+        ));
+        app.world_mut().spawn((
+            PanelRoot,
+            Node {
+                top: px(crate::tally::bottom() + TALLY_GAP),
+                ..default()
+            },
+        ));
+        app.update();
+        let folded = app.world().resource::<UiScale>().0;
+        assert_eq!(folded, 1.2, "the ordinary HUD already fits this window");
+        app.world_mut().spawn(PanelBody);
+        app.update();
+        assert_eq!(
+            app.world().resource::<UiScale>().0,
+            folded,
+            "the panel does not participate in the ordinary HUD's scale"
+        );
     }
 }

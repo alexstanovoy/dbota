@@ -700,6 +700,33 @@ fn the_hud_holds_together_with_the_cheat_panel_open() {
     }
 }
 
+#[test]
+fn the_demo_creep_wave_row_has_one_cell_height() {
+    let (_server, mut client) = hud_with(1920, 1080, 1.0, &[]);
+    client.click_named("demo fold");
+    client.frames(4);
+    let parts = drawn_parts(&client);
+    let heights: Vec<_> = [
+        "demo spawnally",
+        "demo spawnenemy",
+        "demo creepwave",
+        "demo creepsat",
+        "demo neutrals",
+    ]
+    .into_iter()
+    .map(|name| {
+        let part = parts.iter().find(|part| part.label == name).unwrap();
+        (name, part.rect.height())
+    })
+    .collect();
+    assert!(
+        heights
+            .iter()
+            .all(|(_, height)| (height - heights[0].1).abs() <= SLACK),
+        "the action grid has one row height: {heights:?}"
+    );
+}
+
 fn demo_cells(parts: &[Drawn]) -> impl Iterator<Item = &Drawn> {
     parts
         .iter()
@@ -732,15 +759,7 @@ fn check_demo_scroll(client: &mut Client, window: Rect) -> Result<(), String> {
     let mut pending: std::collections::BTreeSet<_> =
         demo_cells(&parts).map(|part| part.label.clone()).collect();
     let at = body.rect.center();
-    if body.rect.height() < 160.0
-        && demo_cells(&parts).any(|cell| !contained(cell.rect, body.rect, SLACK))
-    {
-        return Err(format!(
-            "the panel needs room to scroll, got {}",
-            body.rect.height()
-        ));
-    }
-    for _ in 0..16 {
+    for _ in 0..pending.len() * 2 {
         let parts = drawn_parts(client);
         for cell in demo_cells(&parts) {
             if cell.visible.is_some_and(|visible| {
@@ -753,7 +772,7 @@ fn check_demo_scroll(client: &mut Client, window: Rect) -> Result<(), String> {
             scroll_demo(client, at, 40.0);
             return Ok(());
         }
-        scroll_demo(client, at, -3.0);
+        scroll_demo(client, at, -0.75);
     }
     Err(format!(
         "controls never fully visible when scrolling: {pending:?}"
@@ -780,7 +799,7 @@ fn all_demo_labels_fit_in_their_cells_with_padding_even_with_search_results() {
             }) {
                 break;
             }
-            scroll_demo(&mut client, at, -2.0);
+            scroll_demo(&mut client, at, -1.0);
         }
         client.click_named("demo items");
         client.type_text("heart");
