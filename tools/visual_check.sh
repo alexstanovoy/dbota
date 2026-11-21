@@ -34,6 +34,14 @@ held() { echo "$1" | grep -q "^visual check: PASS" && ! echo "$1" | grep -q "FAI
 # An ignored-test run holds when each of its test binaries ran a test and all passed: a filter or
 # a target that matches nothing passes with none run.
 ran() { awk '/^test result:/ { n++; if ($4 + 0 < 1) none = 1 } END { exit !(n > 0 && !none) }' "$1"; }
+if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
+    --bin dbota pacing::tests::native_static_ui_stops_presenting_until_its_next_change \
+    -- --ignored --exact --nocapture > "$out/idle_frames.log" 2>&1 && ran "$out/idle_frames.log"; then
+    echo "visual check: PASS native idle frames"
+else
+    echo "visual check: FAIL native idle frames (see $out/idle_frames.log)"
+    exit 1
+fi
 # Every world indicator uses this production stroke configuration.
 if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
     --bin dbota overlay::render_tests::indicator_strokes_are_two_pixels_at_a_fixed_camera \

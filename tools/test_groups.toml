@@ -28,6 +28,10 @@ path = "web/test/test_voice_worker.py"
 step = "browser (tools/browser_check.sh builds the page first)"
 
 [[outside]]
+path = "web/test/idle.py"
+step = "browser (tools/browser_check.sh counts frames drawn to the canvas)"
+
+[[outside]]
 path = "web/test/test_replay_actions.py"
 step = "browser (tools/browser_check.sh runs the served storage contract)"
 
@@ -124,6 +128,10 @@ paths = [
     "src/replay_controls.rs",
     "src/quality.rs",
     "src/window.rs",
+    "src/pacing.rs",
+    "src/pacing/tests.rs",
+    "src/pacing/timer.rs",
+    "src/pacing/wake.rs",
     "src/web_cursor.rs",
     "src/webpage.rs",
     "src/webcache.rs",
@@ -182,6 +190,7 @@ tests = [
         "keys::",
         "input::",
         "window::tests::",
+        "pacing::tests::",
         "logging::",
         "desktop::",
         "firstrun::tests::",

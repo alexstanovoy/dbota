@@ -55,10 +55,13 @@ impl LeaveOp {
         let (tell_done, done) = sync_channel(1);
         let cancelled = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&cancelled);
+        let wake = crate::pacing::waker();
         let spawned = std::thread::Builder::new()
             .name("dbota-leave".to_owned())
             .spawn(move || {
-                let _ = tell_done.send(tell(connect, &hello, until, &stop));
+                if tell_done.send(tell(connect, &hello, until, &stop)).is_ok() {
+                    wake.wake();
+                }
             });
         if let Err(error) = spawned {
             let (tell_done, done) = sync_channel(1);

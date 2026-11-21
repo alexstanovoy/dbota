@@ -380,8 +380,13 @@ fn auto(
     mut settings: ResMut<Settings>,
     time: Res<Time<bevy::time::Real>>,
     photo: Res<crate::minimap::PhotoTaken>,
+    hud: Res<crate::ui::HudShown>,
     mut judge: Local<Judge>,
 ) {
+    if !hud.0 || hud.is_changed() {
+        *judge = Judge::default();
+        return;
+    }
     if !settings.quality.auto || !photo.0 {
         return;
     }

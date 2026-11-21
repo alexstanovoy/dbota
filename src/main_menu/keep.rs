@@ -82,6 +82,20 @@ impl Keeper {
 }
 
 impl MenuCore {
+    pub(super) fn next_replay_fetch(&self) -> Option<Instant> {
+        if !self.account || self.keeper.current.is_some() {
+            return None;
+        }
+        self.keeper
+            .queue
+            .iter()
+            .filter(|want| {
+                super::profile_metadata::same_service(&want.service, &self.prefs.service)
+            })
+            .map(|want| want.due)
+            .min()
+    }
+
     /// What the player set about keeping replays.
     pub fn set_replay_policy(&mut self, policy: replays::Policy) {
         if self.library.policy() != policy {

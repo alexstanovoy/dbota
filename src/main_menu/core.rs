@@ -91,6 +91,7 @@ impl Page {
     }
 }
 
+mod clock;
 mod lobby_data;
 mod lobby_requests;
 mod lobby_ui;
@@ -1178,7 +1179,8 @@ impl MenuCore {
         self.asked.clear();
         self.retry_at = None;
         match Client::open(&self.prefs.service, &self.tls) {
-            Ok(client) => {
+            Ok(mut client) => {
+                client.set_waker(crate::pacing::waker());
                 self.client = Some(client);
                 self.conn = Conn::Connecting;
                 self.status = None;
@@ -1396,18 +1398,31 @@ impl MenuCore {
         if self.pause_service_events {
             return;
         }
+        self.read_service();
+    }
+
+    fn read_service(&mut self) {
+        let mut heard = false;
         for _ in 0..MAX_PER_FRAME {
             let Some(client) = &mut self.client else {
-                return;
+                break;
             };
             match client.poll() {
-                Ok(Some(incoming)) => self.take(incoming),
-                Ok(None) => return,
+                Ok(Some(incoming)) => {
+                    heard = true;
+                    self.take(incoming);
+                }
+                Ok(None) => break,
                 Err(err) => {
                     self.lost(err);
-                    return;
+                    break;
                 }
             }
+        }
+        if heard {
+            // Replies can queue work earlier in the menu's update, and a capped batch may
+            // leave messages already in the inbox with their notifications consumed.
+            crate::pacing::waker().wake();
         }
     }
 

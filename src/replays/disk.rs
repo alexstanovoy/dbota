@@ -75,9 +75,10 @@ impl Disk {
     pub fn new(dir: PathBuf) -> Disk {
         let (work, jobs) = channel();
         let folder = dir.clone();
+        let wake = crate::pacing::waker();
         let spawned = std::thread::Builder::new()
             .name("dbota-replay-files".to_owned())
-            .spawn(move || serve(&folder, &jobs));
+            .spawn(move || serve(&folder, &jobs, &wake));
         if let Err(err) = spawned {
             bevy::log::warn!("replays: no thread for the files: {err}");
         }
@@ -101,7 +102,7 @@ impl Backend for Disk {
     }
 }
 
-fn serve(dir: &Path, jobs: &Receiver<(Op, Sender<Done>)>) {
+fn serve(dir: &Path, jobs: &Receiver<(Op, Sender<Done>)>, wake: &std::task::Waker) {
     for (op, reply) in jobs {
         let done = match op {
             Op::Load => load(dir),
@@ -128,10 +129,11 @@ fn serve(dir: &Path, jobs: &Receiver<(Op, Sender<Done>)>) {
                 .err()
                 .map(|e| Done::Failed(format!("cannot write the index: {e}"))),
         };
-        if let Some(done) = done
-            && reply.send(done).is_err()
-        {
-            return;
+        if let Some(done) = done {
+            if reply.send(done).is_err() {
+                return;
+            }
+            wake.wake_by_ref();
         }
     }
 }

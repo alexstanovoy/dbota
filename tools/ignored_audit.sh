@@ -13,6 +13,10 @@ while IFS= read -r file; do
         crates/dbota_import/tests/* | crates/dbota_import/src/*) ;; # gate step install-tests: cargo test -p dbota_import -- --ignored
         src/tip_content.rs) ;;          # gate step tip-content
         src/e2e/memory.rs) ;;           # run in a process of its own by its test clients_one_after_another_leave_no_memory_behind
+        src/pacing/tests.rs)
+            grep -Fq -- '--bin dbota pacing::tests::native_static_ui_stops_presenting_until_its_next_change' tools/visual_check.sh \
+                || { echo "ignored_audit: $file has no native pacing check"; bad=1; }
+            ;;
         src/fog/clarity_render.rs | src/overlay/render_tests.rs | src/minimap/render_tests.rs | src/e2e/ground_effect_pixels.rs)
             case "$file" in
                 src/fog/clarity_render.rs) test_name=fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels ;;

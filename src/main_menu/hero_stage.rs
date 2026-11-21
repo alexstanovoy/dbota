@@ -75,6 +75,22 @@ pub(crate) struct HeroStage {
 }
 
 impl HeroStage {
+    pub(crate) fn drawing(&self) -> bool {
+        self.render && self.ready()
+    }
+
+    pub(crate) fn next_pose(&self, time: &Time<Real>) -> Option<bevy::platform::time::Instant> {
+        (self.model.is_some() && !self.failed).then(|| {
+            if self.framed {
+                time.startup() + std::time::Duration::from_secs_f32(self.next_render)
+            } else {
+                // Scene instantiation and pose preparation advance in the main schedule.
+                bevy::platform::time::Instant::now()
+                    + std::time::Duration::from_secs_f32(1.0 / RATE)
+            }
+        })
+    }
+
     pub(crate) fn ready(&self) -> bool {
         self.framed && self.actor.as_ref().is_some_and(|a| a.posed)
     }
@@ -247,20 +263,23 @@ fn select(
         return;
     };
     let entry = &bank.0[model];
-    if entry.ready()
-        && let Some(scenes) = &entry.scenes
-    {
-        stage.image = portrait::stage_image(&mut images, SIZE);
-        stage.actor = Some(portrait::spawn_actor(
-            &mut commands,
-            scenes,
-            model,
-            entry.model.scale,
-            None,
-            LAYER,
-        ));
-        spawn_camera(&mut commands, stage.image.clone(), front);
+    if !entry.ready() {
+        return;
     }
+    let Some(scenes) = &entry.scenes else {
+        stage.failed = true;
+        return;
+    };
+    stage.image = portrait::stage_image(&mut images, SIZE);
+    stage.actor = Some(portrait::spawn_actor(
+        &mut commands,
+        scenes,
+        model,
+        entry.model.scale,
+        None,
+        LAYER,
+    ));
+    spawn_camera(&mut commands, stage.image.clone(), front);
 }
 
 fn spawn_camera(commands: &mut Commands, image: Handle<Image>, lit: bool) {

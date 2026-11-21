@@ -9,7 +9,7 @@ use super::{
 };
 use bevy::{
     platform::time::Instant,
-    tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future},
+    tasks::{AsyncComputeTaskPool, Task},
 };
 use bota_radovid::proto::{
     AccountId, AvatarVersion, ClientMsg, Error, MatchResult, Outcome, PublicAccount, Reply,
@@ -73,6 +73,17 @@ struct Visit {
     notice: Option<String>,
 }
 impl Reader {
+    pub(super) fn next_wake(&self) -> Option<Instant> {
+        let visit = self.visit.as_ref()?;
+        if visit.waiting {
+            visit.sent.map(|sent| sent + TIMEOUT)
+        } else if visit.stage != Part::Done {
+            visit.retry
+        } else {
+            None
+        }
+    }
+
     pub fn clear(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.visit = None;
@@ -151,7 +162,7 @@ impl Reader {
     fn request(&mut self) -> Option<(Asked, ClientMsg)> {
         let visit = self.visit.as_mut()?;
         if let Some(task) = &mut visit.decoding
-            && let Some(result) = block_on(future::poll_once(task))
+            && let Some(result) = crate::pacing::poll(task)
         {
             visit.decoding = None;
             match result {

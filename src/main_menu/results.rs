@@ -11,10 +11,18 @@ use bota_proto::{SlotId, Team};
 use bota_radovid::proto::{EndReason, MatchResult, Outcome};
 use std::sync::Arc;
 
+const REPLAY_PATIENCE: std::time::Duration = std::time::Duration::from_secs(10);
+
 #[cfg(test)]
 thread_local! { pub(crate) static OUTCOME_PROJECTIONS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; }
 
 impl MenuCore {
+    pub(super) fn result_replay_deadline(&self) -> Option<bevy::platform::time::Instant> {
+        self.pending_result_replay_since
+            .filter(|_| !self.in_game())
+            .map(|at| at + REPLAY_PATIENCE)
+    }
+
     pub(super) fn open_result(&mut self, key: &str) {
         if let Some(result) = self.public_profile_result(key) {
             let mut context = self.event_context(result, None);
@@ -259,7 +267,7 @@ impl MenuCore {
         {
             if self
                 .pending_result_replay_since
-                .is_some_and(|since| since.elapsed() < std::time::Duration::from_secs(10))
+                .is_some_and(|since| since.elapsed() < REPLAY_PATIENCE)
             {
                 self.pending_result_replay = Some(replay);
             } else {

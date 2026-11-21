@@ -7,7 +7,7 @@
         reason = "The disabled avatar editor retains its validated adapter seam until the service SDK exists"
     )
 )]
-use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use dbota_import::thumbnail::{self, Pixels};
 use std::sync::Arc;
 
@@ -194,7 +194,7 @@ impl Editor {
         let Some((token, task)) = &mut self.decoding else {
             return;
         };
-        let Some(result) = block_on(future::poll_once(task)) else {
+        let Some(result) = crate::pacing::poll(task) else {
             return;
         };
         let token = *token;

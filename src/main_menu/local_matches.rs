@@ -235,16 +235,23 @@ struct CardCache {
 }
 
 impl Archive {
+    pub(super) fn next_save(&self) -> Option<bevy::platform::time::Instant> {
+        self.retry_save
+    }
+
     pub fn load(store: &SettingsStore, max_count: usize) -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let (send, receive) = std::sync::mpsc::sync_channel(1);
             let store = store.clone();
+            let wake = crate::pacing::waker();
             let spawned = std::thread::Builder::new()
                 .name("local-match-history".to_owned())
                 .spawn(move || {
                     let entries = Self::read(&store, max_count);
-                    let _ = send.send(entries);
+                    if send.send(entries).is_ok() {
+                        wake.wake();
+                    }
                 });
             if let Err(why) = spawned {
                 bevy::log::warn!("Could not load local match history: {why}");

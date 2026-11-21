@@ -279,6 +279,7 @@ impl Shelf {
         if self.asked.is_none() {
             let (ask, asked) = std::sync::mpsc::channel::<(PathBuf, Stamp)>();
             let (tell, told) = std::sync::mpsc::channel();
+            let wake = crate::pacing::waker();
             let spawned = std::thread::Builder::new()
                 .name("dbota-replays".to_owned())
                 .spawn(move || {
@@ -287,6 +288,7 @@ impl Shelf {
                         if tell.send((path, stamp, summary)).is_err() {
                             return;
                         }
+                        wake.wake_by_ref();
                     }
                 });
             if spawned.is_err() {

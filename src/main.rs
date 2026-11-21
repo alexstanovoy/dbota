@@ -90,6 +90,7 @@ mod mapfile;
 mod minimap;
 mod mixer;
 mod overlay;
+mod pacing;
 mod particles;
 mod pick;
 mod pings;
@@ -629,6 +630,10 @@ fn main() -> AppExit {
     app.insert_resource(font_cx);
     client_resources(&mut app, &args, &settings, settings_path, &store, session);
     app.add_plugins(default_plugins(&args, &settings));
+    app.add_plugins(pacing::plugin);
+    app.world_mut()
+        .non_send_mut::<session::Session>()
+        .wake_on_network();
     client_plugins(&mut app, args.read_environment);
     // Held at the asset screen, there is no menu either: nothing but that screen to use.
     if held.is_none()

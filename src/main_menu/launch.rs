@@ -420,6 +420,7 @@ impl Opening {
         use bota_client_core::{Endpoint, Net, Redial, Transport};
         let (tell, done) = std::sync::mpsc::sync_channel(1);
         let trust = trust.clone();
+        let wake = crate::pacing::waker();
         let spawned = std::thread::Builder::new()
             .name("dbota-join".to_owned())
             .spawn(move || {
@@ -481,7 +482,9 @@ impl Opening {
                     Transport::send(&mut net, &ClientMsg::Compress(Codec::Deflate))?;
                     Ok((net, server))
                 })();
-                let _ = tell.send(opened);
+                if tell.send(opened).is_ok() {
+                    wake.wake();
+                }
             });
         if let Err(err) = spawned {
             let (tell, done) = std::sync::mpsc::sync_channel(1);

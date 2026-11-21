@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use bevy::platform::time::Instant;
 use bevy::prelude::*;
-use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bota_radovid::proto::MatchId;
 use summary::MatchSummary;
 
@@ -108,6 +108,13 @@ const RETRY_EVERY: Duration = Duration::from_millis(500);
 const RETRIES: u8 = 20;
 
 impl PostGame {
+    pub(crate) fn next_retry(&self) -> Option<Instant> {
+        match &self.stage {
+            Stage::Retry(when) => Some(*when),
+            _ => None,
+        }
+    }
+
     /// The game about to open will have its summary from `origin`.
     pub fn expect(&mut self, origin: Origin) {
         self.next = origin;
@@ -265,7 +272,7 @@ fn meta_of_blob(bytes: Arc<[u8]>) -> Option<Vec<u8>> {
 /// Starts having the file of an origin.
 fn load(origin: &Origin) -> Option<Loading> {
     let pool = AsyncComputeTaskPool::get();
-    match origin {
+    let task = match origin {
         #[cfg(not(target_arch = "wasm32"))]
         Origin::File(path) => {
             let path = path.clone();
@@ -276,7 +283,12 @@ fn load(origin: &Origin) -> Option<Loading> {
             Some(pool.spawn(async move { meta_of_blob(bytes) }))
         }
         _ => None,
+    };
+    if task.is_some() {
+        // The next update polls the new task once and registers its completion waker.
+        crate::pacing::waker().wake();
     }
+    task
 }
 
 /// Has the summary of a match that is over.
@@ -327,7 +339,7 @@ fn drive(session: NonSend<Session>, mut post: NonSendMut<PostGame>) {
             };
         }
         Stage::Loading(loading) => {
-            if let Some(done) = block_on(future::poll_once(loading)) {
+            if let Some(done) = crate::pacing::poll(loading) {
                 let live = matches!(post.origin, Origin::File(_))
                     && matches!(session.0.source, bota_client_core::Source::Live(_));
                 settle(post, &session, done, live);

@@ -12,6 +12,12 @@ use crate::Args;
 /// the systems that touch it run on the main thread.
 pub struct Session(pub Core);
 
+impl Session {
+    pub(crate) fn wake_on_network(&mut self) {
+        self.0.source.set_waker(crate::pacing::waker());
+    }
+}
+
 /// Whether a match is under way: set once the match's terrain is known.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatchKnown(pub bool);

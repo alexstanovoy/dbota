@@ -91,12 +91,15 @@ impl Backend for Browser {
             Op::Index { text } => self.call("index", &[text.into()]),
         };
         let kind = self.kind();
+        let wake = crate::pacing::waker();
         spawn_local(async move {
             let done = match started {
                 Ok(future) => finish(op, future.await, &kind),
                 Err(why) => failed(op, why),
             };
-            let _ = reply.send(done);
+            if reply.send(done).is_ok() {
+                wake.wake();
+            }
         });
     }
 }

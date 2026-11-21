@@ -110,6 +110,17 @@ enum Told {
     Imported(Result<Imported, String>),
 }
 
+#[derive(Clone)]
+struct Tell(Sender<Told>, std::task::Waker);
+
+impl Tell {
+    fn send(&self, message: Told) {
+        if self.0.send(message).is_ok() {
+            self.1.wake_by_ref();
+        }
+    }
+}
+
 /// The screen's state and its workers.
 #[derive(Resource)]
 struct FirstRun {
@@ -121,7 +132,7 @@ struct FirstRun {
     note: Option<String>,
     /// The path being typed (no system dialog).
     typed: String,
-    tell: Sender<Told>,
+    tell: Tell,
     told: Mutex<Receiver<Told>>,
     /// Ends the copy under way: its worker publishes nothing once it was cancelled, and a
     /// copy's cancel finds out whether it came too late. One per copy (see `start`).
@@ -205,7 +216,7 @@ impl FirstRun {
             install: None,
             note: None,
             typed: String::new(),
-            tell,
+            tell: Tell(tell, crate::pacing::waker()),
             told: Mutex::new(told),
             gate: Arc::new(Gate::default()),
             worker: None,
@@ -222,7 +233,7 @@ impl FirstRun {
             } else {
                 heatel::locate::find_installs(&steam)
             };
-            let _ = tell.send(Told::Found(found));
+            tell.send(Told::Found(found));
         });
         run
     }
@@ -233,17 +244,17 @@ impl FirstRun {
         self.screen = Screen::Choosing;
         let tell = self.tell.clone();
         if self.no_dialog {
-            let _ = tell.send(Told::Picked(Err(NoDialog::Missing)));
+            tell.send(Told::Picked(Err(NoDialog::Missing)));
             return;
         }
         if !self.answers.is_empty() {
             let answer = self.answers.remove(0);
-            let _ = tell.send(Told::Picked(Ok(Some(answer))));
+            tell.send(Told::Picked(Ok(Some(answer))));
             return;
         }
         std::thread::spawn(move || {
             let answer = crate::desktop::ask_folder("Choose the Dota 2 folder (dota 2 beta)");
-            let _ = tell.send(Told::Picked(answer));
+            tell.send(Told::Picked(answer));
         });
     }
 
@@ -258,7 +269,7 @@ impl FirstRun {
 
     /// Starts `work` on a worker thread; it is told how far it is and may be ended through its
     /// gate. Each copy has a gate of its own: one that published stays published.
-    fn start(&mut self, work: impl FnOnce(&Sender<Told>, &Gate) + Send + 'static) {
+    fn start(&mut self, work: impl FnOnce(&Tell, &Gate) + Send + 'static) {
         self.note = None;
         self.gate = Arc::new(Gate::default());
         self.screen = Screen::Working(Work {
@@ -289,7 +300,7 @@ impl FirstRun {
         let hold_at = self.hold_at;
         self.start(move |tell, gate| {
             let mut progress = |p: &dbota_import::import::Progress<'_>| {
-                let _ = tell.send(Told::Progress(Work {
+                tell.send(Told::Progress(Work {
                     done: p.done,
                     total: p.total,
                     item: p.item.to_owned(),
@@ -310,7 +321,7 @@ impl FirstRun {
             let mut told_waiting = false;
             let mut waiting = || {
                 if !std::mem::replace(&mut told_waiting, true) {
-                    let _ = tell.send(Told::Waiting);
+                    tell.send(Told::Waiting);
                 }
             };
             let made = if gate.is_cancelled() {
@@ -330,7 +341,7 @@ impl FirstRun {
                     },
                 )
             };
-            let _ = tell.send(Told::Imported(made));
+            tell.send(Told::Imported(made));
         });
     }
 

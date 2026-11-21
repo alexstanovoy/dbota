@@ -609,6 +609,8 @@ fn show_input(
     mut session: NonSendMut<Session>,
     time: Res<Time>,
     typing: Res<Typing>,
+    loading: Res<crate::loading::Loading>,
+    preview: Option<Res<crate::main_menu::Preview>>,
     mut input: ResMut<ChatInput>,
     mut prompt_box: Single<(&mut Text, &mut Node), (With<Prompt>, Without<Complaint>)>,
     mut complaint: Single<(&mut Text, &mut Node), (With<Complaint>, Without<Prompt>)>,
@@ -622,7 +624,10 @@ fn show_input(
         }
     }
     let typing_now = *typing == Typing::Chat;
-    let shade = if typing_now {
+    let loading = loading.shown || preview.is_some_and(|preview| preview.0.loading());
+    let shade = if loading {
+        Color::BLACK.with_alpha(crate::theme::dim(0.65))
+    } else if typing_now {
         Color::srgba(0.0, 0.0, 0.0, 0.45)
     } else {
         Color::NONE
@@ -688,7 +693,7 @@ fn loading_layout(
     typing: Res<Typing>,
     fonts: Res<Fonts>,
     mut root: Single<&mut GlobalZIndex, With<ChatRoot>>,
-    mut log: Single<(&mut Node, &mut BackgroundColor), (With<Log>, Without<Prompt>)>,
+    mut log: Single<&mut Node, (With<Log>, Without<Prompt>)>,
     mut prompt: Single<
         (&mut Node, &mut Text, &mut TextFont, &mut TextColor),
         (With<Prompt>, Without<Log>),
@@ -696,15 +701,14 @@ fn loading_layout(
 ) {
     let preview = preview.is_some_and(|p| p.0.loading());
     let shown = loading.shown || preview;
-    root.0 = if preview {
+    root.set_if_neq(GlobalZIndex(if preview {
         65
     } else if shown {
         55
     } else {
         50
-    };
-    let (node, color) = &mut *log;
-    loading_log(node, color, shown, *typing);
+    }));
+    loading_log(&mut log, shown);
     let (node, text, font, ink) = &mut *prompt;
     loading_prompt(node, text, font, ink, shown, *typing, &fonts);
 }
@@ -757,7 +761,7 @@ fn loading_faces(
     }
 }
 
-fn loading_log(node: &mut Node, color: &mut BackgroundColor, shown: bool, typing: Typing) {
+fn loading_log(node: &mut Node, shown: bool) {
     node.left = px(if shown { 24.0 } else { LOG_LEFT });
     node.bottom = px(if shown { 24.0 } else { LOG_BOTTOM });
     node.min_height = px(if shown { 0.0 } else { ZONE });
@@ -768,11 +772,6 @@ fn loading_log(node: &mut Node, color: &mut BackgroundColor, shown: bool, typing
         UiRect::all(px(LOG_PADDING))
     };
     node.border = UiRect::all(px(if shown { 1.0 } else { 0.0 }));
-    if shown {
-        color.0 = Color::BLACK.with_alpha(crate::theme::dim(0.65));
-    } else if typing != Typing::Chat {
-        color.0 = Color::NONE;
-    }
 }
 fn loading_prompt(
     node: &mut Node,

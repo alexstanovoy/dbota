@@ -40,6 +40,27 @@ pub struct Reader {
 }
 
 impl Reader {
+    pub(super) fn next_retry(
+        &self,
+        now: bevy::platform::time::Instant,
+    ) -> Option<bevy::platform::time::Instant> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let backoff = self.failed_until.filter(|at| *at > now);
+            self.seen
+                .values()
+                .filter(|seen| !seen.ready && seen.attempts < 20 && seen.retry > now)
+                .map(|seen| seen.retry.max(backoff.unwrap_or(now)))
+                .min()
+                .or(backoff)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = now;
+            None
+        }
+    }
+
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn initial_scan_complete(&self, records: &[crate::replays::Record]) -> bool {
         records.iter().all(|record| {
@@ -122,6 +143,7 @@ impl Reader {
         if self.ask.is_none() {
             let (ask, jobs) = mpsc::sync_channel::<Job>(16);
             let (tell, answers) = mpsc::sync_channel(16);
+            let wake = crate::pacing::waker();
             let spawned = std::thread::Builder::new()
                 .name("local-match-metadata".to_owned())
                 .spawn(move || {
@@ -130,6 +152,7 @@ impl Reader {
                         if tell.send((job.record, job.temporary, entry)).is_err() {
                             break;
                         }
+                        wake.wake_by_ref();
                     }
                 });
             if let Err(why) = spawned {

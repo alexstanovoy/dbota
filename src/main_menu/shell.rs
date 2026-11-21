@@ -326,7 +326,8 @@ impl Opener<'_, '_, '_> {
     /// The game is on screen, or the menu says why it could not be opened.
     fn opened(&mut self, core: &mut MenuCore, opened: std::io::Result<Session>) {
         match opened {
-            Ok(opened) => {
+            Ok(mut opened) => {
+                opened.wake_on_network();
                 *self.session = opened;
                 self.post.begin();
                 self.epoch.0 += 1;

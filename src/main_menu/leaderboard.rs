@@ -103,6 +103,23 @@ impl Default for Board {
     }
 }
 impl Board {
+    pub(super) fn next_wake(&self, now: Instant) -> Option<Instant> {
+        if let Some(flight) = &self.flight {
+            return Some(flight.sent + REQUEST_TIMEOUT);
+        }
+        (self.pending && !self.modes.is_empty()).then(|| {
+            [
+                self.due,
+                self.retry_at,
+                self.last_sent.map(|at| at + EDIT_DELAY),
+            ]
+            .into_iter()
+            .flatten()
+            .max()
+            .unwrap_or(now)
+        })
+    }
+
     fn has_work(&self) -> bool {
         self.pending || self.flight.is_some() || self.retry_at.is_some()
     }
