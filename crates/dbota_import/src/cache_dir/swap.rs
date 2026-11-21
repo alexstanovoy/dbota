@@ -126,7 +126,8 @@ fn occupied(path: &Path) -> heatel::Error {
         path,
         io::Error::new(
             io::ErrorKind::AlreadyExists,
-            "the import cannot use this path because it is occupied by an unrelated entry",
+            "the import cannot use this path because it is occupied by an unrelated entry. \
+             Move or delete it, then try again",
         ),
     )
 }

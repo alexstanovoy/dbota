@@ -708,35 +708,39 @@ mod tests {
         )
     }
 
-    /// A process killed after the new cache took its place left the whole old one beside it
-    /// (about 800 MB nothing else removes): the next import removes it, finds the cache current
-    /// and converts nothing.
+    /// A folder beside the cache that this import did not make (a player's own backup, a leftover
+    /// of an older dbota that marked nothing) is not this import's to remove: it stays, the cache
+    /// is found current and nothing converts. Removing a leftover the import DID make is covered
+    /// by `dbota_import::cache_dir` (`recovery_settles_each_interrupted_rename`).
     #[test]
-    fn a_leftover_old_copy_beside_a_current_cache_is_removed_when_the_next_import_starts() {
+    fn an_old_folder_this_import_did_not_make_stays_beside_a_current_cache() {
         let custom = Custom::new("swap-leftover");
         current_cache(&custom, &custom.cache);
         let old = custom.scratch.join(".cache.old");
         fs::create_dir_all(old.join("models")).unwrap();
         let imported = nothing_converts(&custom).unwrap();
         assert!(!imported.stopped && imported.files == 0);
-        assert!(!old.exists(), "the old copy stays for ever");
+        assert!(
+            old.join("models").is_dir(),
+            "a folder nobody here made was removed"
+        );
         assert!(custom.cache.join(INDEX).is_file());
     }
 
-    /// A process killed between the two renames of the swap left no cache and a whole one as
-    /// `.old`: the next import puts it back, finds it current, and the player is not made to
-    /// import again.
+    /// An unmarked `.old` with no cache is not put back as the cache (it may be anyone's folder),
+    /// and an unmarked staging folder stops the import before it writes anything: the player is
+    /// told which folder is in the way and what to do, and neither folder is touched.
     #[test]
-    fn an_old_copy_left_with_no_cache_is_put_back_and_judged_by_the_usual_check() {
+    fn an_unmarked_old_copy_is_not_put_back_and_an_unmarked_staging_folder_stops_the_import() {
         let custom = Custom::new("swap-between");
         current_cache(&custom, &custom.scratch.join(".cache.old"));
-        fs::create_dir_all(custom.scratch.join(".cache.importing/models")).unwrap();
-        let imported = nothing_converts(&custom).unwrap();
-        assert!(!imported.stopped && imported.files == 0);
-        assert!(
-            custom.cache.join(INDEX).is_file(),
-            "the old copy is the cache again"
-        );
-        assert!(!custom.scratch.join(".cache.old").exists());
+        let staging = custom.scratch.join(".cache.importing");
+        fs::create_dir_all(staging.join("models")).unwrap();
+        let why = nothing_converts(&custom).unwrap_err();
+        assert!(why.contains(".cache.importing"), "{why}");
+        assert!(why.contains("Move or delete it, then try again"), "{why}");
+        assert!(!custom.cache.exists(), "the old copy became the cache");
+        assert!(custom.scratch.join(".cache.old").join(INDEX).is_file());
+        assert!(staging.join("models").is_dir());
     }
 }
