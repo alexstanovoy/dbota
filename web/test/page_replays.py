@@ -69,8 +69,12 @@ def free_port():
 # in a 1280x720 one. The practice lobby's buttons were read off the native client's layout of the same window
 # (their named widgets' centres: e2e tests lay the same menu out), MY GAMES' rows off the first page that showed them.
 CLICK_CREATE_ACCOUNT = (960, 588)
-CLICK_DEMO_HERO_TAB = (700, 24)
-CLICK_PUDGE = (814, 252)
+# The way into a demo: the Heroes tab, a hero's card, the DEMO HERO button of its page (no tab or page of its own). The
+# tab is where the browser's bar has it (no LOCAL LOBBY before it); the card and the button are the native client's
+# laid-out widgets "Pudge" and "demo hero" at 1920x1080.
+CLICK_HEROES_TAB = (588, 28)
+CLICK_PUDGE_CARD = (79.5, 207.5)
+CLICK_DEMO_HERO_BUTTON = (181.5, 578)
 CLICK_PLAY_TAB = (159, 18.5)
 CLICK_CUSTOM_LOBBIES = (1142, 454)
 CLICK_CREATE_LOBBY = (1142, 551.5)
@@ -308,7 +312,7 @@ def recorded_replay(work, match_id):
 
 
 def start_demo(page, console, silent, shot, evidence):
-    """Create the account, enter a Demo Hero match from the hero catalogue and cut the client's replies."""
+    """Create the account, enter a Demo Hero match from a hero's page and cut the client's replies."""
     # The page's own service is the one chosen, and it is checked (through the browser's
     # WebSocket) before the sign-in form opens: the form below is typed into only then.
     wait_console(page, console, r"service wss://127\.0\.0\.1:\d+ passed its check", 600,
@@ -320,8 +324,11 @@ def start_demo(page, console, silent, shot, evidence):
         after_frames(page)
     page.keyboard.press("Enter")
     wait_for_sign_in(page)
-    for at in (CLICK_DEMO_HERO_TAB, CLICK_PUDGE):  # a hero's card on the Demo Hero page starts its demo
-        click_drawn(page, at)
+    shot(page, "demo-0-play")
+    for step, at in (("heroes", CLICK_HEROES_TAB), ("hero-page", CLICK_PUDGE_CARD), (None, CLICK_DEMO_HERO_BUTTON)):
+        click_drawn(page, at)  # Heroes, Pudge, DEMO HERO
+        if step:
+            shot(page, f"demo-1-{step}")
     wait_console(page, console, "loading: done in", 600, "the demo match")
     shot(page, "6-game")
     assert_game_timeout(page, console, silent, evidence / "6-idle-timeout.png" if evidence else None)
