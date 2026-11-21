@@ -210,17 +210,24 @@ fn the_hero_page_draws_the_hero_in_the_middle_of_the_scene() {
     client.frames(3);
     let width = window_width(&mut client);
     let world = client.world_mut();
-    let (shown, node, at, image) = world
+    let stage_image = world.resource::<HeroStage>().image_handle().clone();
+    let drawn: Vec<_> = world
         .query::<(
             &InheritedVisibility,
             &ComputedNode,
             &UiGlobalTransform,
-            &ImageNode,
+            &MaterialNode<crate::wash::Washed>,
         )>()
         .iter(world)
-        .filter(|(.., image)| image.image == *world.resource::<HeroStage>().image_handle())
-        .map(|(a, b, c, d)| (a.get(), *b, *c, d.image.clone()))
-        .next()
+        .map(|(shown, node, at, material)| (shown.get(), *node, *at, material.0.clone()))
+        .collect();
+    let materials = world.resource::<Assets<crate::wash::Washed>>();
+    let (shown, node, at, image) = drawn
+        .into_iter()
+        .find_map(|(shown, node, at, material)| {
+            let picture = &materials.get(&material)?.picture;
+            (*picture == stage_image).then(|| (shown, node, at, picture.clone()))
+        })
         .expect("the stage's picture on the page");
     assert!(shown, "the hero shows");
     assert_ne!(image, Handle::default(), "a rendered image");
