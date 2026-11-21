@@ -3612,7 +3612,9 @@ mod identity_alias_tests {
         player.register("lobby_host");
         player.menu.drop_link();
 
-        player.menu.act(Act::Play(super::super::play::PlayAction::LobbyLink(true)));
+        player
+            .menu
+            .act(Act::Play(super::super::play::PlayAction::LobbyLink(true)));
 
         assert!(player.menu.outbox.iter().any(|(message, _)| {
             matches!(message, ClientMsg::LobbyCreate { name, .. } if name == "lobby_host's lobby")

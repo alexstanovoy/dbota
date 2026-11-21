@@ -949,7 +949,12 @@ fn switching_replay_viewer_does_not_reuse_another_teams_roshan_sighting() {
         !radiant_sees_roshan(view)
     });
     let file = game.save();
-    let mut client = Client::run(&["--replay", file.path().to_str().expect("UTF-8"), "--pov", "0"]);
+    let mut client = Client::run(&[
+        "--replay",
+        file.path().to_str().expect("UTF-8"),
+        "--pov",
+        "0",
+    ]);
     replay_to(&mut client, sighting);
     client.until("Radiant's recorded sighting", |client| {
         roshan_icon_count(client) == 1
@@ -967,7 +972,11 @@ fn switching_replay_viewer_does_not_reuse_another_teams_roshan_sighting() {
             .any(|unit| unit.kind == UnitKind::Roshan && fog.hides(unit.seen_by)),
         "Roshan is alive outside Radiant's vision"
     );
-    assert_eq!(roshan_icon_count(&mut client), 1, "Radiant remembers Roshan");
+    assert_eq!(
+        roshan_icon_count(&mut client),
+        1,
+        "Radiant remembers Roshan"
+    );
     client.key(KeyCode::Tab, bevy::input::ButtonState::Pressed);
     client.key(KeyCode::Tab, bevy::input::ButtonState::Released);
     client.until("the replay watches Dire", |client| {

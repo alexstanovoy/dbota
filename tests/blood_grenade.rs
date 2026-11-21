@@ -11,9 +11,16 @@ use std::path::PathBuf;
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn a_blood_grenade_flies_bursts_and_sounds_on_the_units_it_hits() {
     let scratch = common::scratch::Scratch::new("blood-grenade");
-    let shots = std::env::var_os("DBOTA_SHOTS").map_or_else(|| scratch.path("shots"), PathBuf::from);
+    let shots =
+        std::env::var_os("DBOTA_SHOTS").map_or_else(|| scratch.path("shots"), PathBuf::from);
     let server = common::serve(&[
-        "--cheats", "--players", "1", "--pick-secs", "5", "--tactical-secs", "5",
+        "--cheats",
+        "--players",
+        "1",
+        "--pick-secs",
+        "5",
+        "--tactical-secs",
+        "5",
         "--immortal-heroes",
     ]);
     let middle = bota_core::rules::MAP_SIZE / 2;
@@ -29,5 +36,11 @@ fn a_blood_grenade_flies_bursts_and_sounds_on_the_units_it_hits() {
                   await:heard:sound.blood_grenade.cast;await:started:item.blood_grenade;\
                   await:heard:sound.blood_grenade.location;await:heard:sound.blood_grenade.target;\
                   shot:blood_grenade.png;exit";
-    common::play_script_with(&server.address, script, "blood_grenade", &shots, &["--look", &look]);
+    common::play_script_with(
+        &server.address,
+        script,
+        "blood_grenade",
+        &shots,
+        &["--look", &look],
+    );
 }

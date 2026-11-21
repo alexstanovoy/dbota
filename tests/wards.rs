@@ -11,9 +11,16 @@ use std::path::PathBuf;
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn placed_wards_are_drawn_with_dotas_ward_models_and_effects() {
     let scratch = common::scratch::Scratch::new("wards");
-    let shots = std::env::var_os("DBOTA_SHOTS").map_or_else(|| scratch.path("shots"), PathBuf::from);
+    let shots =
+        std::env::var_os("DBOTA_SHOTS").map_or_else(|| scratch.path("shots"), PathBuf::from);
     let server = common::serve(&[
-        "--cheats", "--players", "1", "--pick-secs", "5", "--tactical-secs", "5",
+        "--cheats",
+        "--players",
+        "1",
+        "--pick-secs",
+        "5",
+        "--tactical-secs",
+        "5",
         "--immortal-heroes",
     ]);
     let middle = bota_core::rules::MAP_SIZE / 2;
