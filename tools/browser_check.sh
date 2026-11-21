@@ -89,13 +89,13 @@ else
 fi
 DBOTA_INDEX_PAGE="$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_voice_worker.py -v
 APIS=webgl2 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --speech-check --face-trace" OUT=$pages/speech web/build.sh
-in_private_environment python3 web/test/smoke.py --only-wire --speech-page "$pages/speech"
+in_private_environment python3 web/test/smoke.py --speech-page "$pages/speech"
 art_replay=$work/ui-art.brp
 cargo run --manifest-path "$bota/Cargo.toml" --locked --release --quiet --target-dir "$server_target" \
     -p bota_server --example local_match -- --replay "$art_replay" > "$work/ui-art-replay.log" 2>&1
 APIS=webgl2 DBOTA_WEB_REPLAY=$art_replay OUT=$pages/ui-art \
     DBOTA_WEB_ARGS="--replay built-in --pov 0 --tip item:item_magic_stick" web/build.sh
-in_private_environment python3 web/test/smoke.py --only-wire --ui-art-page "$pages/ui-art"
+in_private_environment python3 web/test/smoke.py --ui-art-page "$pages/ui-art"
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/replay web/build.sh
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video" APIS=webgpu OUT=$pages/video web/build.sh
 PROFILE=web DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/web web/build.sh
