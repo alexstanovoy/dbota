@@ -13,6 +13,7 @@ import threading
 import time
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
+from radovid_service import radovid_config
 from browser import (
     BROWSER_ARGS,
     HERE,

@@ -93,7 +93,7 @@ tests = [{ package = "dbota_import" }]
 name = "web"
 about = "the browser build's output (Python unittest)"
 paths = ["web/**"]
-tests = [{ unittest = "web/test", modules = ["test_build_output", "test_optimize", "test_smoke_layout"] }]
+tests = [{ unittest = "web/test", modules = ["test_build_output", "test_optimize", "test_smoke_layout", "test_radovid_service"] }]
 
 [[group]]
 name = "terrain_rendering"
