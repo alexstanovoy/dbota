@@ -109,22 +109,27 @@ impl Backend for Browser {
         spawn_local(async move {
             let done = match started {
                 Ok(future) => finish(op, future.await, &kind),
-                Err(why) => failed(op, why),
+                Err(why) => Some(failed(op, why)),
             };
-            if reply.send(done).is_ok() {
+            if let Some(done) = done
+                && reply.send(done).is_ok()
+            {
                 wake.wake();
             }
         });
     }
 }
 
-/// What a finished call means for the library.
-fn finish(op: Op, result: Result<JsValue, JsValue>, kind: &str) -> Done {
+/// What a finished call means for the library; nothing, for a removal or an index write that worked.
+fn finish(op: Op, result: Result<JsValue, JsValue>, kind: &str) -> Option<Done> {
     let value = match result {
         Ok(value) => value,
-        Err(error) => return failed(op, describe(error)),
+        Err(error) => return Some(failed(op, describe(error))),
     };
-    match op {
+    if !op.answers_when_done() {
+        return None;
+    }
+    Some(match op {
         Op::Load => {
             let index = Reflect::get(&value, &"index".into())
                 .ok()
@@ -172,8 +177,8 @@ fn finish(op: Op, result: Result<JsValue, JsValue>, kind: &str) -> Done {
             generation,
             prefix,
         },
-        Op::Remove { .. } | Op::Index { .. } => Done::Failed(String::new()),
-    }
+        Op::Remove { .. } | Op::Index { .. } => return None,
+    })
 }
 
 fn failed(op: Op, why: String) -> Done {

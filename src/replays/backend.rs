@@ -38,6 +38,16 @@ pub enum Op {
     },
 }
 
+impl Op {
+    /// Whether a store answers this operation when it worked. A removal or an index write is
+    /// answered only when it failed (`Done::Failed`, always with a reason): an answer that carries
+    /// nothing would be read as a failure without one.
+    #[cfg(any(test, target_arch = "wasm32"))]
+    pub fn answers_when_done(&self) -> bool {
+        !matches!(self, Op::Remove { .. } | Op::Index { .. })
+    }
+}
+
 /// What a store answers.
 pub enum Done {
     /// The files `(name, bytes, modified)` and the index text, if there is one.

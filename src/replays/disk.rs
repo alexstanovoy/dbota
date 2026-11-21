@@ -239,3 +239,61 @@ fn adopt(dir: &Path, record: Record, from: &Path) -> Done {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folder(name: &str) -> PathBuf {
+        let dir = crate::test_support::target_dir()
+            .join(format!("replays-disk/{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch folder");
+        dir
+    }
+
+    fn answer(replies: &Receiver<Done>) -> Done {
+        replies
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the store answers")
+    }
+
+    /// The store's contract (`Op::answers_when_done`): a removal or an index write that worked is not
+    /// answered, one that failed is, and says why. The next answer here is the load's.
+    #[test]
+    fn an_index_write_or_a_removal_is_answered_only_when_it_failed_and_then_with_its_reason() {
+        let dir = folder("answers");
+        let disk = Disk::new(dir.clone());
+        let (reply, replies) = channel();
+        let removal = Op::Remove {
+            names: vec!["gone.brp".to_owned()],
+        };
+        let index = Op::Index {
+            text: "dbota-replays\n".to_owned(),
+        };
+        assert!(!removal.answers_when_done() && !index.answers_when_done());
+        disk.run(removal, reply.clone());
+        disk.run(index, reply.clone());
+        disk.run(Op::Load, reply.clone());
+        assert!(
+            matches!(answer(&replies), Done::Loaded { .. }),
+            "the work that succeeded said nothing, so the first answer is the load's"
+        );
+        // An index that cannot be written: a folder stands where its file goes.
+        std::fs::remove_file(dir.join(INDEX)).expect("the index written above");
+        std::fs::create_dir(dir.join(INDEX)).expect("a folder in the index's place");
+        disk.run(
+            Op::Index {
+                text: "again\n".to_owned(),
+            },
+            reply,
+        );
+        match answer(&replies) {
+            Done::Failed(why) => assert!(
+                why.starts_with("cannot write the index"),
+                "a failure says what failed: {why:?}"
+            ),
+            _ => panic!("a failed index write is answered"),
+        }
+    }
+}
