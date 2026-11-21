@@ -86,20 +86,18 @@ pub fn works_line(kit: &mut Kit, card: Entity, banner: &ServiceBanner) {
         15.0,
         ink(Finding::Good),
     );
-    kit.commands
-        .entity(said)
-        .insert((
-            Name::new("service check summary"),
-            Node {
-                width: percent(60),
-                min_width: px(0),
-                ..default()
-            },
-            TextLayout {
-                linebreak: bevy::text::LineBreak::WordOrCharacter,
-                ..default()
-            },
-        ));
+    kit.commands.entity(said).insert((
+        Name::new("service check summary"),
+        Node {
+            width: percent(60),
+            min_width: px(0),
+            ..default()
+        },
+        TextLayout {
+            linebreak: bevy::text::LineBreak::WordOrCharacter,
+            ..default()
+        },
+    ));
     kit.button(
         row,
         "CHANGE SERVICE",
@@ -214,14 +212,12 @@ fn list_viewport(kit: &mut Kit, card: Entity) -> (Entity, Entity) {
             ..default()
         },
     );
-    kit.commands
-        .entity(list)
-        .insert((
-            ServiceList,
-            ScrollArea,
-            Pickable::default(),
-            Name::new("service list"),
-        ));
+    kit.commands.entity(list).insert((
+        ServiceList,
+        ScrollArea,
+        Pickable::default(),
+        Name::new("service list"),
+    ));
     (body, list)
 }
 
