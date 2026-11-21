@@ -408,12 +408,6 @@ pub enum PageView {
     },
     Lobby(LobbyView),
     Result(ResultView),
-    /// Dota's Demo Hero: every hero to try, by id and name.
-    DemoHero {
-        heroes: Vec<(u16, String)>,
-        /// Whether a Demo Hero can be started from here, or why not.
-        offer: DemoOffer,
-    },
     /// A game is being opened.
     Joining,
     Loading {
@@ -752,14 +746,6 @@ impl MenuCore {
                 .and_then(|id| self.acct.results.iter().find(|r| r.match_id == id))
                 .map_or(PageView::Joining, |r| PageView::Result(self.result_view(r))),
             Page::MatchHistory => PageView::MatchHistory(self.history_view()),
-            Page::DemoHero => PageView::DemoHero {
-                offer: self.demo_offer(),
-                heroes: bota_core::HEROES
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(id, hero)| Some((u16::try_from(id).ok()?, hero.key.to_owned())))
-                    .collect(),
-            },
             // Never beneath: the settings open over another page.
             Page::Settings => PageView::Hidden,
             Page::Game if self.launching => PageView::Loading {
@@ -822,7 +808,7 @@ impl MenuCore {
             matches: self.local_history.cards(self.library.records()),
             hero: self.last_played_hero(),
             rulesets: self
-                .menu_rulesets()
+                .mode_rulesets()
                 // Lobbies and solo starts without a queue have no matchmaking policy.
                 .filter(|r| r.rating_window.is_some())
                 .map(|r| RulesetRow {

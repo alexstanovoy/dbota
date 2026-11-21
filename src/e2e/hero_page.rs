@@ -532,39 +532,15 @@ fn the_demo_button_of_a_heros_page_starts_the_demo_hero() {
     );
 }
 
-/// Without an account, the DEMO HERO tab of the top bar opens the page of heroes to try, and a
-/// press on a hero's card starts the Demo Hero with that hero.
+/// Signed in, a hero's DEMO HERO button (the only way into a demo) starts the service's Demo Hero for
+/// that hero, a game that cheats.
 #[test]
-fn the_demo_hero_tab_starts_a_demo_without_an_account() {
-    let mut client = local_menu();
-    crate::main_menu::tests::use_matching_local_server(
-        &mut client.world_mut().non_send_mut::<MenuCore>(),
-    );
-    client.click_named("demo hero tab");
-    client.until("the Demo Hero page", |c| {
-        c.world().non_send::<MenuCore>().page() == Page::DemoHero
-    });
-    client.click_named("demo shadow fiend");
-    client.until("the Demo Hero on screen", |c| {
-        c.world().non_send::<MenuCore>().shows_game()
-    });
-    assert_eq!(
-        client.world().non_send::<MenuCore>().demo_hero(),
-        Some(HERO),
-        "the demo is of the hero whose card was pressed"
-    );
-}
-
-/// Signed in, the same tab and card start the service's Demo Hero, a game that cheats.
-#[test]
-fn the_demo_hero_tab_starts_the_services_demo_for_a_signed_in_player() {
+fn the_demo_button_of_a_heros_page_starts_the_services_demo_for_a_signed_in_player() {
     let service = crate::main_menu::tests::service();
     let mut client = super::menu::signed_up(&service, "alice");
-    client.click_named("demo hero tab");
-    client.until("the Demo Hero page", |c| {
-        c.world().non_send::<MenuCore>().page() == Page::DemoHero
-    });
-    client.click_named("demo pudge");
+    act(&mut client, Act::Go(Page::Heroes));
+    act(&mut client, Act::InspectHero(HeroId::PUDGE));
+    client.click_named("demo hero");
     client.within(
         std::time::Duration::from_secs(120),
         "the Demo Hero stands",
@@ -608,53 +584,6 @@ fn a_hero_page_without_a_demo_shows_a_dimmed_button_and_says_why() {
             client.shown_texts()
         );
     }
-}
-
-/// The cards of the Demo Hero page.
-fn demo_cards(client: &mut Client) -> Vec<Entity> {
-    let world = client.world_mut();
-    world
-        .query_filtered::<(Entity, &Name, &InheritedVisibility), With<Button>>()
-        .iter(world)
-        .filter(|(_, name, seen)| {
-            seen.get() && name.starts_with("demo ") && name.as_str() != "demo hero tab"
-        })
-        .map(|(entity, ..)| entity)
-        .collect()
-}
-
-/// The Demo Hero page lays a roster longer than a row in rows of its own: its cards stay inside
-/// the window and the rest go below instead of running off its edge.
-#[test]
-fn the_demo_hero_page_wraps_a_roster_longer_than_a_row_instead_of_running_off_the_window() {
-    let mut client = Client::run(&["--menu-preview", "demo-hero-many"]);
-    client.until("the cards drawn", |c| demo_cards(c).len() == 8);
-    client.frames(3);
-    let width = {
-        let world = client.world_mut();
-        world
-            .query_filtered::<&Window, With<PrimaryWindow>>()
-            .single(world)
-            .expect("the window")
-            .physical_width() as f32
-    };
-    let cards: Vec<Rect> = demo_cards(&mut client)
-        .into_iter()
-        .map(|card| rect(&client, card))
-        .collect();
-    let rows = cards.iter().fold(Vec::<f32>::new(), |mut rows, card| {
-        if !rows.iter().any(|top| (top - card.min.y).abs() < 1.0) {
-            rows.push(card.min.y);
-        }
-        rows
-    });
-    assert!(rows.len() >= 2, "the cards wrap into rows: {cards:?}");
-    assert!(
-        cards
-            .iter()
-            .all(|card| card.min.x >= 0.0 && card.max.x <= width),
-        "every card stays inside the window ({width}): {cards:?}"
-    );
 }
 
 /// The hero page lights its hero from above as well as from the sides, so that its back is not

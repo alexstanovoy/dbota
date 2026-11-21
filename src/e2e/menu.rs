@@ -419,7 +419,6 @@ fn the_menus_buttons_of_a_height_are_one_width_and_never_wrap() {
     for page in [
         Page::LocalLobby,
         Page::MyGames,
-        Page::DemoHero,
         Page::Hero(bota_proto::HeroId::SHADOW_FIEND),
     ] {
         uniform_buttons(&mut client, page);
@@ -843,7 +842,8 @@ fn a_failed_lobby_join_overlays_the_bottom_without_moving_menu_content() {
         (true, UVec2::new(1280, 800)),
     ] {
         if over_game {
-            act(&mut client, Act::Go(Page::DemoHero));
+            act(&mut client, Act::Go(Page::Heroes));
+            act(&mut client, Act::InspectHero(bota_proto::HeroId::PUDGE));
             act(&mut client, Act::Demo(bota_proto::HeroId::PUDGE.0));
             client.within(Duration::from_secs(120), "a real Demo match running", |c| {
                 c.core().my_hero().is_some()
@@ -899,13 +899,14 @@ fn play_draws_queueable_rulesets_and_the_bot_toggle() {
 }
 
 /// Dota's Demo Hero runs on the service like any game: the signed-in client asks for it from the
-/// DEMO HERO page, the service starts its Demo ruleset's cheating game server, the client picks
+/// hero's page, the service starts its Demo ruleset's cheating game server, the client picks
 /// the hero chosen and its panel's buttons and a cheat take effect in the match. Leaving ends it.
 #[test]
 fn demo_hero_runs_on_the_service_and_its_cheats_take_effect() {
     let service = crate::main_menu::tests::service();
     let mut client = signed_up(&service, "alice");
-    act(&mut client, Act::Go(Page::DemoHero));
+    act(&mut client, Act::Go(Page::Heroes));
+    act(&mut client, Act::InspectHero(bota_proto::HeroId::PUDGE));
     act(&mut client, Act::Demo(bota_proto::HeroId::PUDGE.0));
     // No lobby and no countdown stand between the pick and the game: only the server starting,
     // so this guard is short (the lobby path's countdown alone was 5 s).
@@ -950,18 +951,22 @@ fn demo_hero_runs_on_the_service_and_its_cheats_take_effect() {
     let gold = own_gold(&client);
     client.cheat(bota_proto::Cheat::Gold { amount: 5000 });
     client.until("the gold", |c| own_gold(c) >= gold + 5000);
-    // Leaving ends the Demo: back on its page, with no match left to rejoin or to read.
+    // Leaving ends the Demo: back on the hero's page, with no match left to rejoin or to read.
     act(&mut client, Act::Dashboard);
     act(&mut client, Act::Disconnect);
-    client.until("back on the Demo Hero page", |c| {
+    client.until("back on the hero's page", |c| {
         let menu = c.world().non_send::<MenuCore>();
-        menu.page() == Page::DemoHero && !menu.in_game()
+        menu.page() == Page::Hero(bota_proto::HeroId::PUDGE) && !menu.in_game()
     });
     client.until("the match over", |c| {
         c.world().non_send::<MenuCore>().games_running() == 0
     });
     let menu = client.world().non_send::<MenuCore>();
-    assert_eq!(menu.page(), Page::DemoHero, "no result page for a Demo");
+    assert_eq!(
+        menu.page(),
+        Page::Hero(bota_proto::HeroId::PUDGE),
+        "no result page for a Demo"
+    );
 }
 
 /// Settings use only left presses, one change per press, even when the pointer leaves while held.

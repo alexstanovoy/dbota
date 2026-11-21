@@ -111,8 +111,20 @@ impl MenuCore {
             .filter(move |r| service_known && r.audience.admits(kind))
     }
 
-    pub(super) fn lobby_catalogue(&self) -> impl Iterator<Item = &RulesetInfo> {
+    /// The rulesets that are modes to play: every one the service lists for this account but the hero
+    /// demo, which the Heroes page's DEMO HERO button starts and nothing else offers.
+    pub(in crate::main_menu) fn mode_rulesets(&self) -> impl Iterator<Item = &RulesetInfo> {
         self.menu_rulesets().filter(|r| !bota_radovid::is_demo(r))
+    }
+
+    /// The hero demo's ruleset, by what the service says of it (its `info` flag): the one definition the
+    /// Heroes page's start and [`Self::mode_rulesets`] share.
+    pub(in crate::main_menu) fn hero_demo_ruleset(&self) -> Option<&RulesetInfo> {
+        self.menu_rulesets().find(|r| bota_radovid::is_demo(r))
+    }
+
+    pub(in crate::main_menu) fn lobby_catalogue(&self) -> impl Iterator<Item = &RulesetInfo> {
+        self.mode_rulesets()
     }
 
     pub(super) fn default_lobby_mode(&self) -> Option<RulesetId> {

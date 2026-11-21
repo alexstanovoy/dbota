@@ -7,7 +7,7 @@ use bevy::ui_widgets::Button;
 use bota_core::HEROES;
 
 use super::backdrop::{self, Backdrop};
-use super::core::{Act, DemoOffer, LocalRules, Page};
+use super::core::{Act, LocalRules, Page};
 use super::form::FormKind;
 use super::kit::{Kit, MenuButton, Tone};
 use super::view::{FieldView, MenuView, PageView, ResultView};
@@ -300,7 +300,6 @@ fn draw_body(kit: &mut Kit, body: Entity, view: &MenuView) {
         ),
         PageView::Lobbies { .. } | PageView::Lobby(_) => {}
         PageView::Result(result) => result_page(kit, body, result),
-        PageView::DemoHero { heroes, offer } => demo_page(kit, body, heroes, *offer),
         PageView::Joining => {
             kit.typed(body, "JOINING THE GAME…", theme::TITLE, theme::INK_1);
         }
@@ -998,68 +997,6 @@ fn checkbox(kit: &mut Kit, card: Entity, label: &'static str, action: Act, on: b
         },
     );
     kit.text(row, label, 16.0, theme::INK_1);
-}
-
-/// DEMO HERO: every hero, its portrait and its name; a click starts Dota's
-/// Demo Hero with it, a game of the service alone on the map with every cheat.
-fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offer: DemoOffer) {
-    let column = kit.node(
-        body,
-        Node {
-            width: percent(100),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            row_gap: px(14),
-            ..default()
-        },
-    );
-    kit.bold(column, "DEMO HERO", 30.0, theme::INK_1);
-    kit.text(
-        column,
-        "Try a hero alone with every cheat: levels, gold, items, free spells, enemies to fight.",
-        16.0,
-        theme::INK_1,
-    );
-    if let Some(reason) = offer.reason() {
-        kit.text(column, reason, 16.0, theme::ERROR_TEXT);
-        return;
-    }
-    // As many cards in a row as the page is wide for, the rest below: the roster grows.
-    let grid = kit.node(
-        column,
-        Node {
-            max_width: percent(100),
-            flex_wrap: FlexWrap::Wrap,
-            justify_content: JustifyContent::Center,
-            column_gap: px(16),
-            row_gap: px(16),
-            ..default()
-        },
-    );
-    for (id, key) in heroes {
-        let name = kit.texts.name(key).to_owned();
-        let card = kit
-            .commands
-            .spawn((
-                super::kit::MenuButton(Act::Demo(*id)),
-                Button,
-                Name::new(format!("demo {}", name.to_lowercase())),
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: px(6),
-                    padding: UiRect::all(px(8)),
-                    border: UiRect::all(px(1)),
-                    ..default()
-                },
-                theme::downward(theme::PANEL),
-                BorderColor::all(theme::PANEL_EDGE),
-                ChildOf(grid),
-            ))
-            .id();
-        kit.portrait(card, *id, 240.0);
-        kit.bold(card, name.to_uppercase(), 18.0, theme::INK_1);
-    }
 }
 
 pub(super) fn corner_height(view: &MenuView) -> f32 {

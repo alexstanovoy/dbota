@@ -200,7 +200,6 @@ fn page_of(name: &str) -> Option<Page> {
         "heroes" => Page::Heroes,
         "hero" => Page::Hero(HeroId::SHADOW_FIEND),
         "hero-pudge" | "hero-demo-signin" | "hero-demo-missing" => Page::Hero(HeroId::PUDGE),
-        "demo-hero" | "demo-hero-many" => Page::DemoHero,
         "leaderboard"
         | "leaderboard_solo"
         | "leaderboard-bots"
@@ -212,9 +211,6 @@ fn page_of(name: &str) -> Option<Page> {
     };
     Some(page)
 }
-
-/// Heroes on the Demo Hero preview that wraps: more cards than a row of the page holds.
-const ROSTER_THAT_WRAPS: usize = 8;
 
 fn body(page: Page, name: &str) -> PageView {
     match page {
@@ -234,20 +230,6 @@ fn body(page: Page, name: &str) -> PageView {
                 "hero-demo-missing" => DemoOffer::NoDemo,
                 _ => DemoOffer::Ready,
             },
-        },
-        Page::DemoHero => PageView::DemoHero {
-            heroes: bota_core::HEROES
-                .iter()
-                // A roster of eight, which the page's width cannot hold in one row.
-                .cycle()
-                .take(if name == "demo-hero-many" {
-                    ROSTER_THAT_WRAPS
-                } else {
-                    bota_core::HEROES.len()
-                })
-                .map(|hero| (hero.id.0, hero.key.to_owned()))
-                .collect(),
-            offer: DemoOffer::Ready,
         },
         Page::Leaderboard => ladder_fixture(name),
         _ => PageView::Hidden,

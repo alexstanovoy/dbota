@@ -23,7 +23,7 @@ affiliated with or endorsed by Valve.
   matches, accept or decline a found
   match, create lobbies or search the open ones and join at once (a locked one asks for its password; its owner may
   turn the game's cheats on for everyone in it, shown to all before they ready), rejoin
-  running games, and try heroes alone in Demo Hero with Dota's cheat panel.
+  running games, and try a hero alone with Dota's cheat panel from the hero's page (DEMO HERO).
 - **Watch:** spectate live matches, or play replays with pause, speed, either team's vision or one player's view.
   Replays of your own matches are kept and listed for you.
 - **Feel at home:** Dota's default hotkeys (all rebindable), the shop with its build trees and quick-buy, talents,

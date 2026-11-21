@@ -443,10 +443,10 @@ fn the_way_in_lets_a_player_without_an_account_play_and_come_back() {
 }
 
 /// The fullest bar (signed in, over a game, the longest service name the pill shows: a
-/// 32-character host) stays whole in the narrowest window the menu fits, the cog left of quit:
-/// the tabs it has no room for fold under MORE, whose list shows them; a wide window unfolds them.
+/// 32-character host) stays whole in the narrowest window the menu fits, the cog left of quit, with
+/// every tab in the bar and no MORE (which would hide a single tab).
 #[test]
-fn the_fullest_bar_folds_its_last_tabs_under_more_and_stays_whole() {
+fn the_fullest_bar_holds_every_tab_without_a_more_in_the_narrowest_window() {
     let mut client = Client::run(&["--window", "1280x1024"]);
     let mut view = crate::main_menu::preview("dashboard").expect("a preview");
     view.connection = crate::main_menu::Connection::Online("a".repeat(32));
@@ -474,29 +474,21 @@ fn the_fullest_bar_folds_its_last_tabs_under_more_and_stays_whole() {
             .iter(world)
             .any(|(named, seen)| seen.get() && named.as_str() == name)
     };
-    assert!(shown(&mut client, "more"), "MORE holds the tabs folded");
+    // Every tab fits the narrowest window: MORE has nothing to fold, so none is drawn (a MORE holding a
+    // single tab would be a button that hides one button).
     assert!(
-        !shown(&mut client, "demo hero tab"),
-        "DEMO HERO, the last, folded"
+        !shown(&mut client, "more"),
+        "every tab fits the narrowest window the menu fits"
     );
-    let more = interface_rect(&mut client, "more");
-    let kept: Vec<String> = ["play", "my games", "profile"]
-        .into_iter()
-        .filter(|tab| shown(&mut client, tab))
-        .map(str::to_owned)
-        .collect();
-    click(&mut client, "more");
-    client.until("MORE's list open", |c| shown(c, "demo hero tab"));
-    // Open, the list folds nothing more: MORE and the tabs before it stay where they were.
-    client.frames(20);
-    assert_eq!(interface_rect(&mut client, "more"), more, "MORE stays put");
-    for tab in &kept {
-        assert!(shown(&mut client, tab), "{tab} still in the bar");
+    for tab in ["play tab", "my games", "leaderboard", "heroes"] {
+        assert!(shown(&mut client, tab), "{tab} is in the bar");
     }
-    super::menu::resize_menu_window(&mut client, UVec2::new(1920, 1080));
-    client.until("every tab back in the bar", |c| {
-        shown(c, "demo hero tab") && !shown(c, "more")
-    });
+    for size in [UVec2::new(1280, 720), UVec2::new(1920, 1080)] {
+        super::menu::resize_menu_window(&mut client, size);
+        client.frames(10);
+        assert!(!shown(&mut client, "more"), "no MORE at {size}");
+        assert!(shown(&mut client, "heroes"), "HEROES in the bar at {size}");
+    }
 }
 
 #[test]
@@ -554,13 +546,14 @@ fn tabs(client: &mut Client) -> Vec<String> {
 /// The main menu offers exactly these tabs, in this order: no tab appears or vanishes unnoticed
 /// (there is no REPLAYS tab: a match is watched from the history, or from the replays MY GAMES
 /// lists). MY GAMES is for everyone, with the replays this client keeps; without an account the
-/// service's other tab is absent; signed in, LEADERBOARD comes.
+/// service's other tab is absent; signed in, LEADERBOARD comes. There is no DEMO HERO tab: a demo is
+/// started from a hero's page.
 #[test]
 fn the_main_menu_shows_exactly_the_expected_tabs() {
     let mut client = local_menu();
     assert_eq!(
         tabs(&mut client),
-        ["PLAY", "MY GAMES", "LOCAL LOBBY", "HEROES", "DEMO HERO"],
+        ["PLAY", "MY GAMES", "LOCAL LOBBY", "HEROES"],
         "without an account"
     );
     let service = crate::main_menu::tests::service();
@@ -568,14 +561,7 @@ fn the_main_menu_shows_exactly_the_expected_tabs() {
     client.frames(5);
     assert_eq!(
         tabs(&mut client),
-        [
-            "PLAY",
-            "MY GAMES",
-            "LEADERBOARD",
-            "LOCAL LOBBY",
-            "HEROES",
-            "DEMO HERO"
-        ],
+        ["PLAY", "MY GAMES", "LEADERBOARD", "LOCAL LOBBY", "HEROES"],
         "signed in"
     );
 }

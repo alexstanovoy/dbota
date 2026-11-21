@@ -17,24 +17,22 @@ use crate::theme;
 /// The tabs of the pages there are for now, until their screens are redesigned: the service's
 /// once signed in, and what is played without it always.
 ///
-/// A browser cannot start a game server, so the local lobby is not in its bar. DEMO HERO is in
-/// both, for everyone: where one cannot be started its page says why.
+/// A browser cannot start a game server, so the local lobby is not in its bar. The Demo Hero has no tab:
+/// a hero's page has its DEMO HERO button.
 #[cfg(not(target_arch = "wasm32"))]
-const TABS: [(Page, &str); 6] = [
+const TABS: [(Page, &str); 5] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
     (Page::Leaderboard, "LEADERBOARD"),
     (Page::LocalLobby, "LOCAL LOBBY"),
     (Page::Heroes, "HEROES"),
-    (Page::DemoHero, "DEMO HERO"),
 ];
 #[cfg(target_arch = "wasm32")]
-const TABS: [(Page, &str); 5] = [
+const TABS: [(Page, &str); 4] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
     (Page::Leaderboard, "LEADERBOARD"),
     (Page::Heroes, "HEROES"),
-    (Page::DemoHero, "DEMO HERO"),
 ];
 
 /// The quit button's icon, across.
@@ -251,10 +249,6 @@ fn tab_action(kit: &mut Kit, tab: Entity, page: Page) {
         kit.commands.entity(tab).insert(Name::new("play tab"));
         Act::Play(super::PlayAction::Open(true))
     } else {
-        // A hero's page has a DEMO HERO button of its own, which a script names by its words.
-        if page == Page::DemoHero {
-            kit.commands.entity(tab).insert(Name::new("demo hero tab"));
-        }
         Act::Go(page)
     };
     kit.commands.entity(tab).insert(MenuButton(action));

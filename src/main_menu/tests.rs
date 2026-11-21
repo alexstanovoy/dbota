@@ -1606,17 +1606,18 @@ fn demo_hero_starts_a_cheat_match_of_the_service_with_the_hero_chosen() {
     let service = service();
     let mut alice = Player::new(Some(&service));
     alice.register("alice");
-    alice.menu.act(Act::Go(Page::DemoHero));
-    assert_eq!(alice.menu.page(), Page::DemoHero);
+    alice.menu.act(Act::Go(Page::Heroes));
+    alice.menu.act(Act::InspectHero(HeroId::PUDGE));
+    assert_eq!(alice.menu.page(), Page::Hero(HeroId::PUDGE));
     assert!(
         matches!(
             alice.menu.view().body,
-            PageView::DemoHero {
-                offer: DemoOffer::Ready,
+            PageView::Hero {
+                demo: DemoOffer::Ready,
                 ..
             }
         ),
-        "the service offers a Demo Hero"
+        "the service offers a Demo Hero on the hero's page"
     );
     alice.menu.act(Act::Demo(HeroId::PUDGE.0));
     settle(&mut [&mut alice], |p| p.menu.page() == Page::Game);
@@ -1656,7 +1657,11 @@ fn demo_hero_starts_a_cheat_match_of_the_service_with_the_hero_chosen() {
     core.leave_game();
     assert!(!alice.menu.take_leave(), "the leave goes out first");
     alice.menu.left_game(None, false);
-    assert_eq!(alice.menu.page(), Page::DemoHero);
+    assert_eq!(
+        alice.menu.page(),
+        Page::Hero(HeroId::PUDGE),
+        "back to the hero's page the demo was started from"
+    );
     assert!(!alice.menu.view().reconnect);
     // The lockstep server takes the leave with the client's next acknowledgement.
     let deadline = Instant::now() + Duration::from_secs(PATIENCE);
@@ -1666,8 +1671,49 @@ fn demo_hero_starts_a_cheat_match_of_the_service_with_the_hero_chosen() {
         alice.menu.update();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(alice.menu.page(), Page::DemoHero);
+    assert_eq!(alice.menu.page(), Page::Hero(HeroId::PUDGE));
     assert!(alice.menu.acct.results.is_empty());
+}
+
+/// The hero demo is no mode to play: a hero's DEMO HERO button starts it, and no list of modes offers it,
+/// not for a signed-in player and not for one playing without an account.
+#[test]
+fn no_list_of_modes_holds_the_hero_demo_that_only_a_heros_page_starts() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    let demo = alice
+        .menu
+        .hero_demo_ruleset()
+        .map(|ruleset| ruleset.id.clone())
+        .expect("the service lists the hero demo");
+    assert!(
+        alice.menu.mode_rulesets().next().is_some(),
+        "the service lists modes besides the demo"
+    );
+    assert!(alice.menu.mode_rulesets().all(|ruleset| ruleset.id != demo));
+    assert!(
+        alice
+            .menu
+            .lobby_catalogue()
+            .all(|ruleset| ruleset.id != demo),
+        "the lobby editor's list"
+    );
+    let PageView::Home { rulesets, .. } = alice.menu.view().body else {
+        panic!("signed in, on Play");
+    };
+    assert!(
+        rulesets.iter().all(|row| row.id != demo),
+        "Play's queue rows: {:?}",
+        rulesets.iter().map(|row| &row.id).collect::<Vec<_>>()
+    );
+    let dir = Scratch::new("no-demo-mode");
+    let (offline, _trust) = offline("bob", &dir);
+    assert_eq!(
+        offline.mode_rulesets().count(),
+        0,
+        "without an account there is no service's mode to list"
+    );
 }
 
 /// A desktop whose service lists no Demo Hero still offers one, of its own: the sandbox of a local
@@ -1677,11 +1723,12 @@ fn a_service_without_a_demo_falls_back_to_the_local_sandbox() {
     let service = service_with(|config| config.replace("info = \"01\"", ""));
     let mut alice = Player::new(Some(&service));
     alice.register("alice");
-    alice.menu.act(Act::Go(Page::DemoHero));
+    alice.menu.act(Act::Go(Page::Heroes));
+    alice.menu.act(Act::InspectHero(HeroId::PUDGE));
     assert!(matches!(
         alice.menu.view().body,
-        PageView::DemoHero {
-            offer: DemoOffer::Ready,
+        PageView::Hero {
+            demo: DemoOffer::Ready,
             ..
         }
     ));
@@ -2239,13 +2286,12 @@ fn a_demo_hero_asked_in_a_match_is_refused_without_asking_the_service() {
 #[test]
 fn leaving_a_local_demo_hero_returns_to_the_page_it_was_started_from() {
     let dir = Scratch::new("demo-return");
-    for from in [Page::Hero(HeroId::PUDGE), Page::DemoHero] {
+    for from in [Page::Hero(HeroId::PUDGE), Page::Heroes] {
         let (mut menu, _trust) = offline("alice", &dir);
         menu.act(Act::Go(Page::Heroes));
-        menu.act(match from {
-            Page::Hero(hero) => Act::InspectHero(hero),
-            page => Act::Go(page),
-        });
+        if let Page::Hero(hero) = from {
+            menu.act(Act::InspectHero(hero));
+        }
         menu.act(Act::Demo(HeroId::PUDGE.0));
         assert!(
             matches!(menu.take_launch(), Some(Launch::LocalDemo { .. })),

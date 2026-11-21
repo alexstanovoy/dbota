@@ -60,8 +60,6 @@ pub enum Page {
     Heroes,
     Hero(bota_proto::HeroId),
     Leaderboard,
-    /// Dota's Demo Hero: a hero to try out alone, with every cheat.
-    DemoHero,
     /// How a finished match went.
     Result,
     /// A game is on screen, or being opened.
@@ -1290,9 +1288,10 @@ impl MenuCore {
         }
     }
 
-    /// Where leaving a Demo Hero goes back to: the page it was started from.
+    /// Where leaving a Demo Hero goes back to: the page it was started from (a hero's page, the only way in),
+    /// the Heroes page where none is known.
     fn demo_page(&self) -> Page {
-        self.demo_from.unwrap_or(Page::DemoHero)
+        self.demo_from.unwrap_or(Page::Heroes)
     }
 
     fn form_kind(&self) -> FormKind {
@@ -2153,13 +2152,12 @@ impl MenuCore {
     }
 
     fn service_offers_demo(&self) -> bool {
-        self.menu_rulesets().any(bota_radovid::is_demo)
+        self.hero_demo_ruleset().is_some()
     }
 
-    /// Whether the service lists `ruleset` as a Demo Hero.
+    /// Whether the service lists `ruleset` as the hero demo.
     pub(super) fn is_demo_ruleset(&self, ruleset: &RulesetId) -> bool {
-        self.menu_rulesets()
-            .any(|r| &r.id == ruleset && bota_radovid::is_demo(r))
+        self.hero_demo_ruleset().is_some_and(|r| &r.id == ruleset)
     }
 
     /// Dota's Demo Hero with `hero`: the service's Demo ruleset started for this account alone, at
@@ -2174,10 +2172,7 @@ impl MenuCore {
             return;
         }
         self.demo_from = Some(self.page);
-        let ruleset = self
-            .menu_rulesets()
-            .find(|r| bota_radovid::is_demo(r))
-            .map(|r| r.id.clone());
+        let ruleset = self.hero_demo_ruleset().map(|r| r.id.clone());
         let Some(ruleset) = ruleset else {
             #[cfg(not(target_arch = "wasm32"))]
             self.start(Launch::LocalDemo {
@@ -3419,7 +3414,7 @@ impl MenuCore {
             return;
         }
         let available: Vec<_> = self
-            .menu_rulesets()
+            .mode_rulesets()
             .filter(|r| self.play.lists(r.rated) && r.rating_window.is_some())
             .map(|r| r.id.clone())
             .collect();
@@ -3449,7 +3444,7 @@ impl MenuCore {
             return;
         };
         let available: Vec<_> = self
-            .menu_rulesets()
+            .mode_rulesets()
             .filter(|r| self.play.lists(r.rated) && r.rating_window.is_some())
             .collect();
         let chosen: Vec<_> = available
