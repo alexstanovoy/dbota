@@ -526,7 +526,7 @@ fn demo_a_spawned_enemy_takes_the_players_normal_move_and_ability_orders() {
 }
 
 #[test]
-fn demo_controls_are_offered_only_in_live_cheat_matches() {
+fn demo_controls_are_offered_only_when_the_match_allows_cheats() {
     for cheats in [false, true] {
         let server = Server::for_hud_with_cheats(2, &[], cheats);
         quiet_seat(&server, HeroId::PUDGE);
@@ -784,6 +784,113 @@ fn the_hero_controls_explain_when_the_selection_cannot_be_controlled() {
             .any(|text| text.0 == "ENEMY CREEPS HERE"),
         "placement identifies the side it spawns"
     );
+}
+
+fn forged_cheat(client: &mut Client, unit: EntityId) {
+    let seen = client.tick();
+    client
+        .core_mut()
+        .source
+        .send(&bota_proto::ClientMsg::Order {
+            seq: 1000,
+            unit: Some(unit),
+            order: Order::Cheat {
+                cheat: Cheat::Levels { count: 29 },
+            },
+            seen: Some(seen),
+            queue: false,
+        });
+}
+
+#[test]
+fn a_spectator_of_a_cheat_match_sees_no_demo_panel_and_a_forged_cheat_changes_nothing() {
+    let server = Server::start(1, &["--spectators", "open"]);
+    let mut player = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    let mut watcher = Client::run(&["--addr", &server.address, "--spectate"]);
+    watcher.until("spectator watches the match", |watcher| {
+        player.frames(1);
+        watcher.core().view().is_some()
+    });
+    let id = player.me().id;
+    let tick = watcher.tick();
+    assert!(
+        !level_plate(&mut watcher, "demo fold"),
+        "the spectator's panel"
+    );
+    forged_cheat(&mut watcher, id);
+    watcher.until("both sides saw later snapshots", |watcher| {
+        player.frames(1);
+        watcher.tick() > tick + 2 && player.tick() > tick + 2
+    });
+    assert_eq!(player.me().level, 1, "the seatless order had no effect");
+}
+
+#[test]
+fn a_replay_of_a_cheat_match_shows_no_demo_panel() {
+    use bota_proto::{ReplayRecord, ServerMsg};
+    let mut reader = bota_proto::FrameReader::new();
+    reader.push(&crate::units::tests::replay_of_heroes_on_grid(1, 1));
+    let mut replay = Vec::new();
+    while let Some(mut record) = reader
+        .next_message::<ReplayRecord>()
+        .expect("the replay record")
+    {
+        if let ReplayRecord::Msg(ServerMsg::MatchStart { info }) = &mut record {
+            info.cheats = true;
+        }
+        bota_proto::encode_frame(&record, &mut replay).expect("the replay record encoded");
+    }
+    let core = bota_client_core::App::new(bota_client_core::Source::Replay(Box::new(
+        bota_client_core::ReplayPlayer::from_reader(std::io::Cursor::new(replay)),
+    )));
+    let mut client = Client::run_with_core(&["--replay", "in_memory.brp"], core);
+    client.until("the replay snapshot", |client| {
+        client.core().view().is_some()
+    });
+    super::hud_layout::on_screen(&mut client);
+    assert!(
+        client
+            .core()
+            .statics()
+            .is_some_and(|statics| statics.metadata().cheats),
+        "the recorded match allows cheats"
+    );
+    assert!(!level_plate(&mut client, "demo fold"), "the replay's panel");
+}
+
+#[test]
+fn the_ended_demo_match_shows_no_demo_panel() {
+    let (mut server, mut client) = demo();
+    assert!(
+        level_plate(&mut client, "demo fold"),
+        "the panel while it runs"
+    );
+    server.ask_to_finish();
+    client.until("the match has ended on the client", |client| {
+        client.core().over.is_some()
+    });
+    server.wait();
+    client.frames(2);
+    assert!(
+        !level_plate(&mut client, "demo fold"),
+        "the ended match's panel"
+    );
+}
+
+#[test]
+fn escape_hides_the_search_caret_and_restores_hotkeys() {
+    let (_server, mut client) = demo();
+    client.click_named("demo items");
+    client.type_text("heart");
+    assert!(
+        client.shown_texts().contains(&"heart|".to_owned()),
+        "the focused field shows its caret"
+    );
+    client.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
+    assert!(client.shown_texts().contains(&"heart".to_owned()));
+    assert!(!client.shown_texts().contains(&"heart|".to_owned()));
+    client.tap_named(KeyCode::F4, bevy::input::keyboard::Key::F4);
+    assert!(client.world().resource::<crate::input::Panels>().shop);
 }
 
 #[test]
