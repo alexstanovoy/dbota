@@ -196,11 +196,7 @@ fn tabs(kit: &mut Kit, bar: Entity, view: &MenuView, fold: TabFold) {
     let lit = tab_of(view.beneath);
     let shown: Vec<(Page, &str)> = TABS
         .into_iter()
-        .filter(|(page, _)| {
-            (!page.needs_account() || view.account.is_some())
-                && (*page != Page::Leaderboard
-                    || matches!(view.connection, super::view::Connection::Online(_)))
-        })
+        .filter(|(page, _)| !page.needs_account() || view.account.is_some())
         .collect();
     let (kept, folded) = shown.split_at(shown.len().saturating_sub(fold.folded));
     for &(page, label) in kept {

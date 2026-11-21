@@ -3318,10 +3318,7 @@ fn requests_queued_for_one_account_are_not_sent_in_the_session_of_the_next() {
         .world_mut()
         .non_send_mut::<MenuCore>()
         .test_hold_service(true);
-    click(&mut alice, "play tab");
-    click(&mut alice, "custom lobbies");
-    click(&mut alice, "create lobby");
-    alice.frames(3);
+    // Opening the profile queues its account and match-history requests on the held link.
     open_sign_in_on_the_same_service(&mut alice);
     assert!(
         alice.world().non_send::<MenuCore>().queued_account_requests_for_test() > 0,
@@ -3341,13 +3338,14 @@ fn requests_queued_for_one_account_are_not_sent_in_the_session_of_the_next() {
         let menu = client.world().non_send::<MenuCore>();
         menu.page() == Page::Home && menu.view().account.as_deref() == Some("bob")
     });
-    act(&mut alice, Act::Go(Page::Lobbies));
-    alice.until("the new account's lobby list returned", |client| {
+    act(&mut alice, Act::Go(Page::Profile));
+    alice.until("the new account's profile requests returned", |client| {
         client.world().non_send::<MenuCore>().list_requests_finished_for_test()
     });
+    signed_in_chrome(&mut alice, "bob");
     assert!(
-        alice.shown_texts().iter().all(|text| !text.contains("'s lobby")),
-        "the service has no lobby created by the previous account's request"
+        alice.shown_texts().iter().all(|text| !text.contains("alice")),
+        "the profile shows only the new owner's name"
     );
 }
 
