@@ -658,3 +658,64 @@ fn the_fall_plays_its_destruction_and_leaves_its_ruin_to_the_end() {
         );
     }
 }
+
+/// The Radiant Ancient's fall (every Dire win) plays the destruction effects the client draws and
+/// draws no sphere over the Ancient: the effect's `e` child places an additive sphere model that
+/// the client draws as an opaque dark ball, so it is not played; the ruin still stays to the end.
+#[test]
+fn the_radiant_fall_draws_no_dark_sphere_over_the_ancient_and_leaves_its_ruin_to_the_end() {
+    let server = Server::for_hud(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+    client.ready_with_match_held(&server);
+    client.cheat(Cheat::StartGame);
+    fell(&mut client, UnitKind::Tower, Team::Radiant);
+    client
+        .world_mut()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
+    let effect = |client: &Client, child: &str| {
+        client
+            .world()
+            .resource::<crate::particles::Library>()
+            .effect(&format!("ancient.radiant.destroy.{child}"))
+            .cloned()
+    };
+    let drawn = effect(&client, "g").expect("ancient.radiant.destroy.g is in the library");
+    let sphere = effect(&client, "e");
+    let mut spheres_drawn = 0;
+    while finale(&client).elapsed < LONGEST_SECS - 0.1 {
+        client.step_frames(1);
+        let library = client.world().resource::<crate::particles::Library>();
+        spheres_drawn += client
+            .world()
+            .resource::<crate::particles::ParticleFrame>()
+            .models()
+            .filter(|(model, _)| {
+                library.models[usize::from(*model)]
+                    .file
+                    .contains("/sphere.vmdl")
+            })
+            .count();
+        assert_eq!(
+            falling_ancient(&mut client).as_deref(),
+            Some("ancient.radiant.destruction"),
+            "the ruin stays to the end"
+        );
+    }
+    assert_eq!(
+        spheres_drawn, 0,
+        "no sphere model is drawn over the Ancient"
+    );
+    let playing = client.world().resource::<crate::particles::Playing>();
+    assert_eq!(
+        playing.started(&drawn),
+        1,
+        "the drawable child started once"
+    );
+    if let Some(sphere) = sphere {
+        assert_eq!(
+            playing.started(&sphere),
+            0,
+            "the sphere's child is not played"
+        );
+    }
+}

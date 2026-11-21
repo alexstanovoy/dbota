@@ -687,7 +687,10 @@ fx ability.spawnlord_master_freeze.cast at=caster sound=sound.neutral.spawnlord_
 # children that draw sprites, ropes, trails and lights are named one by one: the others draw the collapse with
 # animated models (the destruction models, the statue's fall, the Dire's crater rubble and blast wave, played by
 # sequence name) that the client does not pose, so the Ancient's own destruction model collapses instead.
-fx unit.npc_dota_goodguys_fort.died at=unit particle=ancient.radiant.destroy.e
+# The Radiant `e` is left out: it places `sphere.vmdl` (skin 3, an additive material) with a model renderer,
+# which the client draws as an opaque dark ball over the Ancient. It also holds the collapse's burst (rings,
+# flares, lights, ropes); they return when model renderers draw additive materials, or when one system of an
+# effect can be left out.
 fx unit.npc_dota_goodguys_fort.died at=unit particle=ancient.radiant.destroy.g
 fx unit.npc_dota_badguys_fort.died at=unit particle=ancient.dire.destroy.e
 fx unit.npc_dota_badguys_fort.died at=unit particle=ancient.dire.destroy.f
