@@ -60,11 +60,13 @@ def read_service_address(log, service):
 def run_service_page(page_server, endpoint, shots):
     url = f"http://127.0.0.1:{page_server.server_port}/?cache=http"
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(args=[*BROWSER_ARGS, "--ignore-certificate-errors"])
+        browser = playwright.chromium.launch(args=[
+            *BROWSER_ARGS, "--ignore-certificate-errors",
+            "--host-resolver-rules=MAP bota.lubush.space ~NOTFOUND",
+        ])
         page = browser.new_page(viewport={"width": 1920, "height": 1080})
         console = []
         page.on("console", lambda message: console.append(message.text))
-        page.route_web_socket(re.compile(r"^wss://bota\.lubush\.space/"), lambda connection: connection.close())
         page.goto(url)
         wait_console(page, console, r"service wss://bota\.lubush\.space did not pass its check:", 90,
                      "the new browser client to check the public service")
