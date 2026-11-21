@@ -1005,7 +1005,8 @@ mod tests {
         client
             .world_mut()
             .non_send_mut::<MenuCore>()
-            .acct.results
+            .acct
+            .results
             .push_back(MatchResult {
                 match_id: MatchId(10432),
                 ruleset: RulesetId("all_pick".to_owned()),

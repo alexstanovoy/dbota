@@ -3290,7 +3290,10 @@ fn a_link_that_never_opens_is_given_up_with_a_word_after_the_wait() {
     click(&mut alice, "my games");
     alice.frames(3);
     assert!(
-        alice.shown_texts().iter().any(|shown| shown == "RECONNECTING"),
+        alice
+            .shown_texts()
+            .iter()
+            .any(|shown| shown == "RECONNECTING"),
         "the pill is not green while the link opens"
     );
     alice
@@ -3321,12 +3324,19 @@ fn requests_queued_for_one_account_are_not_sent_in_the_session_of_the_next() {
     // Opening the profile queues its account and match-history requests on the held link.
     open_sign_in_on_the_same_service(&mut alice);
     assert!(
-        alice.world().non_send::<MenuCore>().queued_account_requests_for_test() > 0,
+        alice
+            .world()
+            .non_send::<MenuCore>()
+            .queued_account_requests_for_test()
+            > 0,
         "the pending profile work still belongs to the first account"
     );
     submit_other_account(&mut alice, "bob");
     assert_eq!(
-        alice.world().non_send::<MenuCore>().queued_account_requests_for_test(),
+        alice
+            .world()
+            .non_send::<MenuCore>()
+            .queued_account_requests_for_test(),
         0,
         "submitting new credentials discards the old account's work before the reply"
     );
@@ -3341,10 +3351,16 @@ fn requests_queued_for_one_account_are_not_sent_in_the_session_of_the_next() {
     signed_in_chrome(&mut alice, "bob");
     act(&mut alice, Act::Go(Page::Profile));
     alice.until("the new account's profile requests returned", |client| {
-        client.world().non_send::<MenuCore>().list_requests_finished_for_test()
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .list_requests_finished_for_test()
     });
     let texts = alice.shown_texts();
-    assert!(texts.iter().any(|text| text.starts_with("bob#")), "Bob's profile is drawn");
+    assert!(
+        texts.iter().any(|text| text.starts_with("bob#")),
+        "Bob's profile is drawn"
+    );
     assert!(
         texts.iter().all(|text| !text.contains("alice")),
         "the profile shows only the new owner's name"
@@ -3388,7 +3404,6 @@ fn submit_other_account(client: &mut Client, login: &str) {
     act(client, Act::Submit);
 }
 
-
 #[test]
 fn a_lobby_settings_mode_option_is_drawn_over_the_server_and_can_be_clicked() {
     use bevy::prelude::*;
@@ -3419,5 +3434,7 @@ fn a_lobby_settings_mode_option_is_drawn_over_the_server_and_can_be_clicked() {
     assert!(top(&mut client, option) > top(&mut client, "server"));
     click(&mut client, option);
     click(&mut client, "ok");
-    client.until("the selected mode was saved", |c| room(c).settings.mode == "1x1 Mid Only");
+    client.until("the selected mode was saved", |c| {
+        room(c).settings.mode == "1x1 Mid Only"
+    });
 }

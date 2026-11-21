@@ -88,7 +88,8 @@ impl MenuCore {
     pub fn take_result_request(&mut self, history_open: bool) -> Option<View> {
         if history_open
             && self
-                .acct.result_request
+                .acct
+                .result_request
                 .as_ref()
                 .is_some_and(|view| !view.context.history)
         {
@@ -104,9 +105,12 @@ impl MenuCore {
             _ if self.page == Page::Result => self.acct.shown,
             _ => None,
         };
-        if let Some(result) =
-            service.and_then(|id| self.acct.results.iter().find(|result| result.match_id == id))
-        {
+        if let Some(result) = service.and_then(|id| {
+            self.acct
+                .results
+                .iter()
+                .find(|result| result.match_id == id)
+        }) {
             let mut context = self.event_context(result, owner);
             context.replay = self.result_replay(result.match_id.0);
             return context;
@@ -188,7 +192,8 @@ impl MenuCore {
             return None;
         }
         let result = self
-            .acct.results
+            .acct
+            .results
             .iter()
             .find(|result| Some(result.match_id) == self.acct.shown)?;
         let entry = self

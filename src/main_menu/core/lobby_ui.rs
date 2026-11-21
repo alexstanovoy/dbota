@@ -481,7 +481,8 @@ impl MenuCore {
             return;
         }
         let mut items: Vec<_> = self
-            .acct.lobbies
+            .acct
+            .lobbies
             .iter()
             .filter(|lobby| {
                 crate::main_menu::lobby_controls::includes_lobby(

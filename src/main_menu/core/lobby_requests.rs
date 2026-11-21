@@ -96,7 +96,8 @@ impl MenuCore {
             }
         }
         if !self
-            .acct.outbox
+            .acct
+            .outbox
             .iter()
             .any(|(message, _)| is_lobby_request(message))
         {
@@ -146,7 +147,8 @@ impl MenuCore {
             }
             self.asked
                 .retain(|(_, asked)| !matches!(asked, Asked::LobbyUi(r) if r.editor == editor.id));
-            self.acct.outbox
+            self.acct
+                .outbox
                 .retain(|(_, asked)| !matches!(asked, Asked::LobbyUi(r) if r.editor == editor.id));
             self.lobby_ui.deadlines.retain(
                 |(_, _, asked)| !matches!(asked, Asked::LobbyUi(r) if r.editor == editor.id),

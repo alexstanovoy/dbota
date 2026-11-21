@@ -1990,7 +1990,8 @@ impl MenuCore {
             (Asked::Join(lobby), Error::LobbyPasswordRequired) => {
                 // Locked since it was listed.
                 let name = self
-                    .acct.lobbies
+                    .acct
+                    .lobbies
                     .iter()
                     .find(|l| l.id == lobby)
                     .map_or_else(String::new, |l| l.name.clone());
@@ -2258,7 +2259,8 @@ impl MenuCore {
 
     fn note_game(&mut self, handoff: Handoff) {
         if let Some(game) = self
-            .acct.games
+            .acct
+            .games
             .iter_mut()
             .find(|g| g.match_id == handoff.match_id)
         {
@@ -3029,7 +3031,8 @@ impl MenuCore {
 
     fn enter(&mut self, id: MatchId, watch: bool) {
         let handoff = self
-            .acct.games
+            .acct
+            .games
             .iter()
             .find(|g| g.match_id == id)
             .and_then(|g| g.handoff.clone());
@@ -3734,7 +3737,11 @@ mod result_overlay_tests {
         let meta = bota_replay::meta::decode(&crate::postgame::preview::metadata("match_details"))
             .expect("fixture");
         let summary = std::sync::Arc::new(MatchSummary::from_meta(&meta).expect("summary"));
-        client.world_mut().non_send_mut::<MenuCore>().acct.result_request = Some(View::new(
+        client
+            .world_mut()
+            .non_send_mut::<MenuCore>()
+            .acct
+            .result_request = Some(View::new(
             summary,
             Context {
                 history: true,

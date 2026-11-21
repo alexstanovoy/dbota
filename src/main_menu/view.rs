@@ -713,11 +713,17 @@ impl MenuCore {
             Page::Home => self.home(),
             Page::MyGames => PageView::MyGames {
                 games: self
-                    .acct.games
+                    .acct
+                    .games
                     .iter()
                     .map(|g| game_row(g.match_id, g.handoff.is_some()))
                     .collect(),
-                finished: self.acct.history.iter().map(|r| self.finished_row(r)).collect(),
+                finished: self
+                    .acct
+                    .history
+                    .iter()
+                    .map(|r| self.finished_row(r))
+                    .collect(),
                 kept: self.kept_rows(),
                 shelf: self.replay_shelf(),
                 cooldown: self.cooldown(),
@@ -729,7 +735,8 @@ impl MenuCore {
             Page::Leaderboard => self.leaderboard_view(),
             Page::Lobbies => PageView::Lobbies {
                 list: self
-                    .acct.lobbies
+                    .acct
+                    .lobbies
                     .iter()
                     .take(bota_radovid::proto::MAX_LOBBY_LIST)
                     .map(|row| lobby_row(row, &self.catalogue))
@@ -740,7 +747,8 @@ impl MenuCore {
                 .lobby_projection()
                 .map_or(PageView::Joining, PageView::Lobby),
             Page::Result => self
-                .acct.shown
+                .acct
+                .shown
                 .and_then(|id| self.acct.results.iter().find(|r| r.match_id == id))
                 .map_or(PageView::Joining, |r| PageView::Result(self.result_view(r))),
             Page::MatchHistory => PageView::MatchHistory(self.history_view()),
@@ -930,7 +938,8 @@ impl MenuCore {
         matches.truncate(50);
         PageView::Profile {
             version: self
-                .acct.account_profile
+                .acct
+                .account_profile
                 .as_ref()
                 .and_then(|profile| profile.version.clone()),
             name,
@@ -944,7 +953,8 @@ impl MenuCore {
     }
 
     pub(super) fn profile_ratings(&self) -> Vec<super::account_page::Rating> {
-        self.acct.account_profile
+        self.acct
+            .account_profile
             .as_ref()
             .map_or_else(Vec::new, |profile| {
                 self.menu_rulesets()

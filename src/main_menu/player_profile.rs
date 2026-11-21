@@ -623,7 +623,8 @@ mod served_matches_tests {
         let played = crate::main_menu::tests::served_postmatch(&service);
         let result = played
             .menu
-            .acct.results
+            .acct
+            .results
             .iter()
             .find(|result| result.match_id.0 == played.id)
             .expect("served result")

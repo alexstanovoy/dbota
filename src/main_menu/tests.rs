@@ -901,7 +901,8 @@ fn both_keep_the_replay(alice: &mut Player, bob: &mut Player) {
     let id = match alice.menu.view().body {
         PageView::Result(_) => alice
             .menu
-            .acct.results
+            .acct
+            .results
             .back()
             .map(|r| r.match_id.0)
             .expect("result"),
@@ -4203,7 +4204,10 @@ pub(crate) fn served_leaderboard_profile(service: &Service) -> (u64, String) {
 }
 
 pub(crate) fn own_cached_profile_id(core: &MenuCore) -> Option<u64> {
-    core.acct.account_profile.as_ref().map(|account| account.id.0)
+    core.acct
+        .account_profile
+        .as_ref()
+        .map(|account| account.id.0)
 }
 
 pub(crate) fn install_profile_history(menu: &mut MenuCore, metadata: Vec<u8>) {
@@ -4939,8 +4943,8 @@ fn no_menu_code_reads_the_account_from_the_link() {
 #[test]
 fn nothing_of_a_signed_out_account_is_left_for_the_next() {
     use super::core::{AccountScope, Asked, Game};
-    use bota_radovid::proto::{ClientMsg, EndReason, MatchId, MatchResult, Outcome, UnixMs};
     use crate::postgame::view::{Context, View};
+    use bota_radovid::proto::{ClientMsg, EndReason, MatchId, MatchResult, Outcome, UnixMs};
 
     let service = service();
     let mut alice = Player::new(Some(&service));
@@ -4967,8 +4971,13 @@ fn nothing_of_a_signed_out_account_is_left_for_the_next() {
     let meta = bota_replay::meta::decode(&crate::postgame::preview::metadata("match_details"))
         .expect("result fixture");
     let summary = crate::postgame::summary::MatchSummary::from_meta(&meta).expect("match summary");
-    alice.menu.acct.result_request = Some(View::new(std::sync::Arc::new(summary), Context::default()));
-    alice.menu.acct.outbox.push((ClientMsg::MyMatches, Asked::Other));
+    alice.menu.acct.result_request =
+        Some(View::new(std::sync::Arc::new(summary), Context::default()));
+    alice
+        .menu
+        .acct
+        .outbox
+        .push((ClientMsg::MyMatches, Asked::Other));
     alice.menu.acct.history.push(finished.clone());
     alice.menu.acct.results.push_back(finished);
     alice.menu.acct.games.push(Game {
