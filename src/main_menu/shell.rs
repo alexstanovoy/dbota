@@ -125,10 +125,11 @@ pub fn plugin(app: &mut App) {
             )
                 .chain(),
         )
+        .init_resource::<super::StatusAnimation>()
         .add_systems(
             Update,
             (
-                super::top_bar::animate,
+                super::top_bar::animate.after(super::screens::draw),
                 hud_shown.after(drive).in_set(crate::ui::Mode),
             ),
         )

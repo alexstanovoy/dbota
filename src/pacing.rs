@@ -70,6 +70,7 @@ struct Interface<'w, 's> {
             Changed<BorderGradient>,
             Changed<Outline>,
             Changed<BoxShadow>,
+            // Bevy's UI renderer marks this changed when its image asset arrives.
             Changed<ImageNode>,
         )>,
     >,
@@ -140,7 +141,10 @@ fn pace(
     mut held: ResMut<HeldCameras>,
     mut startup: Local<u8>,
     mut timer: NonSendMut<timer::Timer>,
-    stage: Option<Res<crate::main_menu::HeroStage>>,
+    (stage, status): (
+        Option<Res<crate::main_menu::HeroStage>>,
+        Option<Res<crate::main_menu::StatusAnimation>>,
+    ),
     time: Res<Time<Real>>,
     post: Option<NonSend<crate::postgame::PostGame>>,
 ) {
@@ -175,7 +179,14 @@ fn pace(
             .as_ref()
             .and_then(|menu| menu.next_wake(bevy::platform::time::Instant::now()));
         let post = post.as_ref().and_then(|post| post.next_retry());
-        timer.set(hero.into_iter().chain(deadline).chain(post).min());
+        let status = status.as_ref().and_then(|animation| animation.next(&time));
+        timer.set(
+            hero.into_iter()
+                .chain(deadline)
+                .chain(post)
+                .chain(status)
+                .min(),
+        );
     }
     if settling || rendered_image {
         return;

@@ -89,6 +89,7 @@ pub use preview::{NAMES as PREVIEWS, view as preview};
 pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;
 pub(crate) use text::line;
+pub(crate) use top_bar::StatusAnimation;
 #[cfg(test)]
 pub use view::{Connection, PageView};
 

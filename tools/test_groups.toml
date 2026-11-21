@@ -190,7 +190,7 @@ tests = [
         "keys::",
         "input::",
         "window::tests::",
-        "pacing::tests::",
+        "pacing::",
         "logging::",
         "desktop::",
         "firstrun::tests::",

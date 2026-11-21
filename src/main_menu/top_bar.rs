@@ -459,15 +459,34 @@ pub struct Breathe;
 
 const SPIN_TURN: Duration = Duration::from_secs(1);
 const BREATH: Duration = Duration::from_millis(2600);
+const STATUS_FRAME: Duration = Duration::from_millis(100);
+
+#[derive(Resource, Default)]
+pub(crate) struct StatusAnimation(Option<Duration>);
+
+impl StatusAnimation {
+    pub(crate) fn next(&self, time: &Time<Real>) -> Option<bevy::platform::time::Instant> {
+        self.0.map(|at| time.startup() + at)
+    }
+}
 
 /// Turns the rings and breathes the halos.
 pub fn animate(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
+    mut animation: ResMut<StatusAnimation>,
     mut rings: Query<&mut UiTransform, With<Spin>>,
     mut halos: Query<(Entity, Option<&mut BoxShadow>), With<Breathe>>,
     mut commands: Commands,
 ) {
+    if rings.is_empty() && halos.is_empty() {
+        animation.0 = None;
+        return;
+    }
     let now = time.elapsed();
+    if animation.0.is_some_and(|next| now < next) {
+        return;
+    }
+    animation.0 = Some(now + STATUS_FRAME);
     let turn = (now.as_secs_f32() / SPIN_TURN.as_secs_f32()).fract();
     for mut ring in &mut rings {
         ring.rotation = Rot2::radians(turn * std::f32::consts::TAU);
