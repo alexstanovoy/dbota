@@ -3338,13 +3338,15 @@ fn requests_queued_for_one_account_are_not_sent_in_the_session_of_the_next() {
         let menu = client.world().non_send::<MenuCore>();
         menu.page() == Page::Home && menu.view().account.as_deref() == Some("bob")
     });
+    signed_in_chrome(&mut alice, "bob");
     act(&mut alice, Act::Go(Page::Profile));
     alice.until("the new account's profile requests returned", |client| {
         client.world().non_send::<MenuCore>().list_requests_finished_for_test()
     });
-    signed_in_chrome(&mut alice, "bob");
+    let texts = alice.shown_texts();
+    assert!(texts.iter().any(|text| text.starts_with("bob#")), "Bob's profile is drawn");
     assert!(
-        alice.shown_texts().iter().all(|text| !text.contains("alice")),
+        texts.iter().all(|text| !text.contains("alice")),
         "the profile shows only the new owner's name"
     );
 }
