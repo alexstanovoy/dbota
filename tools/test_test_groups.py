@@ -71,6 +71,37 @@ class RoutingTests(unittest.TestCase):
         self.assertIsNone(router.route("src/unnamed.rs"))
 
 
+class PlacementTests(unittest.TestCase):
+    """A test in no group is told where it goes: the group that owns its file, and the filter that takes it."""
+
+    def setUp(self):
+        self.router = test_groups.Router([group("menu", ["src/menu/**"]), group("hud", ["src/hud.rs", "src/menu/shared.rs"])], [])
+        self.owners = {("dbota", "bin:dbota", "", "menu::tests::old"): ["menu"], ("dbota", "bin:dbota", "", "hud::tests::bar"): ["hud"]}
+
+    def test_the_owner_of_the_file_and_the_tests_module_are_named(self):
+        hint = test_groups.placement(self.router, self.owners, ("dbota", "bin:dbota", "", "menu::pages::tests::new"), "src/menu/pages.rs")
+        self.assertEqual(hint, "its file src/menu/pages.rs is in the `paths` of group menu: add 'menu::pages::tests::' to that "
+                               "group's filters for dbota bin:dbota")
+
+    def test_a_module_that_would_take_another_groups_test_gives_the_full_name(self):
+        owners = {**self.owners, ("dbota", "bin:dbota", "", "menu::tests::kept_by_hud"): ["hud"]}
+        hint = test_groups.placement(self.router, owners, ("dbota", "bin:dbota", "", "menu::tests::new"), "src/menu/mod.rs")
+        self.assertIn("add 'menu::tests::new' to that group's filters", hint)
+
+    def test_a_file_no_group_owns_says_so(self):
+        hint = test_groups.placement(self.router, self.owners, ("dbota", "bin:dbota", "", "glyph::tests::new"), "src/glyph.rs")
+        self.assertEqual(hint, "no group's `paths` name its file src/glyph.rs: put the file in one group's `paths` and the test in "
+                               "that group's filters")
+
+    def test_a_file_two_groups_own_names_both(self):
+        hint = test_groups.placement(self.router, self.owners, ("dbota", "bin:dbota", "", "menu::shared::tests::t"), "src/menu/shared.rs")
+        self.assertIn("the groups hud, menu all name its file src/menu/shared.rs", hint)
+
+    def test_the_feature_set_is_part_of_the_build_named(self):
+        hint = test_groups.placement(self.router, self.owners, ("dbota", "test:port_lease", "radovid", "leases::t"), "src/menu/x.rs")
+        self.assertIn("for dbota test:port_lease with radovid", hint)
+
+
 class RepositoryRoutingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -466,6 +497,12 @@ class ToyRepositoryTests(unittest.TestCase):
         status, errors, _ = self.check(TOY_TOML.replace('filters = ["b::"]', 'filters = ["b::uses_aa"]'))
         self.assertEqual(status, 1)
         self.assertIn("in no group: toy lib b::uses_a", errors)
+
+    def test_check_tells_where_a_test_in_no_group_goes(self):
+        status, errors, _ = self.check(TOY_TOML.replace('filters = ["b::"]', 'filters = ["b::uses_aa"]'))
+        self.assertEqual(status, 1)
+        line = next(line for line in errors.splitlines() if "in no group: toy lib b::uses_a" in line)
+        self.assertRegex(line, r"its file \S+ is in the `paths` of group second: add 'b::' to that group's filters for toy lib")
 
     def test_check_names_a_test_in_two_groups(self):
         status, errors, _ = self.check(TOY_TOML.replace('filters = ["b::"]', 'filters = ["b::", "a::one"]'))

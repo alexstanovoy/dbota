@@ -829,6 +829,7 @@ def cmd_check(arguments: argparse.Namespace) -> int:
     counts = {g.name: 0 for g in groups}
     hits: dict[tuple[str, int], int] = {}
     routed_files: list[tuple[Path, str, str]] = []
+    homes: dict[tuple[str, str, str, str], str | None] = {}  # a test in no group -> its file
     skipped = set(arguments.skip_feature)
     builds = wanted_builds(config, groups, router, changed)
     listings = list_cargo(config, [b for b in builds if not set(b) & skipped])
@@ -845,14 +846,18 @@ def cmd_check(arguments: argparse.Namespace) -> int:
             owners[(package, kind, ",".join(features), name)] = who
             for g in who:
                 counts[g] += 1
+            file = source_file(listed, kind, name, trees)
             if who:
-                routed_files.append((source_file(listed, kind, name, trees), who[0], f"{package} {kind} {name}"))
+                routed_files.append((file, who[0], f"{package} {kind} {name}"))
+            else:
+                homes[(package, kind, ",".join(features), name)] = str(file.relative_to(ROOT)) if file.is_relative_to(ROOT) else None
     errors += check_python(config, groups, files, owners, counts, routed_files)
     covered = {(package, kind, name) for (package, kind, features, name), who in owners.items() if who}
     for (package, kind, features, name), who in owners.items():
         label = f"{package} {kind}{' with ' + features if features else ''} {name}"
         if not who and (package, kind, name) not in covered:  # a test of two builds is in a group of either
-            errors.append(f"in no group: {label}")
+            key = (package, kind, features, name)
+            errors.append(f"in no group: {label} ({placement(router, owners, key, homes.get(key))})")
         elif len(set(who)) > 1:
             errors.append(f"in {len(set(who))} groups ({', '.join(sorted(set(who)))}) of one build: {label}")
     names = [key[3] for key in owners]
@@ -881,6 +886,24 @@ def cmd_check(arguments: argparse.Namespace) -> int:
     if left_out:
         print(f"test groups: SKIPPED the builds with feature(s) {', '.join(sorted(skipped))} ({'; '.join(left_out)}): tests that exist only there are not checked")
     return 0
+
+
+def placement(router: Router, owners: dict[tuple[str, str, str, str], list[str]], key: tuple[str, str, str, str], path: str | None) -> str:
+    """Where a test in no group goes: the group whose `paths` name its file, and the filter that takes it (its module, when
+    no test of another group's would come along; else its full name). Said with the error, so the fix is one edit."""
+    package, kind, features, name = key
+    if path is None:
+        return "its file is outside the repository: name the test in a group's filters"
+    groups = sorted(router.owners(path))
+    if len(groups) != 1:
+        where = f"the groups {', '.join(groups)} all name" if groups else "no group's `paths` name"
+        return f"{where} its file {path}: put the file in one group's `paths` and the test in that group's filters"
+    module = name.rsplit("::", 1)[0] + "::" if "::" in name else name
+    taken = any(module in other and who and groups[0] not in who for (p, k, f, other), who in owners.items()
+                if (p, k, f) == (package, kind, features))
+    filter_ = name if taken else module
+    build = f"{package} {kind}" + (f" with {features}" if features else "")
+    return f"its file {path} is in the `paths` of group {groups[0]}: add {filter_!r} to that group's filters for {build}"
 
 
 def check_tree(trees: dict[str, ModuleTree], listed: Listed, label: str) -> list[str]:
