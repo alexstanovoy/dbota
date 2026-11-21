@@ -210,6 +210,9 @@ def journey(p, page_dir, install, nothing):
         run.page.goto(run.base)
         run.said(r"first run: ready \| CHOOSE YOUR DOTA 2 FOLDER", "the welcome screen")
         assert run.page.is_hidden("#gate"), "the page's own screen stays hidden: the client shows the first run"
+        run.said(r"^dbota: running$", "the client's first frame")
+        for shell in ("#booting", "#starting", "#gate"):
+            assert run.page.is_hidden(shell), f"{shell} of the page covers the first client frame"
         run.step("await:text:holds no Dota 2")
         # The red box says what was wrong with the folder and no more (the card above it says where
         # Dota 2's folder is): the client logs the whole text it shows.
