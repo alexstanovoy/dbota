@@ -3,7 +3,7 @@
 import argparse
 import pathlib
 
-from smoke import opened, sync_playwright, wait_console
+from browser import opened, sync_playwright, wait_console
 
 
 COUNT_FRAMES = """() => {

@@ -24,7 +24,7 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-from smoke import serve
+from browser import serve
 
 # The real GPU, not SwiftShader.
 ARGS = [

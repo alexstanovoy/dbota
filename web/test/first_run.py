@@ -36,7 +36,7 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-from smoke import BROWSER_ARGS, Quiet, serve
+from browser import BROWSER_ARGS, Quiet, serve
 
 HERE = pathlib.Path(__file__).resolve().parent
 # A VPK directory file (version 1) with no file in it: the smallest install the importer opens.
