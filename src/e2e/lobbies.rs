@@ -3239,15 +3239,16 @@ fn a_reopen_that_fails_keeps_the_signed_in_menu_and_the_next_try_makes_the_lobby
     signed_in_chrome(&mut alice, "alice");
 }
 
-/// A second account signs in over the first, from the sign-in page the first reached while its
-/// link was down: everything shows the second.
+/// A second account signs in after the first logged out while its link was down: everything
+/// shows the second.
 #[test]
-fn signing_in_as_a_second_account_without_logging_out_shows_the_second_everywhere() {
+fn signing_in_as_a_second_account_after_logging_out_with_the_link_down_shows_the_second_everywhere()
+{
     let service = crate::main_menu::tests::service_of_the_stand();
     drop(signed_up(&service, "bob"));
     let mut alice = signed_up(&service, "alice");
     let_link_idle(&mut alice);
-    act(&mut alice, Act::Go(Page::Login));
+    act(&mut alice, Act::Logout);
     let password = crate::main_menu::tests::PASSWORD;
     for (at, value) in ["bob", password].into_iter().enumerate() {
         act(&mut alice, Act::Focus(at));
@@ -3289,13 +3290,13 @@ fn signing_in_as_a_second_account_without_logging_out_shows_the_second_everywher
     );
 }
 
-/// "Play without an account" on the sign-in page of a signed-in player signs the account out.
+/// "Play without an account" on the Service page of a signed-in player signs the account out.
 #[test]
-fn playing_without_an_account_from_the_sign_in_page_signs_the_account_out() {
+fn playing_without_an_account_from_the_service_page_signs_the_account_out() {
     let service = crate::main_menu::tests::service_of_the_stand();
     let mut alice = signed_up(&service, "alice");
     let_link_idle(&mut alice);
-    act(&mut alice, Act::Go(Page::Login));
+    act(&mut alice, Act::Go(Page::Service));
     click(&mut alice, "play without an account");
     alice.frames(3);
     let menu = alice.world().non_send::<MenuCore>();
@@ -3405,86 +3406,20 @@ fn a_link_that_never_opens_is_given_up_with_a_word_after_the_wait() {
     signed_in_chrome(&mut alice, "alice");
 }
 
-/// A second account signs in while the first's requests wait for a link that reopens: they are
-/// the first's, and die with it.
+/// After the first account logged out with its link up, a second account signs in at once.
 #[test]
-fn requests_queued_for_one_account_are_not_sent_in_the_session_of_the_next() {
-    let service = crate::main_menu::tests::service_of_the_stand();
-    drop(signed_up(&service, "bob"));
-    let mut alice = signed_up(&service, "alice");
-    let_link_idle(&mut alice);
-    alice
-        .world_mut()
-        .non_send_mut::<MenuCore>()
-        .test_hold_service(true);
-    // Opening the profile queues its account and match-history requests on the held link.
-    open_sign_in_on_the_same_service(&mut alice);
-    assert!(
-        alice
-            .world()
-            .non_send::<MenuCore>()
-            .queued_account_requests_for_test()
-            > 0,
-        "the pending profile work still belongs to the first account"
-    );
-    submit_other_account(&mut alice, "bob");
-    assert_eq!(
-        alice
-            .world()
-            .non_send::<MenuCore>()
-            .queued_account_requests_for_test(),
-        0,
-        "submitting new credentials discards the old account's work before the reply"
-    );
-    alice
-        .world_mut()
-        .non_send_mut::<MenuCore>()
-        .test_hold_service(false);
-    alice.until("bob on Play", |client| {
-        let menu = client.world().non_send::<MenuCore>();
-        menu.page() == Page::Home && menu.view().account.as_deref() == Some("bob")
-    });
-    signed_in_chrome(&mut alice, "bob");
-    act(&mut alice, Act::Go(Page::Profile));
-    alice.until("the new account's profile requests returned", |client| {
-        client
-            .world()
-            .non_send::<MenuCore>()
-            .list_requests_finished_for_test()
-    });
-    let texts = alice.shown_texts();
-    assert!(
-        texts.iter().any(|text| text.starts_with("bob#")),
-        "Bob's profile is drawn"
-    );
-    assert!(
-        texts.iter().all(|text| !text.contains("alice")),
-        "the profile shows only the new owner's name"
-    );
-}
-
-/// From the sign-in page reached while the link is up (Profile, CHANGE SERVICE, CONTINUE on the
-/// same service), a second account signs in at once.
-#[test]
-fn signing_in_as_a_second_account_while_the_first_link_is_up_goes_through() {
+fn signing_in_as_a_second_account_after_logging_out_with_the_link_up_goes_through() {
     let service = crate::main_menu::tests::service_of_the_stand();
     drop(signed_up(&service, "bob"));
     let mut alice = signed_up(&service, "alice");
     act(&mut alice, Act::Go(Page::Profile));
     alice.frames(20);
-    open_sign_in_on_the_same_service(&mut alice);
+    act(&mut alice, Act::Logout);
     submit_other_account(&mut alice, "bob");
     alice.until("bob on Play", |client| {
         let menu = client.world().non_send::<MenuCore>();
         menu.page() == Page::Home && menu.view().account.as_deref() == Some("bob")
     });
-}
-
-fn open_sign_in_on_the_same_service(client: &mut Client) {
-    act(client, Act::Go(Page::Profile));
-    click(client, "change service");
-    click(client, "continue");
-    assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Login);
 }
 
 /// The sign-in page's form, filled and sent as a person does it.

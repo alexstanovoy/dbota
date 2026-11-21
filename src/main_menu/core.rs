@@ -1888,10 +1888,7 @@ impl MenuCore {
         me: AccountInfo,
     ) {
         let first = !self.logged_in();
-        self.set_history_scope(crate::replays::Scope::account(
-            &self.prefs.service,
-            me.id.0,
-        ));
+        self.set_history_scope(crate::replays::Scope::account(&self.prefs.service, me.id.0));
         // Another account signed in over this one: nothing of the first stays, nor is sent.
         self.set_signed_in(Some(me));
         self.accepted.resumed(&activities);
@@ -3529,6 +3526,87 @@ impl MenuCore {
                 })
                 .collect(),
         }
+    }
+}
+
+/// What the core guarantees whatever calls it: a sign-in on a core that is already signed in
+/// leaves nothing of the first account (a leak of one account's data into another's session is a
+/// defect whichever page asked). No page offers a sign-in to a signed-in player, so this is tested
+/// at the core's own API.
+#[cfg(test)]
+mod signing_in_over_tests {
+    use super::*;
+    use crate::main_menu::tests::{PASSWORD, Player, service};
+
+    fn pump(player: &mut Player, what: &str, done: impl Fn(&MenuCore) -> bool) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(60);
+        while !done(&player.menu) {
+            assert!(Instant::now() < deadline, "{what}");
+            player.menu.update();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn signing_in_over_a_signed_in_core_discards_the_first_accounts_queued_requests_and_pages() {
+        let service = service();
+        let mut bob = Player::new(Some(&service));
+        bob.register("bob");
+        drop(bob);
+        let mut alice = Player::new(Some(&service));
+        alice.register("alice");
+        let alice_id = alice.menu.my_id().expect("alice is signed in");
+        alice.menu.test_let_link_idle();
+        pump(&mut alice, "the idle link is let go", |menu| {
+            !menu.link_ready()
+        });
+        alice.menu.test_hold_service(true);
+        // Opening the profile queues its account and match-history requests on the closed link.
+        alice.menu.act(Act::Go(Page::Profile));
+        assert!(
+            alice.menu.queued_account_requests_for_test() > 0,
+            "the pending profile work belongs to the first account"
+        );
+
+        alice.menu.sign_in(
+            ClientMsg::Login {
+                login: "bob".to_owned(),
+                password: Secret(PASSWORD.to_owned()),
+                client: Default::default(),
+            },
+            Asked::Login,
+        );
+        assert_eq!(
+            alice.menu.queued_account_requests_for_test(),
+            0,
+            "the old account's work is discarded before the new account's reply"
+        );
+        assert!(
+            !alice.menu.logged_in(),
+            "nobody is signed in until the service says so"
+        );
+
+        alice.menu.test_hold_service(false);
+        pump(&mut alice, "bob is signed in", |menu| {
+            menu.logged_in() && menu.view().account.as_deref() == Some("bob")
+        });
+        let bob_id = alice.menu.my_id().expect("bob is signed in");
+        assert_ne!(bob_id, alice_id, "the second account is another account");
+        alice.menu.act(Act::Go(Page::Profile));
+        pump(
+            &mut alice,
+            "the new account's profile requests returned",
+            |menu| menu.list_requests_finished_for_test(),
+        );
+        assert!(
+            alice
+                .menu
+                .acct
+                .account_profile
+                .as_ref()
+                .is_none_or(|profile| profile.id == bob_id),
+            "the profile held is the new owner's"
+        );
     }
 }
 
