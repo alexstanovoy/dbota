@@ -601,6 +601,7 @@ fn ready_buttons(run: &FirstRun) -> Vec<(&'static str, Press)> {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use crate::ui::Fonts;
     use clap::Parser;
 
     fn run() -> FirstRun {
