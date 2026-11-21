@@ -241,7 +241,7 @@ fn draw_account_page(
                     texts,
                     avatar,
                     read_only: *read_only,
-                    connected: matches!(view.connection, super::view::Connection::Online(_)),
+                    signed_in: view.account.is_some(),
                     notice: notice.as_deref(),
                 },
                 clock,

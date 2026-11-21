@@ -21,7 +21,7 @@ pub struct Profile<'a> {
     pub name: &'a str,
     /// The version of a bot account, drawn dimmer beside the name.
     pub version: Option<&'a str>,
-    pub connected: bool,
+    pub signed_in: bool,
     pub read_only: bool,
     pub ratings: &'a [Rating],
     pub matches: &'a [Match],
@@ -118,15 +118,10 @@ fn profile_header(kit: &mut Kit, parent: Entity, data: &Profile<'_>) {
         PROFILE_NAME_WIDTH,
     );
     kit.typed(name, "MATCHES", theme::CAPTION, theme::INK_4);
-    if data.connected {
+    if data.signed_in {
         header_ratings(kit, header, data.ratings);
     }
-    header_actions(
-        kit,
-        header,
-        data.connected && !data.read_only,
-        data.read_only,
-    );
+    header_actions(kit, header, data.signed_in, data.read_only);
 }
 
 fn header_ratings(kit: &mut Kit, parent: Entity, ratings: &[Rating]) {
@@ -241,10 +236,10 @@ pub(super) fn confidence_bar(
     ));
 }
 
-fn header_actions(kit: &mut Kit, parent: Entity, connected: bool, read_only: bool) {
+fn header_actions(kit: &mut Kit, parent: Entity, signed_in: bool, read_only: bool) {
     let actions = if read_only {
         vec![("BACK", Act::Back, 80.0)]
-    } else if connected {
+    } else if signed_in {
         vec![
             ("SIGN OUT", Act::Logout, 100.0),
             ("CHANGE SERVICE", Act::Go(Page::Service), 156.0),
