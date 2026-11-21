@@ -14,11 +14,12 @@ fn placed_wards_are_drawn_with_dotas_ward_models_and_effects() {
     let shots = std::env::var_os("DBOTA_SHOTS").map_or_else(|| scratch.path("shots"), PathBuf::from);
     let server = common::serve(&[
         "--cheats", "--players", "1", "--pick-secs", "5", "--tactical-secs", "5",
+        "--immortal-heroes",
     ]);
     let middle = bota_core::rules::MAP_SIZE / 2;
     let look = format!("{middle},{middle}");
-    // Plant with a fixed camera at the river, clear of the base's no-ward volume. Hand out
-    // each ward separately so the hero uses each from the same slot.
+    // Plant with a fixed camera at the river, clear of the base's no-ward volume. The mid tower
+    // can wound the caster without stopping the placement. Hand out each ward separately.
     let script = "await:game;click:pick shadow fiend;click:pick ready;await:tick:1;await:loaded;\
                   say:-startgame;await:horn;\
                   mouse:0.5,0.5;frames:2;say:-teleport;await:settled;\
