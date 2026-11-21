@@ -282,6 +282,7 @@ fn ui_drag_passive_item_into_an_occupied_inventory_slot_restores_server_and_hud_
 fn ui_drag_back_before_the_first_swap_ack_does_not_leave_the_item_inactive_forever() {
     let (server, mut client, _, full) = scene(ItemId::CIRCLET);
     let from = client.slot_of(ItemId::CIRCLET).expect("equipped Circlet");
+    let sent = client.record_sent_orders();
     server.frozen(|| {
         // Keep the optimistic preview alive while the real server cannot
         // acknowledge either click sequence, reproducing an ordinary lag window.
@@ -291,6 +292,7 @@ fn ui_drag_back_before_the_first_swap_ack_does_not_leave_the_item_inactive_forev
                 Duration::ZERO,
             ));
         quick_drag(&mut client, from, 6);
+        assert_eq!(sent.get(), 1, "the first drag sends the backpack swap");
         let shown = icon(&mut client, 6).expect("the optimistic backpack icon");
         assert!(
             shown.contains("circlet"),
@@ -301,13 +303,8 @@ fn ui_drag_back_before_the_first_swap_ack_does_not_leave_the_item_inactive_forev
             Some(from),
             "the first swap is still unacknowledged"
         );
-        let pending_before_return = client.core().source.pending_orders();
         quick_drag(&mut client, 6, from);
-        assert_eq!(
-            client.core().source.pending_orders(),
-            pending_before_return + 1,
-            "the return drag issues the dependent swap"
-        );
+        assert_eq!(sent.get(), 2, "the return drag sends the dependent swap");
     });
     client
         .world_mut()
@@ -376,6 +373,7 @@ fn ui_drag_into_a_third_slot_before_acknowledgement_keeps_the_composed_inventory
 fn ui_drag_back_after_one_second_without_an_ack_still_returns_the_displayed_item() {
     let (server, mut client, _, full) = scene(ItemId::CIRCLET);
     let from = client.slot_of(ItemId::CIRCLET).expect("equipped Circlet");
+    let sent = client.record_sent_orders();
     server.frozen(|| {
         client
             .world_mut()
@@ -384,18 +382,22 @@ fn ui_drag_back_after_one_second_without_an_ack_still_returns_the_displayed_item
             ));
         quick_drag(&mut client, from, 6);
         client.frames(36);
-        assert!(
-            client.core().source.pending_orders() > 0,
-            "the real server acknowledgement is still withheld"
+        assert_eq!(sent.get(), 1, "the first drag sends the backpack swap");
+        assert_eq!(
+            client.slot_of(ItemId::CIRCLET),
+            Some(from),
+            "the server has not moved the item while held"
         );
         assert!(
             icon(&mut client, 6).is_some_and(|p| p.contains("circlet")),
             "the displayed backpack item must survive more than the old 0.6 second preview timeout"
         );
         quick_drag(&mut client, 6, from);
+        assert_eq!(sent.get(), 2, "the return drag sends the dependent swap");
     });
-    client.until("the delayed UI round trip applied", |c| {
-        c.core().source.pending_orders() == 0 && c.tick() > 3
+    let before = client.tick();
+    client.until("queued mouse orders have reached the server", |c| {
+        c.tick() >= before + 3
     });
     trace_after_return(&mut client, ItemId::CIRCLET, from, full);
 }
