@@ -82,6 +82,9 @@ def run_service_page(page_server, endpoint, shots):
             page.goto(url)
             wait_console(page, console, rf"service {re.escape(address)} {result}", 90, result)
             capture_service_card(page, failed=bool(path), shots=shots)
+            if not path:
+                failed = [line for line in console if "did not pass its check" in line]
+                assert not failed, f"a service that passed its check also reported a failed one: {failed}"
             context.close()
         browser.close()
 
