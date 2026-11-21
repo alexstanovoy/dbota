@@ -211,6 +211,12 @@ def journey(p, page_dir, install, nothing):
         run.said(r"first run: ready \| CHOOSE YOUR DOTA 2 FOLDER", "the welcome screen")
         assert run.page.is_hidden("#gate"), "the page's own screen stays hidden: the client shows the first run"
         run.step("await:text:holds no Dota 2")
+        # The red box says what was wrong with the folder and no more (the card above it says where
+        # Dota 2's folder is): the client logs the whole text it shows.
+        run.said(
+            r'dbota import: "nothing" holds no Dota 2: no game/dota/pak01_dir\.vpk in it\. Choose another folder\.(?! In Steam)',
+            "the refusal of a folder without Dota 2, without the Steam instruction again",
+        )
         run.step("click:continue")
         run.said(r"first run: loading the page again(?! to)", "the page loaded again on the copy")
         at = len(run.console)

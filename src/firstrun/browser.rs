@@ -192,9 +192,7 @@ fn heard(data: &JsValue, tell: &super::Tell) {
 fn refusal(kind: &str, message: &str) -> String {
     match kind {
         "not-dota" => format!(
-            "\"{message}\" holds no Dota 2: no game/dota/pak01_dir.vpk in it. Choose the \"dota 2 \
-             beta\" folder. {}",
-            super::WHERE
+            "\"{message}\" holds no Dota 2: no game/dota/pak01_dir.vpk in it. Choose another folder."
         ),
         "room" => format!(
             "This browser lets dbota keep only {message} MB more, and the copy needs up to {} MB. \
