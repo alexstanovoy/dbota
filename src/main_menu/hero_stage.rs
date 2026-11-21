@@ -62,6 +62,7 @@ pub(crate) struct HeroStage {
     pub(crate) actor: Option<Actor>,
     model: Option<usize>,
     image: Handle<Image>,
+    material: Handle<crate::wash::Washed>,
     next_render: f32,
     framed: bool,
     failed: bool,
@@ -154,7 +155,7 @@ pub(super) fn draw(
     ));
     kit.commands.spawn((
         HeroImage(hero),
-        ImageNode::default(),
+        MaterialNode::<crate::wash::Washed>::default(),
         Node {
             position_type: PositionType::Absolute,
             left: percent(share),
@@ -213,12 +214,18 @@ fn select(
     mut commands: Commands,
     mut stage: ResMut<HeroStage>,
     mut images: ResMut<Assets<Image>>,
-    mut nodes: Query<(&HeroImage, &mut ImageNode, &mut Visibility, Has<Front>)>,
+    mut nodes: Query<(
+        &HeroImage,
+        &mut MaterialNode<crate::wash::Washed>,
+        &mut Visibility,
+        Has<Front>,
+    )>,
     mut shadows: Query<&mut Visibility, (With<ContactShadow>, Without<HeroImage>)>,
     mut bank: ResMut<ModelBank>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     cameras: Query<Entity, With<StageEntity>>,
+    mut materials: ResMut<Assets<crate::wash::Washed>>,
 ) {
     let hero = nodes
         .iter()
@@ -234,6 +241,7 @@ fn select(
             commands.entity(camera).despawn();
         }
         stage.image = Handle::default();
+        stage.material = Handle::default();
         stage.framed = false;
         stage.failed = false;
         stage.samples = 0;
@@ -249,8 +257,8 @@ fn select(
     }
     for (_, mut node, mut shown, _) in &mut nodes {
         shown.set_if_neq(crate::ui::visible(stage.ready()));
-        if node.image != stage.image {
-            node.image = stage.image.clone();
+        if node.0 != stage.material {
+            node.0 = stage.material.clone();
         }
     }
     for mut shown in &mut shadows {
@@ -271,6 +279,8 @@ fn select(
         return;
     };
     stage.image = portrait::stage_image(&mut images, SIZE);
+    // An independent material keeps the hero out of the surrounding UI's image batches.
+    stage.material = materials.add(crate::wash::Washed::plain(stage.image.clone()));
     stage.actor = Some(portrait::spawn_actor(
         &mut commands,
         scenes,
@@ -518,6 +528,7 @@ fn disable(
     }
     stage.failed = true;
     stage.image = Handle::default();
+    stage.material = Handle::default();
     stage.envelope = Vec::new();
     stage.reference = Vec::new();
 }
@@ -796,7 +807,7 @@ pub(crate) fn stand(
     commands.spawn((
         HeroImage(hero),
         Front,
-        ImageNode::default(),
+        MaterialNode::<crate::wash::Washed>::default(),
         Node {
             top: px(top),
             width: px(width),

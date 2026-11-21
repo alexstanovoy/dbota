@@ -35,6 +35,15 @@ impl Washed {
     /// The whole picture.
     pub const WHOLE: Vec4 = Vec4::new(0.0, 0.0, 1.0, 1.0);
 
+    pub(crate) fn plain(picture: Handle<Image>) -> Self {
+        Self {
+            levels: Vec4::new(1.0, 1.0, 0.0, 0.0),
+            wash: LinearRgba::WHITE,
+            cut: Self::WHOLE,
+            picture,
+        }
+    }
+
     /// Dota's dead hero: no colour, washed #898989.
     pub fn dead(picture: Handle<Image>) -> Washed {
         Washed {

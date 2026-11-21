@@ -129,6 +129,7 @@ paths = [
     "src/quality.rs",
     "src/window.rs",
     "src/pacing.rs",
+    "src/pacing/home_cache.rs",
     "src/pacing/tests.rs",
     "src/pacing/timer.rs",
     "src/pacing/wake.rs",

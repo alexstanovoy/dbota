@@ -14,6 +14,7 @@ use bevy::{
     winit::{UpdateMode, WinitSettings},
 };
 
+mod home_cache;
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 mod tests;
 mod timer;
@@ -26,6 +27,7 @@ struct HeldCameras(Vec<Entity>);
 
 pub fn plugin(app: &mut App) {
     wake::install(app);
+    home_cache::install(app);
     let idle = UpdateMode::reactive_low_power(Duration::MAX);
     app.insert_resource(WinitSettings {
         focused_mode: idle,
@@ -48,6 +50,8 @@ fn restore(mut held: ResMut<HeldCameras>, mut cameras: Query<&mut Camera>) {
 #[derive(SystemParam)]
 #[allow(clippy::type_complexity)]
 struct Interface<'w, 's> {
+    cache: ResMut<'w, home_cache::Request>,
+    hero: Query<'w, 's, (Entity, &'static InheritedVisibility), With<crate::main_menu::HeroImage>>,
     layout: Query<
         'w,
         's,
@@ -164,12 +168,22 @@ fn pace(
     let starting = *startup < 4;
     *startup = startup.saturating_add(1);
     if continuous {
+        interface.cache.set_if_neq(home_cache::Request::default());
         timer.set(None);
         return;
     }
     let changed = interface.changed();
     let rendered_image = stage.as_ref().is_some_and(|stage| stage.drawing());
     let settling = starting || changed || window_changed;
+    let mut heroes = interface
+        .hero
+        .iter()
+        .filter_map(|(entity, shown)| shown.get().then_some(entity));
+    let hero = heroes.next().filter(|_| heroes.next().is_none());
+    interface.cache.set_if_neq(home_cache::Request {
+        hero,
+        refresh: settling,
+    });
     if settling || input || interface.loading(&server) {
         timer.set(None);
         redraw.write(RequestRedraw);

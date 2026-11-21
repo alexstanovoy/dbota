@@ -775,9 +775,9 @@ fn loading_log(node: &mut Node, shown: bool) {
 }
 fn loading_prompt(
     node: &mut Node,
-    text: &mut Text,
-    font: &mut TextFont,
-    ink: &mut TextColor,
+    text: &mut Mut<Text>,
+    font: &mut Mut<TextFont>,
+    ink: &mut Mut<TextColor>,
     shown: bool,
     typing: Typing,
     fonts: &Fonts,
@@ -785,18 +785,26 @@ fn loading_prompt(
     node.height = if shown { px(36) } else { Val::Auto };
     node.border = UiRect::all(px(if shown { 1.0 } else { 0.0 }));
     if shown {
-        font.font = fonts.face(crate::theme::Face::Regular).clone().into();
+        let wanted = fonts.face(crate::theme::Face::Regular).clone().into();
+        if font.font != wanted {
+            font.font = wanted;
+        }
         if typing != Typing::Chat {
             node.display = Display::Flex;
-            text.0 = "To all: message".into();
-            *ink = TextColor(crate::theme::INK_5);
+            if text.0 != "To all: message" {
+                text.0 = "To all: message".into();
+            }
+            ink.set_if_neq(TextColor(crate::theme::INK_5));
         }
         if typing == Typing::Chat {
-            *ink = TextColor(ui::INK);
+            ink.set_if_neq(TextColor(ui::INK));
         }
     } else {
-        font.font = fonts.regular.clone().into();
-        *ink = TextColor(ui::INK);
+        let wanted = fonts.regular.clone().into();
+        if font.font != wanted {
+            font.font = wanted;
+        }
+        ink.set_if_neq(TextColor(ui::INK));
     }
 }
 

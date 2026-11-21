@@ -325,6 +325,7 @@ struct StageCounts {
     entities: usize,
     actor_parts: usize,
     images: usize,
+    materials: usize,
     graphs: usize,
     scenes: usize,
     models: usize,
@@ -339,6 +340,7 @@ fn stage_counts(client: &mut Client) -> StageCounts {
             .iter(world)
             .count(),
         images: world.resource::<Assets<Image>>().len(),
+        materials: world.resource::<Assets<crate::wash::Washed>>().len(),
         graphs: world.resource::<Assets<AnimationGraph>>().len(),
         scenes: world
             .resource::<Assets<bevy::world_serialization::WorldAsset>>()
@@ -348,14 +350,20 @@ fn stage_counts(client: &mut Client) -> StageCounts {
 }
 
 fn visit_home(client: &mut Client, hero: HeroId) {
-    let image = {
+    let (material, image) = {
         let world = client.world_mut();
-        world
-            .query_filtered::<&ImageNode, With<crate::main_menu::hero_stage::HeroImage>>()
+        let material = world
+            .query_filtered::<&MaterialNode<crate::wash::Washed>, With<crate::main_menu::hero_stage::HeroImage>>()
             .single(world)
             .expect("live viewport")
-            .image
-            .id()
+            .0.id();
+        let image = world
+            .resource::<Assets<crate::wash::Washed>>()
+            .get(material)
+            .expect("the live stage material")
+            .picture
+            .id();
+        (material, image)
     };
     act(client, Act::Go(Page::Replays));
     client.frames(8);
@@ -363,6 +371,13 @@ fn visit_home(client: &mut Client, hero: HeroId) {
     assert!(
         !client.world().resource::<Assets<Image>>().contains(image),
         "the old stage target is released"
+    );
+    assert!(
+        !client
+            .world()
+            .resource::<Assets<crate::wash::Washed>>()
+            .contains(material),
+        "the old stage material is released"
     );
     act(client, Act::Go(Page::Home));
     client.until("Home's existing hero restored", |client| {

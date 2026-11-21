@@ -71,7 +71,7 @@ pub(crate) mod tests;
 pub use core::Claim;
 pub(crate) use core::Page;
 pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
-pub(crate) use hero_stage::HeroStage;
+pub(crate) use hero_stage::{HeroImage, HeroStage};
 pub use kit::{Disabled, Wash};
 #[cfg(test)]
 pub(crate) use kit::{MenuButton, Shade};
