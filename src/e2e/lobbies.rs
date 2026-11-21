@@ -3024,6 +3024,102 @@ fn a_lobby_made_from_play_after_the_link_went_idle_is_made_at_once_named_after_i
     assert_eq!(room(&alice).name, ALICES_LOBBY, "named after its host");
 }
 
+/// Reported: after the service link sat idle and was closed, the lobby editor's Game
+/// mode list no longer offered the standard five-a-side mode. The modes are read from the texts
+/// drawn: in Play while the link is still closed, then in the editor's list (a room keeps its
+/// link, so the editor cannot be opened on a closed one); the mode is chosen by its row, and the
+/// room shows it with its ten seats.
+#[test]
+fn the_standard_5v5_mode_is_drawn_in_the_editors_list_after_the_link_went_idle_and_makes_a_ten_seat_room()
+ {
+    let service = crate::main_menu::tests::service_of_the_stand();
+    let standard = service
+        .advertised
+        .iter()
+        .find(|rules| rules.lobby_default)
+        .expect("the service names a mode for a new lobby")
+        .clone();
+    assert_eq!(standard.name, "All Pick", "the stand's standard 5v5 mode");
+    let other = lobby_modes(&service)
+        .into_iter()
+        .find(|rules| rules.id != standard.id)
+        .expect("the service offers a mode besides the standard one");
+    let mut host = signed_up(&service, "host");
+    let_link_idle(&mut host);
+    click(&mut host, "play tab");
+    assert!(
+        !host.world().non_send::<MenuCore>().link_open(),
+        "Play is opened on the closed link"
+    );
+    assert!(
+        host.shown_texts().iter().any(|text| text == "ALL PICK"),
+        "Play draws the standard 5v5 queue while the link is closed"
+    );
+    click(&mut host, "custom lobbies");
+    click(&mut host, "create lobby");
+    host.until("the lobby room", |client| {
+        client.world().non_send::<MenuCore>().page() == Page::Lobby
+    });
+    // The room starts in the standard mode: move it away so that choosing it again is a choice.
+    click(&mut host, "edit  ✎");
+    select_mode(&mut host, &other.name);
+    click(&mut host, "ok");
+    let wanted = other.name.clone();
+    host.until(&format!("the room of {wanted}"), |client| {
+        room(client).settings.mode == wanted
+    });
+
+    click(&mut host, "edit  ✎");
+    click(&mut host, "lobby game mode");
+    let drawn = drawn_mode_choices(&mut host);
+    for rules in lobby_modes(&service) {
+        assert!(
+            drawn.contains(&rules.name),
+            "the Game mode list draws {} after the idle link reopened, it draws {drawn:?}",
+            rules.name
+        );
+    }
+    click(&mut host, &standard.name.to_lowercase());
+    click(&mut host, "ok");
+    let wanted = standard.name.clone();
+    host.until(&format!("the room of {wanted}"), |client| {
+        room(client).settings.mode == wanted
+    });
+    let seats: Vec<_> = room(&host)
+        .teams
+        .iter()
+        .map(|team| team.slots.len())
+        .collect();
+    assert_eq!(seats, [5, 5], "ten seats, five a side");
+}
+
+/// The texts drawn in the open Game mode list, one per row, as a player reads them.
+fn drawn_mode_choices(client: &mut Client) -> Vec<String> {
+    let world = client.world_mut();
+    let lists: Vec<Entity> = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .filter(|(_, name)| name.as_str() == "lobby choices")
+        .map(|(list, _)| list)
+        .collect();
+    assert_eq!(lists.len(), 1, "one Game mode list is open");
+    let mut rows = Vec::new();
+    let mut stack = vec![lists[0]];
+    while let Some(entity) = stack.pop() {
+        if let Some(children) = world.entity(entity).get::<Children>() {
+            stack.extend(children.iter());
+        }
+        let mut texts = world.query::<(&Text, &InheritedVisibility, &ComputedNode)>();
+        if let Ok((text, shown, laid)) = texts.get(world, entity)
+            && shown.get()
+            && laid.size() != Vec2::ZERO
+        {
+            rows.push(text.0.clone());
+        }
+    }
+    rows
+}
+
 /// Lets the link stand idle as long as the menu keeps one open for, and waits for the hang-up.
 fn let_link_idle(client: &mut Client) {
     client.until("the idle link hung up", |client| {
