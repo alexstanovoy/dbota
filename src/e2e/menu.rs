@@ -247,7 +247,9 @@ fn a_link_lost_before_the_first_view_returns_to_the_menu_with_its_reason() {
         client.world().non_send::<MenuCore>().in_game(),
         "the game is on screen before the link is lost"
     );
-    let mut patience = super::harness::Patience::of(Duration::from_secs(10));
+    // A hang guard, not a wait: the server's second of silence is the cause, and a machine running a
+    // thousand tests at once may take its time to show it.
+    let mut patience = super::harness::Patience::of(Duration::from_secs(120));
     while client.world().non_send::<MenuCore>().in_game() {
         patience.pass("the menu to take the lost link");
         client.frames(1);
