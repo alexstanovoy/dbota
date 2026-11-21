@@ -766,8 +766,10 @@ fn precheck_and_gate_run_the_tests_on_a_private_home() {
     );
     assert!(read("browser_check.sh").contains("\nenv \"${STEERING_UNSET[@]}\" \"$server\""));
     assert!(gate.contains("refuse_managed_path DBOTA_REFERENCE || exit 1"));
-    let smoke = std::fs::read_to_string(manifest().join("web/test/smoke.py")).expect("smoke test");
-    assert!(smoke.contains("env=without_steering_variables()"));
+    // The replays page starts radovid, which starts game servers.
+    let replays = std::fs::read_to_string(manifest().join("web/test/page_replays.py"))
+        .expect("the replays page check");
+    assert!(replays.contains("env=without_steering_variables()"));
     assert!(read("test.sh").contains("exec python3 tools/test_runner.py"));
     let runner = read("test_runner.py");
     assert!(runner.contains("PROFILE = [\"--locked\", \"--profile\", \"test-release\"]"));
