@@ -6,6 +6,7 @@ import os
 import pathlib
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -21,7 +22,6 @@ from browser import (
     assert_launch_labels_hidden,
     cache_folder,
     click_drawn,
-    radovid_config,
     serve,
     wait_console,
     without_steering_variables,
@@ -63,14 +63,30 @@ def free_port():
         return s.getsockname()[1]
 
 
-# Where the main menu's buttons are in a 1280x720 page (calibrated by `--shots`): the page is
-# drawn at the viewport's size with the interface at its default scale, so they stay put.
-# The replay smoke enters the Demo Hero match in a 1920x1080 page (read off its screenshot), then looks
-# at MY GAMES in a 1280x720 one. The page is drawn at the viewport's size with the interface at its
-# default scale, so what is anchored at the left (the top bar) stays put.
-CLICK_CREATE_ACCOUNT = (960, 543)
+# The page is drawn at the viewport's size with the interface at its default scale, which grows with the window's
+# height: what is anchored at the left (the top bar) is where it is at 1280x720 times the height over 720.
+# Demo Hero is entered in a 1920x1080 page (positions read off its screenshot) and everything after it is looked at
+# in a 1280x720 one. The practice lobby's buttons were read off the native client's layout of the same window
+# (their named widgets' centres: e2e tests lay the same menu out), MY GAMES' rows off the first page that showed them.
+CLICK_CREATE_ACCOUNT = (960, 588)
 CLICK_DEMO_HERO_TAB = (700, 24)
 CLICK_PUDGE = (814, 252)
+CLICK_PLAY_TAB = (159, 18.5)
+CLICK_CUSTOM_LOBBIES = (1142, 454)
+CLICK_CREATE_LOBBY = (1142, 551.5)
+CLICK_START_GAME = (1136, 690.5)
+CLICK_MY_GAMES = (220.5, 18.5)
+CLICK_LOG_OUT = (1132, 16)
+# The sign-in form at 1280x720 (two thirds of its positions in the 1920x1080 screenshot).
+CLICK_LOGIN_FIELD = (640, 255)
+CLICK_PASSWORD_FIELD = (640, 309)
+CLICK_SIGN_IN = (640, 354)
+CLICK_CREATE_ACCOUNT_SMALL = (640, 392)
+CLICK_WATCH_REPLAY = (646, 150)
+CLICK_DELETE_REPLAY = (788, 150)
+CLICK_CONFIRM_DELETE = (578, 388)
+
+
 def wait_port(port, seconds=60):
     import socket
 
@@ -194,6 +210,14 @@ OPFS_REPLAYS = """async () => {
   return out;
 }"""
 
+OPFS_REPLAY_INDEX = """async () => {
+  const store = globalThis.dbota_replays;
+  if (!store) return '';
+  if (store.kind !== 'opfs') throw new Error('the replay store must use OPFS');
+  return (await store.load()).index ?? '';
+}"""
+
+
 def check_replay_probe(directory, context):
     """An OPFS inspection survives concurrent deletion and still reports unrelated read errors."""
     server = serve(directory)
@@ -231,12 +255,10 @@ def check_replay_probe(directory, context):
 
 
 def check_replays_page(directory, server_bin, radovid_bin, shots=False):
-    """A Demo Hero match through radovid: the page registers, enters the match, and draws the game's
-    idle reason when the server stops hearing the client.
-
-    KNOWN-INCOMPLETE: this does not yet check that a match is kept in OPFS, listed in MY GAMES, played,
-    and deleted. A Demo Hero match is not kept, so those steps need a seated match (a practice lobby):
-    follow-up unit."""
+    """Through a real radovid: a Demo Hero match draws the game's idle reason when the server stops hearing the
+    client; a seated match (a practice lobby) is kept in OPFS when the player has left it, is listed in MY GAMES,
+    played from there, marked broken when its file is damaged, hidden from other accounts, and deleted with
+    its confirmation (the file and its index row)."""
     evidence = HERE.parent.parent / "temp/smoke-replays"
     evidence.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="service-", dir=evidence) as folder:
@@ -259,14 +281,30 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
         ) as service:
             try:
                 wait_port(port)
-                drive_replays_page(directory, port, relay.server_address[1], silent, evidence if shots else None)
+                drive_replays_page(directory, work, port, relay.server_address[1], silent, evidence if shots else None)
             finally:
                 relay.shutdown()
                 relay.server_close()
                 service.terminate()
                 service.wait(timeout=20)
-    print("replays page: a Demo Hero match was entered and the idle reason was drawn; "
-          "KNOWN-INCOMPLETE: nothing is kept, listed, played or deleted after a demo (needs a seated match)")
+    print("replays: a Demo Hero match drew the idle reason; a seated match was kept in OPFS, listed, played, "
+          "marked broken, hidden from other accounts and deleted")
+
+
+def recorded_replay(work, match_id):
+    # The files can appear before the service publishes the match result.
+    deadline = time.monotonic() + 300
+    replay = work / "replays" / f"replay-{match_id}.brp"
+    with sqlite3.connect((work / "radovid.db").as_uri() + "?mode=ro", uri=True) as database:
+        while time.monotonic() < deadline:
+            if replay.is_file() and database.execute(
+                "SELECT 1 FROM matches WHERE id = ? AND finished = 1", (match_id,),
+            ).fetchone():
+                size = replay.stat().st_size
+                assert size >= 1024, f"replay {match_id} contains only {size} bytes"
+                return size
+            time.sleep(0.25)
+    raise AssertionError(f"the service did not record the result and replay of match {match_id}")
 
 
 def start_demo(page, console, silent, shot, evidence):
@@ -295,7 +333,73 @@ def wait_for_sign_in(page):
     after_frames(page)
 
 
-def drive_replays_page(directory, port, relay_port, silent, evidence):
+def start_practice(page, console, shot):
+    """From Play: a custom lobby of the 1x1 mid ruleset, alone, started; returns the match id the client noted
+    for fetching its replay."""
+    for at in (CLICK_PLAY_TAB, CLICK_CUSTOM_LOBBIES, CLICK_CREATE_LOBBY):
+        click_drawn(page, at)
+    wait_console(page, console, "lobby: creation confirmed", 300, "lobby creation")
+    after_frames(page)
+    shot(page, "5-lobby")
+    click_drawn(page, CLICK_START_GAME)
+    wait_console(page, console, r"match known: tick \d+", 600, "the practice match")
+    claim = wait_browser_state(
+        page, lambda: re.search(r"^w\t(\d+)\t\d+\t[^\t\n]+", page.evaluate(OPFS_REPLAY_INDEX), re.MULTILINE),
+        "the practice match's persisted replay claim", 300,
+    )
+    shot(page, "6-practice")
+    return int(claim[1])
+
+
+def saved_replay(page, match_id):
+    index = page.evaluate(OPFS_REPLAY_INDEX)
+    return re.search(rf"^r\t\d+\t\d+\t{match_id}\t[^\t\n]+\t([^\t\n]+)\t", index, re.MULTILINE)
+
+
+def register_replay_player(page, login):
+    click_drawn(page, CLICK_CREATE_ACCOUNT_SMALL)
+    page.keyboard.type(login)
+    page.keyboard.press("Tab")
+    after_frames(page)
+    page.keyboard.type("correct horse battery")
+    page.keyboard.press("Tab")
+    after_frames(page)
+    page.keyboard.type("correct horse battery")
+    page.keyboard.press("Enter")
+    wait_for_sign_in(page)
+
+
+def change_replay_account(page, console, name):
+    """The saved file stays in OPFS while the second account and the guest see an empty shelf."""
+    def logout():
+        console.clear()
+        click_drawn(page, CLICK_LOG_OUT)
+        wait_browser_state(page, lambda: page.evaluate("window.smokeSignedIn === false"), "sign-out", 30)
+        wait_console(page, console, r"replays: 0 kept", 30, "the guest shelf")
+        assert any(file == name for file, _ in page.evaluate(OPFS_REPLAYS)), "the replay stays on disk"
+
+    logout()
+    console.clear()
+    register_replay_player(page, "other")
+    wait_console(page, console, r"replays: 0 kept", 30, "the second account's shelf")
+    click_drawn(page, CLICK_MY_GAMES)
+    logout()
+
+    console.clear()
+    click_drawn(page, CLICK_LOGIN_FIELD)
+    for _ in "other":
+        page.keyboard.press("Backspace")
+        after_frames(page)
+    page.keyboard.type("smoker")
+    click_drawn(page, CLICK_PASSWORD_FIELD)
+    page.keyboard.type("correct horse battery")
+    click_drawn(page, CLICK_SIGN_IN)
+    wait_for_sign_in(page)
+    wait_console(page, console, r"replays: 1 kept", 30, "Alice's shelf")
+    print("replay shelf: account switching hides the saved file until its owner returns")
+
+
+def drive_replays_page(directory, work, port, relay_port, silent, evidence):
     with sync_playwright() as p:
         browser = p.chromium.launch(args=[*BROWSER_ARGS, "--ignore-certificate-errors"])
         context = browser.new_context(viewport={"width": 1920, "height": 1080}, ignore_https_errors=True)
@@ -303,6 +407,11 @@ def drive_replays_page(directory, port, relay_port, silent, evidence):
         # Each visit has to receive its own successful login, even when a token is already saved.
         context.add_init_script("""(() => {
           const save = Storage.prototype.setItem;
+          const remove = Storage.prototype.removeItem;
+          Storage.prototype.removeItem = function(key) {
+            remove.call(this, key);
+            if (key === 'dbota.session') window.smokeSignedIn = false;
+          };
           Storage.prototype.setItem = function(key, value) {
             save.call(this, key, value);
             if (key === 'dbota.session') window.smokeSignedIn = true;
@@ -313,22 +422,107 @@ def drive_replays_page(directory, port, relay_port, silent, evidence):
             if (!localStorage.getItem('dbota.menu'))
                 localStorage.setItem('dbota.menu', 'service = wss://127.0.0.1:{port}');
         """)
-        page = context.new_page()
-        console, problems = [], []
-        page.on("console", lambda m: console.append(m.text))
-        page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
-        watch_game_close(page, relay_port)
-        page.add_init_script("Element.prototype.requestPointerLock = () => Promise.resolve();")
-        page.goto(f"https://127.0.0.1:{port}/?cache=http&gpu=webgl2")
-        wait_console(page, console, "dbota: running", 600, "the live menu")
-        assert_launch_labels_hidden(page)
-        after_frames(page)
+        url = f"https://127.0.0.1:{port}/?cache=http&gpu=webgl2"
+
+        def visit(width=1280, height=720, first=False):
+            page = context.new_page()
+            page.set_viewport_size({"width": width, "height": height})
+            console, problems = [], []
+            page.on("console", lambda m: console.append(m.text))
+            page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
+            if first:
+                watch_game_close(page, relay_port)
+                page.add_init_script("Element.prototype.requestPointerLock = () => Promise.resolve();")
+            page.goto(url)
+            wait_console(page, console, "dbota: running", 600, "the live menu")
+            if first:
+                assert_launch_labels_hidden(page)
+            after_frames(page)
+            return page, console, problems
 
         def shot(page, name):
             if evidence is not None:
                 page.screenshot(path=str(evidence / f"{name}.png"), timeout=600000)
 
+        # Demo Hero: the idle reason; the match leaves nothing to keep.
+        page, console, problems = visit(1920, 1080, first=True)
         start_demo(page, console, silent, shot, evidence)
         page.close()
-        assert not problems, f"first visit: {problems}"
+        assert not problems, f"demo visit: {problems}"
+
+        # A seated match, left at once: the replay is the player's to keep.
+        page, console, problems = visit()
+        wait_for_sign_in(page)
+        match_id = start_practice(page, console, shot)
+        page.close()
+        assert not problems, f"practice visit: {problems}"
+        replay_size = recorded_replay(work, match_id)
+
+        page, console, problems = visit()
+        wait_for_sign_in(page)
+        wait_console(page, console, r"replays: 1 kept", 300, "the replay kept in OPFS")
+        record = wait_browser_state(page, lambda: saved_replay(page, match_id), "the replay's OPFS index row", 300)
+        stored = page.evaluate(OPFS_REPLAYS)
+        replay = [(name, size) for name, size in stored if name.endswith(".brp")]
+        assert len(replay) == 1, f"the replay is stored in OPFS: {stored}"
+        name, size = replay[0]
+        assert name == record[1], "the index names the stored replay"
+        assert size == replay_size, "the stored replay is the service's file"
+        assert any(file == "index.txt" for file, _ in stored), "the index is beside it"
+        assert not problems, f"fetch visit: {problems}"
+        print(f"stored: {name} ({size} bytes) in OPFS")
+        page.close()
+
+        page, console, problems = visit()
+        wait_for_sign_in(page)
+        wait_console(page, console, r"replays: 1 kept", 600, "the replay listed again")
+        click_drawn(page, CLICK_MY_GAMES)
+        shot(page, "8-my-games")
+        click_drawn(page, CLICK_WATCH_REPLAY)
+        wait_console(page, console, r"match known: tick \d+", 600, "the stored replay to play")
+        shot(page, "8-watch")
+        bad = [line for line in console if "cannot be read" in line or "panicked" in line or "RuntimeError" in line]
+        assert not bad and not problems, (bad, problems)
+        print("watch: the stored replay plays from MY GAMES")
+        # Damage the owned file after the successful playback. Its index and owner stay put.
+        page.evaluate("""async name => {
+            const root = await navigator.storage.getDirectory();
+            const replays = await root.getDirectoryHandle('dbota-replays');
+            const write = await (await replays.getFileHandle(name)).createWritable();
+            await write.write(new Uint8Array(2048).fill(7));
+            await write.close();
+        }""", name)
+        page.close()
+
+        page, console, problems = visit()
+        wait_for_sign_in(page)
+        wait_console(page, console, r"replays: 1 kept", 300, "the replay available for inspection")
+        click_drawn(page, CLICK_MY_GAMES)
+        wait_console(page, console, r"replays: a kept replay is unreadable", 30, "the broken replay row")
+        shot(page, "9-broken-replay")
+        click_drawn(page, CLICK_WATCH_REPLAY)
+        assert not any("match known:" in line for line in console), "a broken replay has no watch action"
+        print("replay shelf: an unreadable file is marked broken")
+
+        change_replay_account(page, console, name)
+        click_drawn(page, CLICK_MY_GAMES)
+        wait_console(page, console, r"replays: a kept replay is unreadable", 30, "Alice's broken replay after signing back in")
+        size = 2048
+        click_drawn(page, CLICK_DELETE_REPLAY)
+        shot(page, "9-delete-confirm")
+        assert (name, size) in map(tuple, page.evaluate(OPFS_REPLAYS)), "one click keeps the file"
+        page.keyboard.press("Escape")
+        after_frames(page)
+        assert (name, size) in map(tuple, page.evaluate(OPFS_REPLAYS)), "cancellation keeps the file"
+        click_drawn(page, CLICK_DELETE_REPLAY)
+        click_drawn(page, CLICK_CONFIRM_DELETE)
+        wait_browser_state(
+            page,
+            lambda: not saved_replay(page, match_id) and all(file != name for file, _ in page.evaluate(OPFS_REPLAYS)),
+            "removal of the kept replay and its index row after the confirmed deletion", 120,
+        )
+        assert not problems, f"delete visit: {problems}"
+        print("delete: OPFS keeps a replay until deletion is confirmed; confirmed, the file and its index row go")
         browser.close()
+
+

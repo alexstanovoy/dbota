@@ -14,9 +14,6 @@
 # bota and radovid checkouts beside this one (DBOTA_GATE_BOTA, DBOTA_GATE_RADOVID name others), and the native release
 # build of dbota (the replay with chat lines is recorded by a headless client). Playwright and its browsers are fetched once
 # into DBOTA_GATE_PWLIB (default ~/.cache/dbota-gate/pwlib). Any check that cannot run fails; nothing is skipped.
-#
-# KNOWN-INCOMPLETE: --replays-page runs a Demo Hero match and checks the game's idle reason, but not that a match is kept,
-# listed in MY GAMES, played and deleted: a demo is not kept, so those steps need a seated match (follow-up unit).
 # Output goes to GATE_LOGS/browser (default temp/gate/browser).
 set -euo pipefail
 if [ -n "${DBOTA_HEADLESS:-}" ]; then
@@ -127,7 +124,6 @@ DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings vide
 
 "$here/tools/headless.sh" python3 web/test/idle.py "$pages/plain"
 in_private_environment python3 web/test/first_run.py --page "$pages/plain" --replay-page "$pages/replay" --reference-cache "$DBOTA_ASSETS"
-echo "browser_check: KNOWN-INCOMPLETE: --replays-page checks the Demo Hero match and its idle reason only (a demo is not kept; the replay steps need a seated match)" >&2
 in_private_environment python3 web/test/smoke.py \
     --launch-page "$pages/plain" --sound-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
     --fonts-page "$pages/plain" \
