@@ -1,9 +1,14 @@
 //! Ownership of the temporary directories in a cache swap. The cache lock covers every step.
 
-use super::{ensure_marker, managed_io, marker_matches, remove, sibling};
+use super::{
+    INDEX, OWNER_MARKER, OWNER_TEXT, STAMP, ensure_marker, managed_io, marker_matches, read_stamp,
+    remove, sibling,
+};
+use crate::index::{MAX_INDEX, is_metadata};
 use heatel::Result;
+use std::collections::HashSet;
 use std::fs::{self, Metadata};
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy)]
@@ -132,6 +137,125 @@ fn occupied(path: &Path) -> heatel::Error {
     )
 }
 
+/// The first line of every index a dbota importer wrote (any build's).
+const INDEX_HEADER: &str = "dbota-cache ";
+/// The most entries and the deepest level a cache holds: a folder with more is not one.
+const MAX_ENTRIES: usize = 16_384;
+const MAX_DEPTH: usize = 8;
+
+/// Refuses, before anything is written, a cache path the importer could not replace without
+/// deleting what is not its own (see [`check_own_directory`]); a link or a file there is refused
+/// as it always was.
+pub(super) fn check_replaceable(cache: &Path) -> Result<()> {
+    match entry(cache)? {
+        Entry::Missing => Ok(()),
+        Entry::Other => Err(occupied(cache)),
+        Entry::Directory(_) => check_own_directory(cache),
+    }
+}
+
+/// A folder at the cache path is replaced (moved aside and removed) only when the importer made
+/// it: nothing is in it, or it holds a finished cache (an owned marker, or a stamp and an index
+/// with a dbota header) and nothing but that cache's own files, listed in its index. Anything
+/// else is somebody's data.
+fn check_own_directory(cache: &Path) -> Result<()> {
+    let empty = fs::read_dir(cache)
+        .map_err(|why| managed_io(cache, why))?
+        .next()
+        .is_none();
+    if empty {
+        return Ok(());
+    }
+    let index = index_text(cache);
+    let marked = marker_matches(&cache.join(OWNER_MARKER), OWNER_TEXT.as_bytes())?;
+    let finished = index
+        .as_deref()
+        .is_some_and(|text| text.starts_with(INDEX_HEADER))
+        && read_stamp(cache).is_some()
+        && fs::symlink_metadata(cache.join(STAMP)).is_ok_and(|meta| meta.is_file());
+    if !marked && !finished {
+        return Err(refused(
+            cache,
+            "it is not a dbota cache and is not empty. Choose an empty folder or remove it yourself.",
+        ));
+    }
+    match first_foreign(cache, index.as_deref().unwrap_or_default())? {
+        Some(name) => Err(refused(
+            cache,
+            &format!(
+                "it holds {name:?}, which dbota did not make. Move it somewhere else, or choose an empty folder."
+            ),
+        )),
+        None => Ok(()),
+    }
+}
+
+fn refused(cache: &Path, why: &str) -> heatel::Error {
+    managed_io(cache, io::Error::new(io::ErrorKind::DirectoryNotEmpty, why))
+}
+
+/// The cache's index, when it is a plain file no longer than an index may be.
+fn index_text(cache: &Path) -> Option<String> {
+    let path = cache.join(INDEX);
+    if !fs::symlink_metadata(&path).ok()?.is_file() {
+        return None;
+    }
+    let mut text = String::new();
+    fs::File::open(path)
+        .ok()?
+        .take(MAX_INDEX + 1)
+        .read_to_string(&mut text)
+        .ok()?;
+    (text.len() as u64 <= MAX_INDEX).then_some(text)
+}
+
+/// The first thing below `cache` the importer did not write, as its path: a file the index does
+/// not list (the importer's own metadata at the top excepted), a link or a special file, or
+/// more than the importer ever makes.
+fn first_foreign(cache: &Path, index: &str) -> Result<Option<String>> {
+    let listed: HashSet<&str> = index
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split(' ');
+            (words.next() == Some("file"))
+                .then(|| words.nth(1))
+                .flatten()
+        })
+        .collect();
+    let mut pending = vec![(cache.to_path_buf(), String::new(), 0usize)];
+    let mut count = 0usize;
+    while let Some((directory, prefix, depth)) = pending.pop() {
+        for found in fs::read_dir(&directory).map_err(|why| managed_io(&directory, why))? {
+            count += 1;
+            let found = found.map_err(|why| managed_io(&directory, why))?;
+            let name = found.file_name().to_string_lossy().into_owned();
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let kind = found
+                .file_type()
+                .map_err(|why| managed_io(&directory, why))?;
+            let own = if kind.is_dir() {
+                depth < MAX_DEPTH
+            } else if kind.is_file() {
+                listed.contains(path.as_str())
+                    || (depth == 0 && (is_metadata(&name) || name.starts_with(".dbota-")))
+            } else {
+                false
+            };
+            if !own || count > MAX_ENTRIES {
+                return Ok(Some(path));
+            }
+            if kind.is_dir() {
+                pending.push((found.path(), path, depth + 1));
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn report_unowned(path: &Path) {
     eprintln!(
         "dbota import: leaving {} untouched because it is not part of this cache's import",
@@ -210,6 +334,7 @@ pub(super) fn publish(staging: &Path, cache: &Path, checkpoint: impl Fn(Checkpoi
         Entry::Missing => {}
         Entry::Other => return Err(occupied(cache)),
         Entry::Directory(directory) => {
+            check_own_directory(cache)?;
             if !matches!(entry(&old)?, Entry::Missing) {
                 return Err(occupied(&old));
             }

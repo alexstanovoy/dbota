@@ -130,6 +130,15 @@ fn no_room(cache: &Path, needed: u64, free: u64) -> String {
     )
 }
 
+/// What the refusal of a cache folder that holds somebody's files starts with.
+const IN_THE_WAY: &str = "Cannot use the cache folder ";
+
+/// Whether an import's failure text already says what to do about it (a full drive, a folder in
+/// the way), so that a screen adds no advice of its own about the player's Dota 2 files.
+pub fn says_what_to_do(why: &str) -> bool {
+    why.starts_with("Not enough disk space") || why.starts_with(IN_THE_WAY)
+}
+
 /// How an import ended.
 #[derive(Debug, Default)]
 pub struct Imported {
@@ -237,6 +246,11 @@ fn import_in(
                 IMPORT_ROOM,
                 crate::desktop::free_space(cache).unwrap_or(0),
             )
+        }
+        heatel::Error::Io { path, source }
+            if source.kind() == std::io::ErrorKind::DirectoryNotEmpty =>
+        {
+            format!("{IN_THE_WAY}{path}: {source}")
         }
         _ => e.to_string(),
     })?;
@@ -742,5 +756,37 @@ mod tests {
         assert!(!custom.cache.exists(), "the old copy became the cache");
         assert!(custom.scratch.join(".cache.old").join(INDEX).is_file());
         assert!(staging.join("models").is_dir());
+    }
+
+    /// A cache path that names a folder with the player's own files is refused before a step runs,
+    /// the refusal names the folder and says what to do, and the files stay.
+    #[test]
+    fn a_cache_folder_that_is_no_cache_is_refused_with_what_to_do_and_left_whole() {
+        let custom = Custom::new("player-folder");
+        fs::create_dir_all(&custom.cache).unwrap();
+        fs::write(custom.cache.join("my_thesis.txt"), b"precious").unwrap();
+        let why = nothing_converts(&custom).unwrap_err();
+        assert!(why.starts_with("Cannot use the cache folder "), "{why}");
+        assert!(why.contains(&custom.cache.display().to_string()), "{why}");
+        assert!(
+            why.ends_with(
+                "it is not a dbota cache and is not empty. Choose an empty folder or remove it yourself."
+            ),
+            "{why}"
+        );
+        assert_eq!(
+            fs::read(custom.cache.join("my_thesis.txt")).unwrap(),
+            b"precious"
+        );
+    }
+
+    #[test]
+    fn a_failure_that_says_what_to_do_is_told_as_it_is() {
+        let drive = no_room(Path::new("/c"), 2_000_000_000, 1_000_000_000);
+        assert!(says_what_to_do(&drive));
+        assert!(says_what_to_do(&format!(
+            "{IN_THE_WAY}/c: it is not a dbota cache"
+        )));
+        assert!(!says_what_to_do("/c/.assets.importing: occupied"));
     }
 }

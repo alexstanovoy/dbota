@@ -879,6 +879,8 @@ fn import_capped(
 ) -> Result<Report> {
     recover_interrupted_swap(cache, held.lock)?;
     let cache = &held.lock.cache;
+    // Before a file is written: what stands at the cache path must be the importer's to replace.
+    swap::check_replaceable(cache)?;
     let staging = swap::begin_staging(cache)?;
     // A staging folder is gone on every way out but a published cache.
     let made = make_in(game, &staging, plan, stamp, held, progress, limit);
@@ -1016,7 +1018,7 @@ mod tests {
         let plan = |text: &str| Plan::parse(text, "").unwrap();
         let (a, b) = (plan("texture t t.vtex_c t.png\n"), plan(""));
         let before = stamp(&game, &plan_id(&a)).unwrap();
-        fs::write(cache.join(STAMP), &before).unwrap();
+        own_stamp(&cache, &before);
         fs::write(cache.join(INDEX), b"").unwrap();
         assert!(is_current(&cache, &stamp(&game, &plan_id(&a)).unwrap()));
         assert!(matches_plan(&cache, &stamp_prefix(&plan_id(&a))));
@@ -1066,8 +1068,7 @@ mod tests {
         fs::create_dir_all(&cache).unwrap();
         let pak = vpk(&[("t.vtex_c", vec![7; 256 << 10])]);
         fs::write(game.join("pak01_dir.vpk"), &pak).unwrap();
-        fs::write(cache.join(STAMP), b"before").unwrap();
-        fs::write(cache.join(INDEX), b"").unwrap();
+        own_stamp(&cache, b"before");
         let plan = Plan::parse("texture t t.vtex_c t.png\n", "").unwrap();
         let limit = Some(64 << 10);
         let gate = Gate::default();
@@ -1115,8 +1116,7 @@ mod tests {
         fs::write(game.join("pak01_dir.vpk"), vpk(&[])).unwrap();
         let face = include_bytes!("../../../assets/fonts/bota-sans-regular.ttf");
         fs::write(game.join("panorama/fonts/f.otf"), face).unwrap();
-        fs::write(cache.join(STAMP), b"before").unwrap();
-        fs::write(cache.join(INDEX), b"").unwrap();
+        own_stamp(&cache, b"before");
         let plan = Plan::parse(
             "font first panorama/fonts/f.otf fonts/first.otf\n\
              font second panorama/fonts/f.otf fonts/second.otf\n",
@@ -1139,6 +1139,17 @@ mod tests {
     }
 
     /// An install with two fonts to import, and the plan that imports them: two steps.
+    /// What a cache an earlier import made leaves at its path: a stamp and an index with the
+    /// importer's header (the evidence that the folder is the importer's, see `swap`).
+    fn own_stamp(cache: &Path, stamp: impl AsRef<[u8]>) {
+        fs::write(cache.join(STAMP), stamp).unwrap();
+        fs::write(
+            cache.join(INDEX),
+            format!("{}\n", crate::index::CacheIndex::header()),
+        )
+        .unwrap();
+    }
+
     fn two_font_install(label: &str) -> (PathBuf, PathBuf, PathBuf, Plan) {
         let dir = fresh_dir(label);
         let (game, cache) = (dir.join("game"), dir.join("cache"));
@@ -1197,7 +1208,7 @@ mod tests {
     fn a_cancel_in_the_middle_of_an_import_leaves_the_old_cache_and_no_staging_folder() {
         let (dir, game, cache, plan) = two_font_install("cancel-middle");
         fs::create_dir_all(&cache).unwrap();
-        fs::write(cache.join(STAMP), b"before").unwrap();
+        own_stamp(&cache, b"before");
         let made = import_gated(&game, &cache, &plan, &mut |p, gate| {
             if p.done == 1 {
                 assert!(gate.cancel());
@@ -1283,19 +1294,19 @@ mod tests {
         let old_path = sibling(&cache, "old").unwrap();
         if cache_present {
             fs::create_dir_all(&cache).unwrap();
-            fs::write(cache.join(STAMP), b"new").unwrap();
+            own_stamp(&cache, b"new");
         }
         match old {
             OldKind::Folder => {
                 fs::create_dir_all(&old_path).unwrap();
-                fs::write(old_path.join(STAMP), b"old").unwrap();
+                own_stamp(&old_path, b"old");
             }
             OldKind::File => fs::write(&old_path, b"a file").unwrap(),
             #[cfg(unix)]
             OldKind::Link => {
                 let target = dir.join("target");
                 fs::create_dir_all(&target).unwrap();
-                fs::write(target.join(STAMP), b"target").unwrap();
+                own_stamp(&target, b"target");
                 std::os::unix::fs::symlink(&target, &old_path).unwrap();
             }
         }
@@ -1370,7 +1381,7 @@ mod tests {
             let held = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
             let cache = &held.cache;
             let stage = swap::begin_staging(cache).unwrap();
-            fs::write(stage.join(STAMP), b"new").unwrap();
+            own_stamp(&stage, b"new");
             swap::publish(&stage, cache, |reached| {
                 if point == "WaitForPublish" && reached == swap::Checkpoint::BeforePublish {
                     use std::io::Write;
@@ -1397,7 +1408,7 @@ mod tests {
             let dir = fresh_dir("swap-interrupted");
             let cache = dir.join("cache");
             fs::create_dir(&cache).unwrap();
-            fs::write(cache.join(STAMP), b"old").unwrap();
+            own_stamp(&cache, b"old");
             interrupt_at(&cache, point);
             let held = lock_cache(&cache, &mut || panic!("child exited"))
                 .unwrap()
@@ -1408,8 +1419,8 @@ mod tests {
                 assert_eq!(listing(&dir), [format!("cache folder:{want}")], "{point}");
                 assert_eq!(
                     fs::read_dir(&cache).unwrap().count(),
-                    1,
-                    "marker left at {point}"
+                    2,
+                    "a marker left at {point} (the cache holds its stamp and its index)"
                 );
             }
             fs::remove_dir_all(&dir).unwrap();
@@ -1422,7 +1433,7 @@ mod tests {
         use std::process::Stdio;
         let (dir, game, cache, plan) = two_font_install("swap-concurrent");
         fs::create_dir(&cache).unwrap();
-        fs::write(cache.join(STAMP), b"before").unwrap();
+        own_stamp(&cache, b"before");
         let mut first = swap_process(&cache, "WaitForPublish")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1463,7 +1474,7 @@ mod tests {
         let source = dir.join("source");
         let cache = dir.join("cache");
         fs::create_dir(&source).unwrap();
-        fs::write(source.join(STAMP), b"other cache").unwrap();
+        own_stamp(&source, b"other cache");
         interrupt_at(&source, "AfterMoveAside");
         let old = sibling(&cache, "old").unwrap();
         fs::rename(sibling(&source, "old").unwrap(), &old).unwrap();
@@ -1479,7 +1490,7 @@ mod tests {
         let dir = fresh_dir("swap-copied-marker");
         let cache = dir.join("cache");
         fs::create_dir(&cache).unwrap();
-        fs::write(cache.join(STAMP), b"previous").unwrap();
+        own_stamp(&cache, b"previous");
         interrupt_at(&cache, "AfterMoveAside");
         let old = sibling(&cache, "old").unwrap();
         let original = dir.join("moved-original");
@@ -1504,8 +1515,8 @@ mod tests {
         let target = dir.join("elsewhere");
         fs::create_dir(&cache).unwrap();
         fs::create_dir(&target).unwrap();
-        fs::write(cache.join(STAMP), b"previous").unwrap();
-        fs::write(target.join(STAMP), b"unrelated").unwrap();
+        own_stamp(&cache, b"previous");
+        own_stamp(&target, b"unrelated");
         interrupt_at(&cache, "AfterMoveAside");
         std::os::unix::fs::symlink(&target, &cache).unwrap();
         let lock = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
@@ -1584,8 +1595,7 @@ mod tests {
     fn a_failed_publish_removes_the_staging_folder_and_keeps_the_old_cache() {
         let (dir, game, cache, plan) = two_font_install("publish-fails");
         fs::create_dir_all(&cache).unwrap();
-        fs::write(cache.join(STAMP), b"before").unwrap();
-        fs::write(cache.join(INDEX), b"").unwrap();
+        own_stamp(&cache, b"before");
         let old = sibling(&cache, "old").unwrap();
         // Something takes the place of the old copy's folder while the import works.
         let made = import_into(&game, &cache, &plan, "after", &mut |p| {
@@ -1607,7 +1617,7 @@ mod tests {
         let dir = fresh_dir("rollback");
         let cache = dir.join("cache");
         fs::create_dir_all(&cache).unwrap();
-        fs::write(cache.join(STAMP), b"before").unwrap();
+        own_stamp(&cache, b"before");
         let held = lock_cache(&cache, &mut || Flow::Continue).unwrap().unwrap();
         let staging = swap::begin_staging(&held.cache).unwrap();
         assert!(
@@ -1620,6 +1630,119 @@ mod tests {
         );
         assert_eq!(read_stamp(&cache).as_deref(), Some("before"));
         assert!(!sibling(&cache, "old").unwrap().exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Imports into `cache` and tells whether any step ran (the import must refuse before it
+    /// writes a single file).
+    fn import_counting_steps(game: &Path, cache: &Path, plan: &Plan) -> (Result<Report>, usize) {
+        let mut steps = 0;
+        let made = import_into(game, cache, plan, "after", &mut |_| {
+            steps += 1;
+            Flow::Continue
+        });
+        (made, steps)
+    }
+
+    /// A folder at the cache path that dbota did not make is the player's, not its to replace:
+    /// refused before anything is written, with the path and what to do, and left whole.
+    #[test]
+    fn a_folder_with_the_players_files_at_the_cache_path_is_refused_and_left_whole() {
+        let (dir, game, cache, plan) = two_font_install("player-folder");
+        fs::create_dir_all(cache.join("chapters")).unwrap();
+        fs::write(cache.join("my_thesis.txt"), b"precious").unwrap();
+        fs::write(cache.join("chapters/one.txt"), b"also precious").unwrap();
+        let (made, steps) = import_counting_steps(&game, &cache, &plan);
+        let error = made
+            .expect_err("the folder is not a dbota cache")
+            .to_string();
+        assert_eq!(steps, 0, "a step ran before the refusal");
+        assert!(error.contains(&cache.display().to_string()), "{error}");
+        assert!(
+            error.contains(
+                "it is not a dbota cache and is not empty. Choose an empty folder or remove it yourself."
+            ),
+            "{error}"
+        );
+        assert_eq!(fs::read(cache.join("my_thesis.txt")).unwrap(), b"precious");
+        assert_eq!(
+            fs::read(cache.join("chapters/one.txt")).unwrap(),
+            b"also precious"
+        );
+        let beside: Vec<String> = listing(&dir)
+            .into_iter()
+            .filter(|l| l.starts_with('.'))
+            .collect();
+        assert!(beside.is_empty(), "left beside the cache: {beside:?}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// An existing folder with nothing in it is nobody's data: the import may use it.
+    #[test]
+    fn an_empty_folder_at_the_cache_path_is_used() {
+        let (dir, game, cache, plan) = two_font_install("empty-folder");
+        fs::create_dir(&cache).unwrap();
+        let (made, steps) = import_counting_steps(&game, &cache, &plan);
+        made.expect("an empty folder is fine");
+        assert!(steps > 0);
+        assert_eq!(read_stamp(&cache).as_deref(), Some("after"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A dbota cache the player put a file of their own in is replaced only when that file is
+    /// not in the way: it is refused (naming the file), and the cache and the file stay.
+    #[test]
+    fn a_dbota_cache_holding_a_foreign_file_is_refused_and_both_stay() {
+        let (dir, game, cache, plan) = two_font_install("foreign-in-cache");
+        import_counting_steps(&game, &cache, &plan)
+            .0
+            .expect("a first import");
+        // An own cache is replaced as before.
+        import_counting_steps(&game, &cache, &plan)
+            .0
+            .expect("an own cache is replaced");
+        fs::write(cache.join("notes.txt"), b"mine").unwrap();
+        fs::write(cache.join("fonts/holiday.txt"), b"mine too").unwrap();
+        let (made, steps) = import_counting_steps(&game, &cache, &plan);
+        let error = made
+            .expect_err("a foreign file is in the cache")
+            .to_string();
+        assert_eq!(steps, 0, "a step ran before the refusal");
+        assert!(error.contains(&cache.display().to_string()), "{error}");
+        assert!(
+            error.contains("holds \"fonts/holiday.txt\", which dbota did not make")
+                || error.contains("holds \"notes.txt\", which dbota did not make"),
+            "{error}"
+        );
+        assert!(error.contains("Move it somewhere else"), "{error}");
+        assert_eq!(fs::read(cache.join("notes.txt")).unwrap(), b"mine");
+        assert_eq!(
+            fs::read(cache.join("fonts/holiday.txt")).unwrap(),
+            b"mine too"
+        );
+        assert!(
+            cache.join("fonts/first.otf").is_file(),
+            "the cache itself was taken apart"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A link at the cache path is never followed into the folder it names, nor replaced.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_folder_at_the_cache_path_is_refused_and_its_target_stays() {
+        let (dir, game, cache, plan) = two_font_install("link-to-folder");
+        let target = dir.join("their_folder");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep.txt"), b"theirs").unwrap();
+        std::os::unix::fs::symlink(&target, &cache).unwrap();
+        let (made, steps) = import_counting_steps(&game, &cache, &plan);
+        let error = made.expect_err("the cache path is a link").to_string();
+        assert_eq!(steps, 0, "a step ran before the refusal");
+        assert!(error.contains("occupied by an unrelated entry"), "{error}");
+        assert!(cache.is_symlink());
+        assert_eq!(fs::read(target.join("keep.txt")).unwrap(), b"theirs");
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
         fs::remove_dir_all(&dir).unwrap();
     }
 

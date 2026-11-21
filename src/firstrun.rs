@@ -398,7 +398,14 @@ impl FirstRun {
                     Ok(imported) if imported.stopped => self.ended("Import cancelled."),
                     Err(why) => {
                         warn!("dbota import: {why}");
-                        self.ended(&format!("The import failed: {why}. Choose another folder or try the import again after fixing the reported error."))
+                        let told = if crate::import::says_what_to_do(&why) {
+                            why
+                        } else {
+                            format!(
+                                "The import failed: {why}. Choose another folder or try the import again after fixing the reported error."
+                            )
+                        };
+                        self.ended(&told)
                     }
                     Ok(imported) if imported.failed.is_empty() => Screen::Restarting,
                     Ok(imported) => Screen::Partial {

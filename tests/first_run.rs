@@ -540,6 +540,32 @@ fn a_blocked_import_shows_the_path_and_how_to_retry() {
     assert_eq!(std::fs::read(occupied.join("keep")).unwrap(), b"my backup");
 }
 
+/// A cache folder that holds the player's own files (a `DBOTA_ASSETS` or `--cache-dir` named by
+/// mistake) is refused on the screen, with its path and what to do, and nothing in it is touched.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn a_cache_folder_with_the_players_own_files_is_refused_on_the_screen_and_left_whole() {
+    let scratch = Scratch::new("player-folder");
+    let mut client = first_run_client(&scratch);
+    steam_with_dota(
+        &mut client,
+        &scratch.root.join("Steam"),
+        &scratch.root.join("games"),
+    );
+    let thesis = scratch.cache().join("my_thesis.txt");
+    std::fs::create_dir_all(scratch.cache()).unwrap();
+    std::fs::write(&thesis, b"precious").unwrap();
+    played(
+        "player-folder",
+        client,
+        "await:button:import from dota 2;click:import from dota 2;\
+         await:text:is not a dbota cache and is not empty;\
+         await:text:Choose an empty folder or remove it yourself;\
+         shot:first-run-cache-refused.png;click:quit dbota",
+    );
+    assert_eq!(std::fs::read(&thesis).unwrap(), b"precious");
+}
+
 /// On a system without a folder dialog (a Linux desktop without zenity or kdialog) the folder is
 /// typed: Enter takes it, and the install in it is found.
 #[test]
