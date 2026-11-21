@@ -130,14 +130,20 @@ fn leaving_game_permanently_removes_reconnect_but_cancelling_keeps_it() {
     }
 }
 
-#[test]
-fn a_server_websocket_idle_close_reaches_the_drawn_menu() {
+/// A relay between the client and the server's WebSocket: it forwards the server's bytes and, until
+/// `silent` is set, the client's, so the test cuts the client's replies on purpose and only the server's
+/// idle timeout can then close the link. The server's address becomes the relay's.
+fn cutting_relay(
+    server: &mut Server,
+) -> (
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+    std::thread::JoinHandle<()>,
+) {
     use std::io::{Read, Write};
     use std::net::{Shutdown, TcpListener, TcpStream};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    let mut server = Server::start(1, &["--ws-port", "0", "--idle-timeout-secs", "1"]);
     let upstream = server
         .address
         .strip_prefix("ws://")
@@ -168,6 +174,15 @@ fn a_server_websocket_idle_close_reaches_the_drawn_menu() {
             let _ = server.shutdown(Shutdown::Both);
         });
     });
+    (silent, forwarding)
+}
+
+#[test]
+fn a_server_websocket_idle_close_reaches_the_drawn_menu() {
+    use std::sync::atomic::Ordering;
+
+    let mut server = Server::start(1, &["--ws-port", "0", "--idle-timeout-secs", "1"]);
+    let (silent, forwarding) = cutting_relay(&mut server);
 
     // Use the production link and a real snapshot before constructing the
     // menu. Loading the map renderer would hide the cost of the network test.
@@ -202,6 +217,66 @@ fn a_server_websocket_idle_close_reaches_the_drawn_menu() {
     assert!(
         shown.iter().any(|text| text == message),
         "visible text: {shown:?}"
+    );
+    drop(client);
+    drop(server);
+    forwarding.join().expect("relay finished");
+}
+
+/// A server that cuts the link before the client has seen a match (here: it hears nothing for a
+/// second) leaves the client without a view. The menu says why and is the way out; the client does not
+/// quit with the page left on its loading screen.
+#[test]
+fn a_link_lost_before_the_first_view_returns_to_the_menu_with_its_reason() {
+    use std::sync::atomic::Ordering;
+
+    let mut server = Server::start(1, &["--ws-port", "0", "--idle-timeout-secs", "1"]);
+    let (silent, forwarding) = cutting_relay(&mut server);
+    use clap::Parser;
+    let args = crate::Args::parse_from(["dbota", "--addr", &server.address]);
+    let crate::session::Session(game) = crate::session::open(&args).expect("a link");
+    // The WebSocket is open; nothing the client says from now on reaches the server, which closes the
+    // link without ever sending a view.
+    silent.store(true, Ordering::Release);
+    assert!(game.view().is_none(), "no match view yet");
+
+    // The frames run as the client's do: the session is pumped, and sees the link close, before the
+    // menu's guard looks at it.
+    let mut client = Client::run_with_core(&["--addr", &server.address], game);
+    assert!(
+        client.world().non_send::<MenuCore>().in_game(),
+        "the game is on screen before the link is lost"
+    );
+    let mut patience = super::harness::Patience::of(Duration::from_secs(10));
+    while client.world().non_send::<MenuCore>().in_game() {
+        patience.pass("the menu to take the lost link");
+        client.frames(1);
+        let exits = client
+            .world()
+            .resource::<bevy::ecs::message::Messages<bevy::app::AppExit>>();
+        assert!(
+            exits.get_cursor().read(exits).next().is_none(),
+            "a client with a menu does not quit when the link is lost before the first view"
+        );
+    }
+    client.frames(3);
+    assert!(
+        !client.world().non_send::<MenuCore>().in_game(),
+        "the menu, not the game, is on screen"
+    );
+    let shown = client.shown_texts();
+    assert!(
+        shown
+            .iter()
+            .any(|text| text == "RECONNECT" || text == "LEAVE" || text == "PLAY"),
+        "the menu offers a way on: {shown:?}"
+    );
+    assert!(
+        shown
+            .iter()
+            .any(|text| text
+                == "The game server stopped receiving network replies from this client."),
+        "the reason is drawn: {shown:?}"
     );
     drop(client);
     drop(server);

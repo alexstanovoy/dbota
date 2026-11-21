@@ -208,12 +208,19 @@ pub(crate) fn pump(
     mut known: ResMut<MatchKnown>,
     mut exit: MessageWriter<AppExit>,
     mut state: ResMut<ReplayState>,
+    menu: Option<NonSend<crate::main_menu::MenuCore>>,
 ) {
     let core = &mut session.0;
     core.pump(time.delta_secs());
     // A server that cuts a live client off before any match view (a refused seat key, a wrong
-    // wire) leaves nothing to look at: say why and quit instead of showing an empty screen.
-    if core.lost && core.view().is_none() && matches!(core.source, Source::Live(_)) {
+    // wire) leaves nothing to look at: say why and quit instead of showing an empty screen. A client
+    // with a menu does not quit: the menu's guard (main_menu::shell) says why and goes back to it, as
+    // in a browser, where a quit would leave the loading screen frozen with no reason and no way out.
+    if menu.is_none()
+        && core.lost
+        && core.view().is_none()
+        && matches!(core.source, Source::Live(_))
+    {
         let why = core.feed.last().map_or_else(
             || "connection to the server lost".to_string(),
             |line| crate::feed::text(core, &line.kind),
