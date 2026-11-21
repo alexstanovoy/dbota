@@ -2,6 +2,7 @@
 """
 
 import base64
+import json
 import pathlib
 import re
 import subprocess
@@ -9,7 +10,8 @@ import sys
 import time
 from playwright.sync_api import sync_playwright
 
-from browser import BROWSER_ARGS, HERE, radovid_config, serve, wait_console, without_steering_variables
+from browser import BROWSER_ARGS, HERE, serve, wait_console, without_steering_variables
+from radovid_service import radovid_config
 
 FLAG = "--services-page"
 # (POSITION in smoke.py's help, flags, add_argument's options): the page's flag first, then the options only it reads.
