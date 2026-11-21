@@ -8,6 +8,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -245,6 +246,35 @@ class ModuleTreeLimitTests(unittest.TestCase):
         self.assertEqual(test_groups.check_tree(self.tree(files), self.listed({"src/lib.rs", "src/a.rs"}), "k lib"), [])
 
 
+class SourceItemsTests(unittest.TestCase):
+    """What the source listing reads as a test, and what it does not."""
+
+    def names(self, text):
+        return [("::".join((*inline, name)), cfgs) for inline, name, cfgs in test_groups.items_of(text).tests]
+
+    def test_a_test_in_an_inline_module_carries_the_modules_name_and_cfg(self):
+        text = '#[cfg(test)]\nmod tests {\n    #[test]\n    #[ignore = "slow"]\n    fn slow() {}\n}\n'
+        self.assertEqual(self.names(text), [("tests::slow", (("test",),))])
+
+    def test_strings_comments_and_raw_strings_hold_no_tests(self):
+        text = ('const A: &str = "#[test] fn in_a_string() {}";\n/* #[test] fn in_a /* nested */ comment() {} */\n'
+                'const B: &str = r#"\n#[test] fn in_a_raw_string() {}"#;\nconst C: char = \'"\';\n#[test]\nfn real() {}\n')
+        self.assertEqual(self.names(text), [("real", ())])
+
+    def test_a_test_attribute_inside_a_function_or_an_impl_is_no_test(self):
+        text = "fn outer() {\n    #[test]\n    fn inner() {}\n}\nimpl X {\n    #[test]\n    fn method() {}\n}\n#[test]\nfn top() {}\n"
+        self.assertEqual(self.names(text), [("top", ())])
+
+    def test_cfg_predicates_are_three_valued(self):
+        def fact(key, value):
+            return {"unix": True, "windows": False, "feature": value == "on"}.get(key)
+        tokens = test_groups.tokens_of
+        self.assertIs(test_groups.cfg_holds((tuple(tokens('all(windows, mystery)')),), fact), False)
+        self.assertIs(test_groups.cfg_holds((tuple(tokens('any(unix, mystery)')),), fact), True)
+        self.assertIsNone(test_groups.cfg_holds((tuple(tokens('not(mystery)')),), fact))
+        self.assertIs(test_groups.cfg_holds((tuple(tokens('all(unix, not(feature = "off"))')),), fact), True)
+
+
 class CommandTests(unittest.TestCase):
     config = {"profile": "test-release"}
 
@@ -435,6 +465,12 @@ class ToyRepositoryTests(unittest.TestCase):
         scratch = Path(os.environ.get("CARGO_TARGET_DIR") or test_groups.ROOT / "target") / "test-groups-toy"
         scratch.mkdir(parents=True, exist_ok=True)
         cls.directory = Path(tempfile.mkdtemp(prefix="repo-", dir=scratch))
+        cls.fake_bin = Path(tempfile.mkdtemp(prefix="bin-", dir=scratch))
+        cls.cargo_log = cls.fake_bin / "cargo.log"
+        (cls.fake_bin / "cargo").write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{cls.cargo_log}"\n[ "$1" = metadata ] && exec "{shutil.which("cargo")}" "$@"\n'
+            'echo "cargo $1: this check must build nothing" >&2\nexit 97\n')
+        (cls.fake_bin / "cargo").chmod(0o755)
         cls.original = (test_groups.ROOT, test_groups.CONFIG)
         cls.target = os.environ.get("CARGO_TARGET_DIR")
         os.environ["CARGO_TARGET_DIR"] = str(cls.directory / "target")
@@ -455,6 +491,7 @@ class ToyRepositoryTests(unittest.TestCase):
         else:
             os.environ["CARGO_TARGET_DIR"] = cls.target
         shutil.rmtree(cls.directory, ignore_errors=True)
+        shutil.rmtree(cls.fake_bin, ignore_errors=True)
 
     @classmethod
     def write(cls, name, text):
@@ -466,16 +503,35 @@ class ToyRepositoryTests(unittest.TestCase):
         subprocess.run(["git", "checkout", "-q", "--", "."], cwd=self.directory, check=True)
         subprocess.run(["git", "clean", "-qfd"], cwd=self.directory, check=True)
 
-    def arguments(self, *change, base=None, record=None, no_waive=False, all_=False, skip_feature=()):
-        return argparse.Namespace(all=all_, base=base, change=list(change), no_waive=no_waive, record=record, skip_feature=list(skip_feature))
+    def arguments(self, *change, base=None, record=None, no_waive=False, all_=False, skip_feature=(), no_build=False):
+        return argparse.Namespace(all=all_, base=base, change=list(change), no_waive=no_waive, record=record, skip_feature=list(skip_feature),
+                                  no_build=no_build)
 
-    def check(self, toml=None, base=None, skip_feature=()):
+    def check(self, toml=None, base=None, skip_feature=(), no_build=False):
         if toml is not None:
             self.write("tools/test_groups.toml", toml)
         errors, output = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-            status = test_groups.cmd_check(self.arguments(base=base, skip_feature=skip_feature))
+            status = test_groups.cmd_check(self.arguments(base=base, skip_feature=skip_feature, no_build=no_build))
         return status, errors.getvalue(), output.getvalue()
+
+    def check_without_build(self, toml=None, base=None):
+        """`check --no-build` with a `cargo` first on PATH that runs `cargo metadata` and fails anything else; it asserts that
+        nothing else was asked of cargo."""
+        self.cargo_log.unlink(missing_ok=True)
+        path = os.environ["PATH"]
+        os.environ["PATH"] = f"{self.fake_bin}{os.pathsep}{path}"
+        try:
+            found = self.check(toml, base=base, no_build=True)
+        finally:
+            os.environ["PATH"] = path
+        commands = self.cargo_log.read_text().splitlines()
+        self.assertTrue(commands, "the fake cargo was given no command")
+        self.assertEqual([c for c in commands if not c.startswith("metadata ")], [], "the source check ran cargo for more than metadata")
+        return found
+
+    def count_of(self, output):
+        return int(re.search(r"(\d+) tests in \d+ groups", output).group(1))
 
     def run_groups(self, *change, record=None, no_waive=False, all_=False):
         output = io.StringIO()
@@ -558,6 +614,65 @@ class ToyRepositoryTests(unittest.TestCase):
         errors = test_groups.check_tree(trees, listed, "toy lib")
         self.assertEqual(len(errors), 1)
         self.assertIn("rustc built it from src/stray.rs, which the module tree of src/lib.rs does not reach", errors[0])
+
+    def test_source_check_passes_on_the_toy_and_counts_the_tests_the_full_check_lists(self):
+        status, errors, output = self.check_without_build()
+        self.assertEqual((status, errors), (0, ""))
+        self.assertIn("test groups (source level, nothing built): ", output)
+        _, _, full = self.check()
+        self.assertEqual(self.count_of(output), self.count_of(full))
+
+    def test_source_check_finds_a_new_test_module_in_no_group(self):
+        self.write("src/lib.rs", TOY_FILES["src/lib.rs"] + "mod fresh;\n")
+        self.write("src/fresh.rs", "#[test]\nfn added() {}\n")
+        status, errors, _ = self.check_without_build(TOY_TOML.replace('paths = ["src/b.rs"]', 'paths = ["src/b.rs", "src/fresh.rs"]'))
+        self.assertEqual(status, 1)
+        self.assertIn("in no group: toy lib fresh::added (its file src/fresh.rs is in the `paths` of group second: add 'fresh::' to "
+                      "that group's filters for toy lib)", errors)
+
+    def test_source_check_finds_a_new_test_target_in_no_group(self):
+        self.write("tests/extra.rs", "#[test]\nfn added() {}\n")
+        status, errors, _ = self.check_without_build()
+        self.assertEqual(status, 1)
+        self.assertIn("in no group: toy test:extra added", errors)
+
+    def test_source_check_places_a_cfg_feature_test_in_the_feature_build_only(self):
+        status, errors, _ = self.check_without_build(TOY_TOML.replace('filters = ["d::"]', 'filters = ["none::"]'))
+        self.assertEqual(status, 1)
+        self.assertIn("in no group: toy lib with extra d::only_with_the_feature", errors)
+        self.assertNotIn("in no group: toy lib d::only_with_the_feature", errors)
+
+    def gated(self, features):
+        self.write("Cargo.toml", TOY_FILES["Cargo.toml"] + '[[test]]\nname = "gated"\npath = "tests/gated.rs"\nrequired-features = ["extra"]\n')
+        self.write("tests/gated.rs", "#[test]\nfn only_extra() {}\n")
+        group = f'\n[[group]]\nname = "fifth"\npaths = ["tests/gated.rs"]\ntests = [{{ package = "toy", target = "test:gated"{features} }}]\n'
+        return self.check_without_build(TOY_TOML + group)
+
+    def test_source_check_finds_a_required_features_target_in_its_feature_build(self):
+        status, errors, _ = self.gated(', features = ["extra"]')
+        self.assertEqual((status, errors), (0, ""))
+
+    def test_source_check_finds_no_required_features_target_in_the_plain_build(self):
+        status, errors, _ = self.gated("")
+        self.assertEqual(status, 1)
+        self.assertIn("group fifth holds no test", errors)
+        self.assertIn("in no group: toy test:gated with extra only_extra", errors)
+
+    def test_source_check_names_a_test_in_two_groups(self):
+        status, errors, _ = self.check_without_build(TOY_TOML.replace('filters = ["b::"]', 'filters = ["b::", "a::one"]'))
+        self.assertEqual(status, 1)
+        self.assertIn("in 2 groups (first, second) of one build: toy lib a::one", errors)
+
+    def test_source_check_names_a_filter_that_selects_no_test(self):
+        status, errors, _ = self.check_without_build(TOY_TOML.replace('"e::"]', '"e::", "gone::"]'))
+        self.assertEqual(status, 1)
+        self.assertIn("group third: filter 'gone::' selects no test", errors)
+
+    def test_source_check_counts_a_test_behind_a_cfg_it_cannot_evaluate(self):
+        self.write("src/c.rs", TOY_FILES["src/c.rs"] + "#[cfg(toy_custom)]\n#[test]\nfn custom() {}\n")
+        status, errors, output = self.check_without_build()
+        self.assertEqual((status, errors), (0, ""))
+        self.assertIn("; 1 tests behind a cfg this cannot evaluate were not checked;", output)
 
     def test_a_change_to_a_file_runs_the_groups_of_the_tests_importing_it(self):
         self.assertEqual(self.select("src/a.rs"), "# groups: first second")

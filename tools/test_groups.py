@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The test groups of this repository (tools/test_groups.toml): which tests a change needs, and the proof that none is left out.
 
-    tools/test_groups.py check [--base REV | --all]       every test in exactly one group, every file routed
+    tools/test_groups.py check [--base REV | --all] [--no-build]
+                                                          every test in exactly one group, every file routed
     tools/test_groups.py select [--all | --base REV | A..B | FILE...]
                                                           the groups the change affects and the commands that run them
     tools/test_groups.py run [--record FILE] [selection]  the same commands, run one after the other, stopping at the first failure
@@ -19,6 +20,11 @@ nothing, a file nothing routes, a test file that is not in its group's `paths`, 
 the module tree (which the import routes and the test-to-file mapping rest on) does not reach. `run` checks that every command
 ran exactly the tests its groups select.
 
+`check --no-build` builds nothing: it reads the `#[test]` functions of every test target from the source (the module tree from
+the target's root file, each test placed in the builds whose features and cfgs it compiles in) and checks all of the above that
+needs no binary. Doc tests, tests behind a cfg it cannot evaluate (counted in its summary) and the files rustc actually built are
+the full check's: it is the quick check while working, and the full one stays the merge check.
+
 Known failures of main (the file `baselines` names: exact test names, each with its reason) are skipped by `run` and listed as
 waived, so one of them does not hide the rest of the suite; `--no-waive` runs them, and a change to any file routed to a waived
 test's group runs it too. Any other failure stops the run. Tests marked `#[ignore]` are grouped like the others and reported as
@@ -27,6 +33,7 @@ ignored: the gate's own steps run them.
 
 import argparse
 import json
+import os
 import posixpath
 import re
 import shlex
@@ -204,6 +211,18 @@ def declared_modules(text: str) -> list[tuple[str, str | None]]:
     return found
 
 
+def module_file(file: str, as_mod_rs: bool, inline: tuple[str, ...], name: str, path: str | None, available: set[str]) -> tuple[str, bool] | None:
+    """The file of `mod name;` declared in `file` (inside the inline modules `inline`), and whether its own modules sit beside
+    it (a mod.rs or a `#[path]` file); None when no such file exists."""
+    directory = posixpath.dirname(file)
+    base = posixpath.join(directory if as_mod_rs else posixpath.join(directory, Path(file).stem), *inline)
+    if path:
+        candidates = [(posixpath.normpath(posixpath.join(base if inline else directory, path)), True)]
+    else:
+        candidates = [(posixpath.join(base, name + ".rs"), False), (posixpath.join(base, name, "mod.rs"), True)]
+    return next(((c, mod_rs) for c, mod_rs in candidates if c in available), None)
+
+
 class ModuleTree:
     """The files of one crate by module, from its root file: `mod name;` finds `name.rs` or `name/mod.rs` beside the file (below
     its stem when the file is not a mod.rs, lib.rs or main.rs), and `#[path = "..."]` names the file from the declaring file's
@@ -217,15 +236,9 @@ class ModuleTree:
         todo = [(root, True)]
         while todo:
             file, as_mod_rs = todo.pop()
-            directory = posixpath.dirname(file)
-            base = directory if as_mod_rs else posixpath.join(directory, Path(file).stem)
             kids: dict[str, str] = {}
             for name, path in declared_modules(read(file)):
-                if path:
-                    candidates = [(posixpath.normpath(posixpath.join(directory, path)), True)]
-                else:
-                    candidates = [(posixpath.join(base, name + ".rs"), False), (posixpath.join(base, name, "mod.rs"), True)]
-                found = next(((c, mod_rs) for c, mod_rs in candidates if c in available), None)
+                found = module_file(file, as_mod_rs, (), name, path, available)
                 if found is None:
                     continue
                 kids[name] = found[0]
@@ -511,10 +524,14 @@ def cmd_select(arguments: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------------------------------------------- listing
 
 
+def workspace_metadata() -> dict:
+    """The packages of the workspace and their targets, as the manifests say (nothing resolved, fetched or built)."""
+    return json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps", "--offline"], cwd=ROOT, capture_output=True, text=True, check=True).stdout)
+
+
 def package_names() -> dict[str, str]:
     """Manifest path -> package name, for the packages of the workspace."""
-    meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps", "--offline"], cwd=ROOT, capture_output=True, text=True, check=True).stdout)
-    return {p["manifest_path"]: p["name"] for p in meta["packages"]}
+    return {p["manifest_path"]: p["name"] for p in workspace_metadata()["packages"]}
 
 
 def dep_info(executable: str) -> set[str]:
@@ -548,6 +565,11 @@ def listing_of(executable: str, directory: Path) -> tuple[list[str], set[str]]:
     return tests_of(done.stdout), set(tests_of(ignored.stdout))
 
 
+def target_kind(target: dict) -> str:
+    """A cargo target as the groups name it: "lib", "bin:NAME", "test:NAME"."""
+    return "lib" if target["kind"][0] in LIBRARY_KINDS else f"{target['kind'][0]}:{target['name']}"
+
+
 def feature_sets(config: dict, groups: list[Group]) -> list[tuple[str, ...]]:
     sets = {tuple(config.get("features", []))}
     for group in groups:
@@ -575,7 +597,7 @@ def list_cargo(config: dict, sets: list[tuple[str, ...]]) -> dict[tuple[tuple[st
             if package is None:
                 continue
             target = message["target"]
-            kind = "lib" if target["kind"][0] in LIBRARY_KINDS else f"{target['kind'][0]}:{target['name']}"
+            kind = target_kind(target)
             directory = Path(message["manifest_path"]).parent
             tests, ignored = listing_of(message["executable"], directory)
             found[(features, package, kind)] = Listed(tests, ignored, Path(target["src_path"]), dep_info(message["executable"]))
@@ -626,6 +648,265 @@ def selects(selector: Selector, package: str, kind: str, name: str) -> bool:
     if selector.package != package or selector.target not in (None, kind):
         return False
     return not selector.filters or any(f in name for f in selector.filters)
+
+
+# ---------------------------------------------------------------------------------------------------------------- source
+
+TOKEN = re.compile(r"""
+      \s+ | //[^\n]*
+    | (?P<block>/\*)
+    | (?P<raw>[bc]?r(?P<hashes>\#*)")
+    | (?P<string>[bc]?"(?:\\.|[^"\\])*")
+    | (?P<char>b?'(?:\\u\{[^}]*\}|\\.|[^'\\])')
+    | (?P<lifetime>'[A-Za-z_]\w*)
+    | (?P<token>[A-Za-z_]\w*|\d\w*|.)
+""", re.VERBOSE | re.DOTALL)
+IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+COMMENT_MARK = re.compile(r"/\*|\*/")
+# cfg keys that rustc's print of the host does not settle: debug assertions and overflow checks are the profile's, CPU features
+# the flags'
+FLAG_KEYS = ("debug_assertions", "overflow_checks", "target_feature")
+FALSE_KEYS = ("doc", "doctest", "miri")  # never set in a test build
+
+
+def tokens_of(text: str) -> list[str]:
+    """The tokens of a Rust source: comments dropped, string and character literals kept whole (so neither a `#[test]` in a
+    string nor a quote in a character literal is read as code)."""
+    found = []
+    position = 0
+    while position < len(text):
+        match = TOKEN.match(text, position)
+        if match.group("block"):
+            position = comment_end(text, match.end())
+        elif match.group("raw"):
+            close = text.find('"' + match.group("hashes"), match.end())
+            position = len(text) if close < 0 else close + 1 + len(match.group("hashes"))
+            found.append(text[match.start():position])
+        else:
+            position = match.end()
+            if match.lastgroup:
+                found.append(match.group())
+    return found
+
+
+def comment_end(text: str, position: int) -> int:
+    """Where a block comment opened before `position` ends: Rust's block comments nest."""
+    depth = 1
+    while depth:
+        found = COMMENT_MARK.search(text, position)
+        if found is None:
+            return len(text)
+        depth += 1 if found.group() == "/*" else -1
+        position = found.end()
+    return position
+
+
+def closing(tokens: list[str], start: int) -> int:
+    """The index of the bracket that closes the one at `start` (the end of the tokens when none does)."""
+    depth = 0
+    for index in range(start, len(tokens)):
+        depth += {"[": 1, "(": 1, "{": 1, "]": -1, ")": -1, "}": -1}.get(tokens[index], 0)
+        if depth == 0:
+            return index
+    return len(tokens)
+
+
+@dataclass
+class SourceItems:
+    """What one file holds for the test listing: its `#![cfg]`, its `#[test]` functions and its out-of-line modules, each with
+    the inline modules around it and the cfgs written on it and on them (a cfg is the tokens inside `cfg(...)`)."""
+
+    cfgs: list[tuple[str, ...]] = field(default_factory=list)
+    tests: list[tuple[tuple[str, ...], str, tuple]] = field(default_factory=list)
+    modules: list[tuple[tuple[str, ...], str, str | None, tuple]] = field(default_factory=list)  # inline, name, #[path], cfgs
+
+
+def items_of(text: str) -> SourceItems:
+    """The tests and modules of a source, read from its tokens. Only items of modules count: a `#[test]` in a function body,
+    an impl or a macro body is no test libtest lists."""
+    tokens = tokens_of(text)
+    items = SourceItems()
+    scopes: list[tuple[str, list] | None] = []  # each open brace: an inline module (its name and cfgs), or None
+    attributes: list[list[str]] = []
+    index = 0
+    while index < len(tokens):
+        token, ahead = tokens[index], tokens[index + 1 : index + 3]
+        in_module = None not in scopes
+        if token == "#" and (ahead[:1] == ["["] or ahead == ["!", "["]):
+            inner = ahead[0] == "!"
+            end = closing(tokens, index + 1 + inner)
+            body = tokens[index + 2 + inner : end]
+            if inner and body[:2] == ["cfg", "("] and in_module:
+                (scopes[-1][1] if scopes else items.cfgs).append(tuple(body[2:-1]))
+            elif not inner:
+                attributes.append(body)
+            index = end + 1
+            continue
+        if token in ("mod", "fn") and in_module and ahead and IDENTIFIER.fullmatch(ahead[0]):
+            inline = tuple(name for name, _ in scopes)
+            cfgs = (*(c for _, own in scopes for c in own), *(tuple(a[2:-1]) for a in attributes if a[:2] == ["cfg", "("]))
+            if token == "fn" and ["test"] in attributes:
+                items.tests.append((inline, ahead[0], cfgs))
+            elif token == "mod" and ahead[1:] == [";"]:
+                path = next((a[2][1:-1] for a in attributes if len(a) == 3 and a[:2] == ["path", "="]), None)
+                items.modules.append((inline, ahead[0], path, cfgs))
+            elif token == "mod" and ahead[1:] == ["{"]:
+                scopes.append((ahead[0], [tuple(a[2:-1]) for a in attributes if a[:2] == ["cfg", "("]]))
+                index += 1
+            attributes = []
+            index += 2
+            continue
+        if token == "{":
+            scopes.append(None)
+        elif token == "}" and scopes:
+            scopes.pop()
+        if token in ("{", "}", ";"):
+            attributes = []
+        index += 1
+    return items
+
+
+def cfg_value(tokens: tuple[str, ...], start: int, fact) -> tuple[bool | None, int]:
+    """The value of the cfg predicate at `start` and the index after it; None: it cannot be told. `all`, `any` and `not` are
+    three-valued, so `all(unix, something_unknown)` is still known false off unix."""
+    name, after = tokens[start], tokens[start + 1 : start + 2]
+    if after == ("=",):
+        return fact(name, tokens[start + 2].strip('"')), start + 3
+    if after != ("(",):
+        return fact(name, None), start + 1
+    values, index = [], start + 2
+    while tokens[index] != ")":
+        value, index = cfg_value(tokens, index, fact)
+        values.append(value)
+        if tokens[index] == ",":
+            index += 1
+    if name == "not" and len(values) == 1:
+        return (None if values[0] is None else not values[0]), index + 1
+    if name == "all":
+        return (False if False in values else None if None in values else True), index + 1
+    if name == "any":
+        return (True if True in values else None if None in values else False), index + 1
+    return None, index + 1
+
+
+def cfg_holds(cfgs: tuple, fact) -> bool | None:
+    """Whether every cfg holds; None when one cannot be told and none is false."""
+    values = []
+    for cfg in cfgs:
+        try:
+            value, end = cfg_value(cfg, 0, fact)
+        except IndexError:  # a cfg this reader does not understand
+            value, end = None, len(cfg)
+        values.append(value if end == len(cfg) else None)
+    return False if False in values else None if None in values else True
+
+
+def host_cfg() -> set[tuple[str, str | None]]:
+    """The cfgs of a native build for this machine, as rustc prints them (nothing is compiled), less the ones flags change."""
+    done = subprocess.run([os.environ.get("RUSTC", "rustc"), "--print", "cfg"], cwd=ROOT, capture_output=True, text=True)
+    if done.returncode != 0:
+        raise Failure(f"rustc --print cfg failed, so which cfgs a native build has is unknown: {done.stderr[-500:]}")
+    found = set()
+    for line in done.stdout.splitlines():
+        key, _, value = line.partition("=")
+        if key not in FLAG_KEYS:
+            found.add((key, value.strip('"') if value else None))
+    return found
+
+
+def profile_debug_assertions(manifest: dict, profile: str) -> bool | None:
+    """Whether the profile the tests are built with has debug assertions (its `inherits` chain followed)."""
+    profiles = manifest.get("profile", {})
+    for _ in range(len(profiles) + 1):
+        entry = profiles.get(profile, {})
+        if "debug-assertions" in entry:
+            return bool(entry["debug-assertions"])
+        if "inherits" not in entry:
+            return {"dev": True, "test": True, "release": False, "bench": False}.get(profile)
+        profile = entry["inherits"]
+    return None
+
+
+def enabled_features(package: dict, requested: tuple[str, ...]) -> set[str]:
+    """The features of a package a build turns on: the ones asked for (`NAME` when the package has it, `PACKAGE/NAME`),
+    `default`, and the ones they turn on."""
+    declared = package["features"]
+    todo = [f.split("/", 1)[-1] for f in requested if "/" not in f or f.split("/", 1)[0] == package["name"]] + ["default"]
+    found: set[str] = set()
+    while todo:  # each feature is taken once
+        feature = todo.pop()
+        if feature in found or feature not in declared:
+            continue
+        found.add(feature)
+        for value in declared[feature]:
+            head = value.split("/", 1)[0]
+            if not value.startswith("dep:") and not head.endswith("?"):
+                todo.append(head)
+    return found
+
+
+def source_tests(root: str, read, available: set[str], parsed: dict[str, SourceItems]) -> tuple[list[tuple[str, tuple]], set[str]]:
+    """The `#[test]` functions of the crate at `root` with their libtest names and every cfg above them, walking the modules
+    from the root file; and the files reached."""
+    found = []
+    reached = {root}
+    todo = [(root, True, (), ())]
+    while todo:
+        file, as_mod_rs, path, cfgs = todo.pop()
+        if file not in parsed:
+            parsed[file] = items_of(read(file))
+        items = parsed[file]
+        cfgs = (*cfgs, *items.cfgs)
+        for inline, name, own in items.tests:
+            found.append(("::".join((*path, *inline, name)), (*cfgs, *own)))
+        for inline, name, attribute, own in items.modules:
+            child = module_file(file, as_mod_rs, inline, name, attribute, available)
+            if child is not None and child[0] not in reached:  # a file is one module, as the module tree takes it
+                reached.add(child[0])
+                todo.append((*child, (*path, *inline, name), (*cfgs, *own)))
+    return found, reached
+
+
+def list_source(config: dict, sets: list[tuple[str, ...]], read, files: list[str]) -> tuple[dict[tuple[tuple[str, ...], str, str], Listed], int]:
+    """(features, package, target) -> its tests, read from the source for the test targets of each build, as `list_cargo` gives
+    them from the binaries; and how many tests sit behind a cfg that cannot be told without building (left out)."""
+    meta = workspace_metadata()
+    members = set(meta.get("workspace_default_members") or meta["workspace_members"])
+    host = host_cfg()
+    manifest = tomllib.loads(Path(meta["workspace_root"], "Cargo.toml").read_text())
+    debug = profile_debug_assertions(manifest, config.get("profile", "test-release"))
+    host_keys = {key for key, _ in host}
+    available, parsed = set(files), {}
+    found: dict[tuple[tuple[str, ...], str, str], Listed] = {}
+    unknown: set[tuple[str, str, str]] = set()
+    for package in (p for p in meta["packages"] if p["id"] in members):
+        for target in package["targets"]:
+            source = Path(target["src_path"])
+            if not target.get("test", True) or not source.is_relative_to(ROOT):
+                continue
+            kind = target_kind(target)
+            tests, reached = source_tests(str(source.relative_to(ROOT)), read, available, parsed)
+            for features in sets:
+                enabled = enabled_features(package, features)
+                if not set(target.get("required-features") or []) <= enabled:
+                    continue
+
+                def fact(key: str, value: str | None) -> bool | None:
+                    if key in ("test", "feature", "debug_assertions"):
+                        return {"test": value is None, "feature": value in enabled, "debug_assertions": debug}[key]
+                    if key in host_keys or key in ("unix", "windows"):
+                        return (key, value) in host
+                    return False if key in FALSE_KEYS else None
+
+                names = []
+                for name, cfgs in tests:
+                    holds = cfg_holds(cfgs, fact)
+                    if holds is None:
+                        unknown.add((package["name"], kind, name))
+                    elif holds and name not in names:
+                        names.append(name)
+                found[(features, package["name"], kind)] = Listed(names, set(), source, reached)
+    return found, len(unknown)
 
 
 # ---------------------------------------------------------------------------------------------------------------- run
@@ -831,10 +1112,9 @@ def cmd_check(arguments: argparse.Namespace) -> int:
     routed_files: list[tuple[Path, str, str]] = []
     homes: dict[tuple[str, str, str, str], str | None] = {}  # a test in no group -> its file
     skipped = set(arguments.skip_feature)
-    builds = wanted_builds(config, groups, router, changed)
-    listings = list_cargo(config, [b for b in builds if not set(b) & skipped])
+    builds, listings, unread = listings_for(arguments, config, groups, router, changed, read, files)
     for (features, package, kind), listed in sorted(listings.items()):
-        errors += check_tree(trees, listed, f"{package} {kind}")
+        errors += check_tree(trees, listed, f"{package} {kind}", "its source declares" if arguments.no_build else "rustc built it from")
         for name in listed.tests:
             who = []
             for group in groups:
@@ -882,10 +1162,26 @@ def cmd_check(arguments: argparse.Namespace) -> int:
         return 1
     unique = {(p, k, n) for (p, k, _, n) in owners}
     left_out = [",".join(b) for b in builds if set(b) & skipped]
-    print(f"test groups: {len(unique)} tests in {len(groups)} groups, every file routed")
+    if arguments.no_build:
+        print(f"test groups (source level, nothing built): {len(unique)} tests in {len(groups)} groups, every file routed; {unread} tests "
+              "behind a cfg this cannot evaluate were not checked; the listing of the built binaries is the merge check's")
+    else:
+        print(f"test groups: {len(unique)} tests in {len(groups)} groups, every file routed")
     if left_out:
         print(f"test groups: SKIPPED the builds with feature(s) {', '.join(sorted(skipped))} ({'; '.join(left_out)}): tests that exist only there are not checked")
     return 0
+
+
+def listings_for(arguments: argparse.Namespace, config: dict, groups: list[Group], router: Router, changed: list[str] | None, read,
+                 files: list[str]) -> tuple[list[tuple[str, ...]], dict[tuple[tuple[str, ...], str, str], Listed], int]:
+    """The builds `check` looks at, their tests, and how many tests the source listing could not place. Reading the source
+    costs no build, so `--no-build` reads every build the groups use."""
+    skipped = set(arguments.skip_feature)
+    if arguments.no_build:
+        builds = feature_sets(config, groups)
+        return builds, *list_source(config, [b for b in builds if not set(b) & skipped], read, files)
+    builds = wanted_builds(config, groups, router, changed)
+    return builds, list_cargo(config, [b for b in builds if not set(b) & skipped]), 0
 
 
 def placement(router: Router, owners: dict[tuple[str, str, str, str], list[str]], key: tuple[str, str, str, str], path: str | None) -> str:
@@ -906,14 +1202,15 @@ def placement(router: Router, owners: dict[tuple[str, str, str, str], list[str]]
     return f"its file {path} is in the `paths` of group {groups[0]}: add {filter_!r} to that group's filters for {build}"
 
 
-def check_tree(trees: dict[str, ModuleTree], listed: Listed, label: str) -> list[str]:
-    """The module tree reaches every file rustc built the binary from, or the routing it supports would miss a test's file."""
+def check_tree(trees: dict[str, ModuleTree], listed: Listed, label: str, built: str = "rustc built it from") -> list[str]:
+    """The module tree reaches every file rustc built the binary from (or the source listing reached), or the routing it
+    supports would miss a test's file."""
     if not listed.sources or not listed.root.is_relative_to(ROOT):
         return []
     tree = trees.get(str(listed.root.relative_to(ROOT)))
     if tree is None:
         return []
-    return [f"{label}: rustc built it from {f}, which the module tree of {tree.root} does not reach (an inline module that declares modules, an include!, or a "
+    return [f"{label}: {built} {f}, which the module tree of {tree.root} does not reach (an inline module that declares modules, an include!, or a "
             f"module declaration it cannot read)"
             for f in sorted(listed.sources - tree.files)]
 
@@ -983,6 +1280,7 @@ def main() -> int:
             sub.add_argument("--all", action="store_true", help="everything (the default)")
             sub.add_argument("--base", help="check as much as the change since the merge-base with this revision can matter to")
             sub.add_argument("--skip-feature", action="append", default=[], help="leave out the builds with this feature (a machine that cannot build it), and say so")
+            sub.add_argument("--no-build", action="store_true", help="read the tests from the source instead of the built test binaries: builds nothing")
             sub.set_defaults(change=[], no_waive=False)
             continue
         sub.add_argument("--all", action="store_true", help="every group")

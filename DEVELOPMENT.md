@@ -93,7 +93,8 @@ gesture) and draws its own cursor.
   browser checks start the client through, it needs `DBOTA_ASSETS` and runs the client on a private home.
 - `tools/precheck.sh` is the quick loop (clippy and the test groups of what changed; `--full` runs every group); it stamps a green
   tree. The groups are `tools/test_groups.toml`: `tools/test_groups.py check` proves every test is in exactly one group and every
-  file is routed, `tools/test_groups.py select [A..B | FILES]` prints the commands of the groups a change affects, and `run` runs
+  file is routed (`--no-build` reads the tests from the source and builds nothing: the quick form while working),
+  `tools/test_groups.py select [A..B | FILES]` prints the commands of the groups a change affects, and `run` runs
   them. `tools/known_baselines.txt` names failures of main (test name and reason) that `run` skips and reports as waived.
 - `tools/gate.sh [REPLAY.brp]` is the merge gate: an audit that every ignored test runs somewhere, fmt, clippy, the fuzz
   targets' type check, both browser clients, an asset cache of this build (imported once per stamp into
